@@ -14,6 +14,10 @@ pub struct Paleta {
     pub texto: Color,
     pub cursor: Color,
     pub linea_actual: Color,
+    /// Fondo de selección de texto (multi-cursor, PLAN.md §11 M3) — el
+    /// campo `ui.selection` del tema existe desde M0 pero no se había
+    /// conectado a nada hasta que hubo selección real que dibujar.
+    pub seleccion: Color,
     pub statusbar_fondo: Color,
     pub statusbar_texto: Color,
     pub diagnostico_error: Color,
@@ -48,6 +52,7 @@ impl Paleta {
             texto: rgb(tema.ui.foreground_rgb()?),
             cursor: rgb(tema.ui.cursor_rgb()?),
             linea_actual: rgb(tema.ui.linea_actual_rgb()?),
+            seleccion: rgb(tema.ui.seleccion_rgb()?),
             statusbar_fondo: rgb(tema.statusbar.background_rgb()?),
             statusbar_texto: rgb(tema.statusbar.foreground_rgb()?),
             diagnostico_error: color_diagnostico(&tema.diagnostics.error, Color::Red),
@@ -71,6 +76,7 @@ impl Paleta {
             texto: Color::White,
             cursor: Color::White,
             linea_actual: Color::DarkGray,
+            seleccion: Color::Blue,
             statusbar_fondo: Color::DarkGray,
             statusbar_texto: Color::White,
             diagnostico_error: Color::Red,

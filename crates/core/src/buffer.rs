@@ -188,6 +188,15 @@ impl Buffer {
         self.rope.insert(inicio_char, reemplazo);
         self.modificado = true;
     }
+
+    /// Offset de bytes absoluto de una posición línea/columna, recortada
+    /// a límites válidos — inversa de `linea_columna_desde_byte`. Permite
+    /// tratar cualquier cursor como un offset de bytes uniforme, el mismo
+    /// sistema de coordenadas que ya usan la búsqueda y el CSV (multi-
+    /// cursor, PLAN.md §11 M3).
+    pub fn offset_byte(&self, linea: usize, columna: usize) -> usize {
+        self.rope.char_to_byte(self.indice_char(linea, columna))
+    }
 }
 
 impl Default for Buffer {

@@ -32,9 +32,14 @@ pub fn dibujar(
         Modo::Insertar => "INSERTAR",
     };
     let resumen_diagnosticos = resumir_diagnosticos(diagnosticos);
+    // Solo se muestra cuando hay más de un cursor activo (`Ctrl+D`/
+    // `Ctrl+Shift+L`/`Ctrl+Alt+↑↓`, PLAN.md §11 M3) — con uno solo es
+    // ruido, ya lo dice "Ln/Col".
+    let resumen_cursores =
+        if editor.tiene_multiples_cursores() { format!("  │  {} cursores", editor.cursores().len()) } else { String::new() };
 
     let texto = format!(
-        " {ruta}{marca_modificado}  │  Ln {ln}, Col {col}  │  {total} líneas  │  UTF-8  │  LF  │  {lenguaje}{resumen_diagnosticos}  │  {modo} ",
+        " {ruta}{marca_modificado}  │  Ln {ln}, Col {col}{resumen_cursores}  │  {total} líneas  │  UTF-8  │  LF  │  {lenguaje}{resumen_diagnosticos}  │  {modo} ",
         ruta = ruta_mostrada,
         ln = cursor.linea + 1,
         col = cursor.columna + 1,

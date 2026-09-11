@@ -559,6 +559,10 @@ fn ejecutar_comando(
             return Accion::Continuar;
         }
         "explorador.enfocar_editor" => {
+            // `Esc` siempre significa "volver a un solo cursor" también
+            // (PLAN.md §11 M3, `cursor.una_seleccion`) — no hace falta un
+            // atajo aparte: si ya había uno solo, esto no hace nada.
+            layout.editor_activo_mut().colapsar_cursores();
             *foco = Foco::Editor;
             return Accion::Continuar;
         }
@@ -596,6 +600,22 @@ fn ejecutar_comando(
         }
         "csv.alternar_vista_tabla" => {
             layout.alternar_vista_tabla_csv();
+            return Accion::Continuar;
+        }
+        "cursor.seleccionar_siguiente_ocurrencia" => {
+            layout.editor_activo_mut().seleccionar_siguiente_ocurrencia();
+            return Accion::Continuar;
+        }
+        "cursor.seleccionar_todas_ocurrencias" => {
+            layout.editor_activo_mut().seleccionar_todas_ocurrencias();
+            return Accion::Continuar;
+        }
+        "cursor.agregar_arriba" => {
+            layout.editor_activo_mut().agregar_cursor_arriba();
+            return Accion::Continuar;
+        }
+        "cursor.agregar_abajo" => {
+            layout.editor_activo_mut().agregar_cursor_abajo();
             return Accion::Continuar;
         }
         _ => {}

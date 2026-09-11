@@ -66,6 +66,14 @@
 "Alt+R"         = "buscar.alternar_regex"
 "Alt+C"         = "buscar.alternar_mayusculas"
 "Alt+W"         = "buscar.alternar_palabra"
+"Ctrl+D"        = "cursor.seleccionar_siguiente_ocurrencia"
+"Ctrl+Shift+L"  = "cursor.seleccionar_todas_ocurrencias"
+# Alternativa: mismo problema de siempre con Ctrl+Shift+<letra> en
+# terminales sin protocolo Kitty (confirmado repetidas veces en tmux a lo
+# largo de este proyecto) — chord con Ctrl+K, sin esa ambigüedad.
+"Ctrl+K L"      = "cursor.seleccionar_todas_ocurrencias"
+"Ctrl+Alt+Up"   = "cursor.agregar_arriba"
+"Ctrl+Alt+Down" = "cursor.agregar_abajo"
 
 [editor]
 
