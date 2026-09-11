@@ -100,32 +100,6 @@ fn configurar_consola_utf8() {
 #[cfg(not(windows))]
 fn configurar_consola_utf8() {}
 
-/// `ratatui` normalmente solo redibuja las celdas que cambiaron entre un
-/// frame y el siguiente (diffing), no la pantalla completa — mucho más
-/// eficiente, pero un reporte real en Windows (CMD y PowerShell clásico,
-/// confirmado 2026-09-11: forzar el codepage a UTF-8 NO lo resolvió) mostró
-/// texto "faltante" específicamente al desplazarse con las flechas, que es
-/// exactamente cuando más cambia de golpe lo que hay en pantalla (el
-/// scroll trae un conjunto de líneas totalmente distinto). Se sospecha un
-/// problema del diffing en el backend de la consola clásica de Windows.
-/// `Terminal::clear()` resetea el buffer interno de "último frame
-/// dibujado" a vacío, forzando que el próximo `draw()` reescriba
-/// literalmente todo en vez de confiar en el diff — a costa de algo de
-/// parpadeo, pero elimina cualquier resto de un frame anterior mal
-/// limpiado sin importar la causa exacta. Solo en Windows: en otras
-/// plataformas el diffing normal ya funciona bien y esto solo añadiría
-/// parpadeo innecesario.
-#[cfg(windows)]
-fn forzar_redibujado_completo(terminal: &mut Terminal<Backend>) -> Result<()> {
-    terminal.clear()?;
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn forzar_redibujado_completo(_terminal: &mut Terminal<Backend>) -> Result<()> {
-    Ok(())
-}
-
 /// Además de inicializar la terminal, intenta activar el protocolo de
 /// teclado extendido de Kitty (best-effort: si el terminal no lo soporta
 /// no pasa nada, `desde_evento` sigue funcionando igual). Sin esto,
@@ -228,7 +202,6 @@ async fn ejecutar(
     sincronizar_lsp(layout, &mut estado.lsp).await;
 
     loop {
-        forzar_redibujado_completo(terminal)?;
         terminal.draw(|frame| {
             tcode_ui::dibujar(
                 frame,
