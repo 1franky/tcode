@@ -1,20 +1,22 @@
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use tcode_core::Editor;
+use tcode_lsp::{DiagnosticoSimple, Severidad};
 use tcode_syntax::{Lenguaje, Resaltador, Token};
 
 use crate::{EstadoUi, Paleta};
 
 /// Dibuja el contenido del archivo (coloreado por tree-sitter si la
-/// extensión corresponde a uno de los lenguajes de M1, PLAN.md §11) y
-/// resalta la línea del cursor. `mostrar_cursor` posiciona además el
-/// cursor real (parpadeante) de la terminal — solo debe ser `true` para
-/// el panel activo cuando hay varios (`Ctrl+\`, PLAN.md §4): solo puede
-/// haber un cursor de terminal visible a la vez.
+/// extensión corresponde a uno de los lenguajes de M1, PLAN.md §11),
+/// resalta la línea del cursor y subraya las líneas con diagnósticos LSP
+/// (M2, PLAN.md §2: "diagnósticos inline"). `mostrar_cursor` posiciona
+/// además el cursor real (parpadeante) de la terminal — solo debe ser
+/// `true` para el panel activo cuando hay varios (`Ctrl+\`, PLAN.md §4):
+/// solo puede haber un cursor de terminal visible a la vez.
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -25,6 +27,7 @@ pub fn dibujar(
     resaltador: &mut Resaltador,
     ruta: &str,
     mostrar_cursor: bool,
+    diagnosticos: &[DiagnosticoSimple],
 ) {
     let alto_visible = area.height as usize;
     let ancho_visible = area.width as usize;
@@ -53,6 +56,15 @@ pub fn dibujar(
                     span.style = span.style.bg(paleta.linea_actual);
                 }
             }
+            if let Some(severidad) = severidad_mas_grave_en_linea(diagnosticos, idx) {
+                let color = color_severidad(paleta, severidad);
+                for span in &mut spans {
+                    // Subraya sin tocar el color del texto (preserva el
+                    // resaltado de sintaxis): `underline_color` separa el
+                    // color del subrayado del color del texto.
+                    span.style = span.style.add_modifier(Modifier::UNDERLINED).underline_color(color);
+                }
+            }
             Line::from(spans)
         })
         .collect();
@@ -66,6 +78,30 @@ pub fn dibujar(
         let columna = area.x + cursor.columna as u16;
         let fila = area.y + (cursor.linea - estado.scroll_vertical) as u16;
         frame.set_cursor_position((columna, fila));
+    }
+}
+
+/// El diagnóstico más grave (error > advertencia > información >
+/// sugerencia) que cubre la línea `idx_linea`, si hay alguno.
+fn severidad_mas_grave_en_linea(diagnosticos: &[DiagnosticoSimple], idx_linea: usize) -> Option<Severidad> {
+    diagnosticos
+        .iter()
+        .filter(|d| (d.linea_inicio as usize) <= idx_linea && idx_linea <= (d.linea_fin as usize))
+        .map(|d| d.severidad)
+        .min_by_key(|severidad| match severidad {
+            Severidad::Error => 0,
+            Severidad::Advertencia => 1,
+            Severidad::Informacion => 2,
+            Severidad::Sugerencia => 3,
+        })
+}
+
+fn color_severidad(paleta: &Paleta, severidad: Severidad) -> ratatui::style::Color {
+    match severidad {
+        Severidad::Error => paleta.diagnostico_error,
+        Severidad::Advertencia => paleta.diagnostico_advertencia,
+        Severidad::Informacion => paleta.diagnostico_info,
+        Severidad::Sugerencia => paleta.diagnostico_sugerencia,
     }
 }
 
