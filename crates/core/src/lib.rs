@@ -3,13 +3,17 @@
 //! que permite testear la lógica de edición sin necesidad de una TUI.
 
 pub mod buffer;
+pub mod busqueda;
 pub mod cursor;
 pub mod editor;
+pub mod estado_busqueda;
 pub mod history;
 
 pub use buffer::Buffer;
+pub use busqueda::{buscar_coincidencias, Coincidencia, OpcionesBusqueda};
 pub use cursor::Cursor;
 pub use editor::{Editor, Modo};
+pub use estado_busqueda::{CampoBusqueda, EstadoBusqueda};
 pub use history::Historia;
 
 #[cfg(test)]

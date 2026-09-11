@@ -39,3 +39,7 @@ hint    = "#6e7781"
 added    = "#1a7f37"
 modified = "#9a6700"
 deleted  = "#cf222e"
+
+[search]
+coincidencia_actual  = "#fdb44b"
+otras_coincidencias  = "#c8e1ff"

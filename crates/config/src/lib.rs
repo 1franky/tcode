@@ -13,6 +13,6 @@ pub use config::{
     ConfigEditor, ConfigInterfaz,
 };
 pub use tema::{
-    cargar_tema, tema_por_defecto, EstiloToken, Tema, TemaDiagnosticos, TemaGit, TemaSintaxis,
-    TemaStatusbar, TemaUi, TEMA_POR_DEFECTO,
+    cargar_tema, tema_por_defecto, EstiloToken, Tema, TemaBusqueda, TemaDiagnosticos, TemaGit,
+    TemaSintaxis, TemaStatusbar, TemaUi, TEMA_POR_DEFECTO,
 };

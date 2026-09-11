@@ -10,3 +10,4 @@ description = "Núcleo del editor tcode: buffer (ropey), cursor e historial de d
 [dependencies]
 ropey.workspace = true
 anyhow.workspace = true
+regex.workspace = true
