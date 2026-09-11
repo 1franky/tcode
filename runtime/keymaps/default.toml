@@ -24,6 +24,8 @@
 "Enter"         = "editor.nueva_linea"
 "Tab"           = "editor.indentar_o_autocompletar"
 "Ctrl+K Ctrl+L" = "config.recargar"
+"Ctrl+B"        = "panel.alternar_lateral"
+"Esc"           = "explorador.enfocar_editor"
 
 [editor]
 
