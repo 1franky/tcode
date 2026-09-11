@@ -11,5 +11,6 @@ description = "Renderizado en terminal (ratatui) de tcode: vista de código y ba
 tcode-core.workspace = true
 tcode-config.workspace = true
 tcode-syntax.workspace = true
+tcode-fs.workspace = true
 ratatui.workspace = true
 anyhow.workspace = true
