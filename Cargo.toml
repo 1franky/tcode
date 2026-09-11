@@ -39,6 +39,7 @@ tree-sitter-go = "0.25"
 tree-sitter-md = "0.5"
 tempfile = "3"
 regex = "1"
+pulldown-cmark = "0.12"
 
 [profile.release]
 lto = true

@@ -561,6 +561,14 @@ fn ejecutar_comando(
             layout.ir_a_panel(2);
             return Accion::Continuar;
         }
+        "markdown.alternar_preview" => {
+            layout.alternar_preview_markdown();
+            return Accion::Continuar;
+        }
+        "markdown.preview_solo" => {
+            layout.alternar_preview_solo_markdown();
+            return Accion::Continuar;
+        }
         _ => {}
     }
 
