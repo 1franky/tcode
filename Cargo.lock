@@ -791,6 +791,7 @@ dependencies = [
  "tcode-ui",
  "tokio",
  "tokio-stream",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
