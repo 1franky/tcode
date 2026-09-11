@@ -1,0 +1,14 @@
+# Generado por cargo
+/target/
+**/target/
+# Nota: Cargo.lock se versiona (tcode es un binario, no una librería)
+
+# Editores / SO
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Configuración local que no debe versionarse
+.env
+.env.local

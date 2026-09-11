@@ -1,0 +1,24 @@
+name: Guardar rama main
+
+# Se marca como "status check" obligatorio en la protección de la rama
+# `main`: bloquea el botón de merge de cualquier Pull Request hacia `main`
+# cuya rama origen no sea `develop`.
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  verificar-rama-origen:
+    name: Verificar rama origen (solo develop -> main)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comprobar que el PR viene de develop
+        run: |
+          echo "Rama origen del PR: ${{ github.head_ref }}"
+          if [ "${{ github.head_ref }}" != "develop" ]; then
+            echo "::error::Solo se permiten Pull Requests hacia 'main' desde la rama 'develop'. Rama origen detectada: '${{ github.head_ref }}'."
+            exit 1
+          fi
+          echo "OK: el PR viene de develop."
