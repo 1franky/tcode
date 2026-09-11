@@ -2,9 +2,9 @@
 # a ~/.config/tcode/keymap.toml (o el equivalente de tu SO) y recargable en
 # caliente con Ctrl+K Ctrl+L, sin reiniciar el editor.
 #
-# Solo [global] y [editor] están activos en M1: la vista de código es la
-# única que existe todavía. [markdown] y [csv] se validan como TOML pero se
-# conectan cuando esas vistas lleguen en M3.
+# [global], [editor], [markdown] y [csv] se combinan todos en un único
+# conjunto de atajos activos (no hay todavía un concepto de "ámbito
+# activo" — el comando mismo decide si aplica al archivo actual).
 
 [global]
 "Ctrl+S"        = "archivo.guardar"
@@ -23,6 +23,10 @@
 "Delete"        = "editor.borrar_adelante"
 "Enter"         = "editor.nueva_linea"
 "Tab"           = "editor.indentar_o_autocompletar"
+# "Desindentar" todavía no hace nada fuera de la vista CSV (M3, PLAN.md
+# §9), donde se reinterpreta como "celda anterior" — igual que `Tab` se
+# reinterpreta ahí como "celda siguiente" en vez de indentar.
+"Shift+Tab"     = "editor.desindentar"
 "Ctrl+K Ctrl+L" = "config.recargar"
 "Ctrl+B"        = "panel.alternar_lateral"
 "Esc"           = "explorador.enfocar_editor"
@@ -75,3 +79,5 @@
 "Ctrl+Shift+V"  = "markdown.preview_solo"
 
 [csv]
+"Ctrl+K T" = "csv.alternar_vista_tabla"
+"F2"       = "csv.editar_celda"

@@ -1,11 +1,11 @@
 use ratatui::layout::{Constraint, Direction, Rect};
 use ratatui::Frame;
 
-use tcode_core::{Editor, EstadoBusqueda};
+use tcode_core::{delimitador_por_extension, Editor, EstadoBusqueda, EstadoCsv};
 use tcode_lsp::DiagnosticoSimple;
 use tcode_syntax::{Lenguaje, Resaltador};
 
-use crate::{statusbar, vista_codigo, vista_markdown, EstadoUi, Paleta};
+use crate::{statusbar, vista_codigo, vista_csv, vista_markdown, EstadoUi, Paleta};
 
 /// Cómo se divide un panel (`Ctrl+\`/`Ctrl+K Ctrl+\`, PLAN.md §4): en
 /// paneles lado a lado (una línea divisoria vertical entre ellos) o
@@ -34,27 +34,45 @@ pub enum ModoMarkdown {
     SoloPreview,
 }
 
+/// Vista de un panel cuyo archivo es CSV/TSV (PLAN.md §9, `Ctrl+K T`): a
+/// diferencia de Markdown, el modo por defecto es `Tabla` — un CSV como
+/// texto plano es justo lo que esta vista existe para evitar tener que
+/// leer — y `Ctrl+K T` es el escape hatch hacia el texto plano cuando
+/// hace falta (p. ej. arreglar una fila corrupta a mano).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModoCsv {
+    #[default]
+    Tabla,
+    Fuente,
+}
+
 /// Un documento abierto en un panel: su editor, la ruta que se muestra en
 /// la statusbar, su propio desplazamiento vertical (cada panel se
 /// desplaza de forma independiente), los diagnósticos LSP más recientes
-/// para ese archivo (M2, PLAN.md §2: "diagnósticos inline") y, si es
-/// Markdown, su [`ModoMarkdown`] (PLAN.md §8).
+/// para ese archivo (M2, PLAN.md §2: "diagnósticos inline") y, según el
+/// tipo de archivo, su [`ModoMarkdown`] (PLAN.md §8) o su [`ModoCsv`] +
+/// [`EstadoCsv`] (selección/edición de celda, PLAN.md §9).
 pub struct PanelEditor {
     pub editor: Editor,
     pub ruta_mostrada: String,
     pub estado_ui: EstadoUi,
     pub diagnosticos: Vec<DiagnosticoSimple>,
     pub modo_markdown: ModoMarkdown,
+    pub modo_csv: ModoCsv,
+    pub estado_csv: EstadoCsv,
 }
 
 impl PanelEditor {
     pub fn nuevo(editor: Editor, ruta_mostrada: String) -> Self {
+        let modo_csv = if es_csv(&ruta_mostrada) { ModoCsv::Tabla } else { ModoCsv::Fuente };
         Self {
             editor,
             ruta_mostrada,
             estado_ui: EstadoUi::default(),
             diagnosticos: Vec::new(),
             modo_markdown: ModoMarkdown::default(),
+            modo_csv,
+            estado_csv: EstadoCsv::nuevo(),
         }
     }
 
@@ -65,6 +83,24 @@ impl PanelEditor {
     fn es_markdown(&self) -> bool {
         Lenguaje::detectar_por_extension(&self.ruta_mostrada) == Some(Lenguaje::Markdown)
     }
+
+    pub fn es_csv(&self) -> bool {
+        es_csv(&self.ruta_mostrada)
+    }
+
+    /// La tabla CSV/TSV analizada a partir del contenido actual del
+    /// buffer — se recalcula cada vez que hace falta (igual que
+    /// `vista_markdown` re-parsea en cada frame): un archivo CSV de
+    /// tamaño razonable es barato de volver a analizar, y así la vista
+    /// nunca puede desincronizarse del contenido real tras una edición.
+    pub fn tabla_csv(&self) -> tcode_core::TablaCsv {
+        let delimitador = delimitador_por_extension(&self.ruta_mostrada);
+        tcode_core::analizar_csv(&self.editor.buffer().a_texto(), delimitador).unwrap_or_default()
+    }
+}
+
+fn es_csv(ruta: &str) -> bool {
+    matches!(ruta.rsplit('.').next().map(|e| e.to_ascii_lowercase()), Some(e) if e == "csv" || e == "tsv")
 }
 
 /// Árbol de paneles: una hoja con un documento, o una división en dos
@@ -167,6 +203,22 @@ impl Layout {
         panel.estado_ui = EstadoUi::default();
         panel.diagnosticos.clear();
         panel.modo_markdown = ModoMarkdown::default();
+        panel.modo_csv = if panel.es_csv() { ModoCsv::Tabla } else { ModoCsv::Fuente };
+        panel.estado_csv = EstadoCsv::nuevo();
+    }
+
+    /// `Ctrl+K T`: alterna el panel activo entre la vista de tabla y el
+    /// texto plano (PLAN.md §9, "toggle a modo raw"). No hace nada si el
+    /// archivo activo no es CSV/TSV.
+    pub fn alternar_vista_tabla_csv(&mut self) {
+        let panel = self.panel_activo_mut();
+        if !panel.es_csv() {
+            return;
+        }
+        panel.modo_csv = match panel.modo_csv {
+            ModoCsv::Tabla => ModoCsv::Fuente,
+            ModoCsv::Fuente => ModoCsv::Tabla,
+        };
     }
 
     /// `Ctrl+K V`: alterna el panel activo entre solo-fuente y
@@ -282,6 +334,21 @@ fn dibujar_panel(
             // de la terminal se posiciona en ella (ver
             // `panel_busqueda::dibujar`), no en el código.
             let mostrar_cursor = es_activo && !estado_busqueda.activa();
+
+            if panel_editor.es_csv() && panel_editor.modo_csv == ModoCsv::Tabla {
+                let tabla = panel_editor.tabla_csv();
+                vista_csv::dibujar(frame, partes[0], &tabla, &panel_editor.estado_csv, paleta, mostrar_cursor);
+                statusbar::dibujar(
+                    frame,
+                    partes[1],
+                    &panel_editor.editor,
+                    &panel_editor.ruta_mostrada,
+                    paleta,
+                    &panel_editor.diagnosticos,
+                );
+                return;
+            }
+
             let area_markdown = if panel_editor.es_markdown() { panel_editor.modo_markdown } else { ModoMarkdown::Fuente };
 
             match area_markdown {
@@ -429,6 +496,46 @@ mod tests {
 
     fn layout_de_prueba() -> Layout {
         Layout::nuevo(Editor::nuevo(), "a.txt".to_string())
+    }
+
+    #[test]
+    fn un_archivo_csv_arranca_en_modo_tabla_y_uno_normal_no() {
+        let csv = Layout::nuevo(Editor::nuevo(), "datos.csv".to_string());
+        assert_eq!(csv.panel_activo().modo_csv, ModoCsv::Tabla);
+
+        let normal = layout_de_prueba();
+        assert_eq!(normal.panel_activo().modo_csv, ModoCsv::Fuente);
+    }
+
+    #[test]
+    fn alternar_vista_tabla_csv_no_hace_nada_en_un_archivo_no_csv() {
+        let mut layout = layout_de_prueba();
+        layout.alternar_vista_tabla_csv();
+        assert_eq!(layout.panel_activo().modo_csv, ModoCsv::Fuente);
+    }
+
+    #[test]
+    fn alternar_vista_tabla_csv_pasa_a_fuente_y_de_vuelta_a_tabla() {
+        let mut layout = Layout::nuevo(Editor::nuevo(), "datos.csv".to_string());
+        assert_eq!(layout.panel_activo().modo_csv, ModoCsv::Tabla);
+
+        layout.alternar_vista_tabla_csv();
+        assert_eq!(layout.panel_activo().modo_csv, ModoCsv::Fuente);
+
+        layout.alternar_vista_tabla_csv();
+        assert_eq!(layout.panel_activo().modo_csv, ModoCsv::Tabla);
+    }
+
+    #[test]
+    fn abrir_en_activo_reinicia_el_modo_y_la_seleccion_csv() {
+        let mut layout = Layout::nuevo(Editor::nuevo(), "datos.csv".to_string());
+        layout.alternar_vista_tabla_csv();
+        layout.panel_activo_mut().estado_csv.mover_abajo(5);
+        assert_eq!(layout.panel_activo().modo_csv, ModoCsv::Fuente);
+
+        layout.abrir_en_activo(Editor::nuevo(), "otro.csv".to_string());
+        assert_eq!(layout.panel_activo().modo_csv, ModoCsv::Tabla);
+        assert_eq!(layout.panel_activo().estado_csv.fila(), 0);
     }
 
     #[test]

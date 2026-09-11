@@ -25,6 +25,7 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "config.recargar", descripcion: "Configuración: Recargar" },
         Comando { id: "markdown.alternar_preview", descripcion: "Markdown: Alternar preview" },
         Comando { id: "markdown.preview_solo", descripcion: "Markdown: Ver solo preview" },
+        Comando { id: "csv.alternar_vista_tabla", descripcion: "CSV: Alternar vista de tabla" },
     ]
 }
 

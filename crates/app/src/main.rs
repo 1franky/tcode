@@ -34,11 +34,11 @@ use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
 use tcode_config::Config;
-use tcode_core::{CampoBusqueda, Editor, EstadoBusqueda};
+use tcode_core::{analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda};
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_syntax::Resaltador;
-use tcode_ui::{DireccionSplit, Layout as PanelLayout, Paleta};
+use tcode_ui::{DireccionSplit, Layout as PanelLayout, ModoCsv, Paleta};
 
 type Backend = CrosstermBackend<Stdout>;
 
@@ -381,6 +381,26 @@ async fn ejecutar(
             continue;
         }
 
+        // Edición de una celda de la vista CSV/TSV (`Enter`/`F2` sobre
+        // una celda, PLAN.md §9): captura el teclado por completo igual
+        // que los bloques anteriores, mientras dura la edición de esa
+        // celda puntual (la navegación entre celdas, cuando NO se está
+        // editando ninguna, pasa por el `Resolvedor` normal más abajo,
+        // reinterpretada en `ejecutar_comando_csv`).
+        if layout.panel_activo().estado_csv.editando() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => layout.panel_activo_mut().estado_csv.cancelar_edicion(),
+                KeyCode::Backspace => layout.panel_activo_mut().estado_csv.borrar(),
+                KeyCode::Enter => confirmar_edicion_celda_csv(layout, true),
+                KeyCode::Char(c) if sin_modificadores(key) => layout.panel_activo_mut().estado_csv.escribir(c),
+                _ => {}
+            }
+            sincronizar_lsp(layout, &mut estado.lsp).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
         let resolucion = resolvedor.procesar(tcode_keymap::desde_evento(key));
 
         let reintentando_salida = matches!(&resolucion, Resolucion::Comando(n) if n == "app.salir");
@@ -399,8 +419,13 @@ async fn ejecutar(
                 // Ninguna tecla/chord configurado coincide: si es un
                 // carácter imprimible sin Ctrl/Alt Y el foco está en el
                 // editor, se inserta como texto normal (escribir no pasa
-                // por el sistema de atajos; el explorador no recibe texto).
-                if estado.foco == Foco::Editor {
+                // por el sistema de atajos; el explorador no recibe
+                // texto). La vista de tabla CSV/TSV tampoco: no hay
+                // cursor de texto visible ahí — insertarlo a ciegas en el
+                // buffer crudo corrompería el archivo sin que se vea en
+                // pantalla. Escribir en una celda pasa por el bloque
+                // modal de edición (`Enter`/`F2`), no por aquí.
+                if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
                     if let KeyCode::Char(c) = key.code {
                         if sin_modificadores(key) {
                             layout.editor_activo_mut().insertar_char(c);
@@ -569,11 +594,23 @@ fn ejecutar_comando(
             layout.alternar_preview_solo_markdown();
             return Accion::Continuar;
         }
+        "csv.alternar_vista_tabla" => {
+            layout.alternar_vista_tabla_csv();
+            return Accion::Continuar;
+        }
         _ => {}
     }
 
     if *foco == Foco::Explorador {
         return ejecutar_comando_explorador(comando, layout, explorador, foco);
+    }
+
+    // La vista de tabla CSV/TSV reinterpreta la navegación genérica igual
+    // que el explorador (arriba): mover celda en vez de mover el cursor
+    // de texto, `Tab`/`Shift+Tab` para saltar de celda, `Enter`/`F2` para
+    // empezar a editar la celda seleccionada (PLAN.md §9).
+    if layout.panel_activo().modo_csv == ModoCsv::Tabla {
+        return ejecutar_comando_csv(comando, layout);
     }
 
     let editor = layout.editor_activo_mut();
@@ -616,6 +653,65 @@ fn ejecutar_comando_explorador(comando: &str, layout: &mut PanelLayout, explorad
         _ => {}
     }
     Accion::Continuar
+}
+
+/// Comandos genéricos de navegación reinterpretados para la vista de
+/// tabla CSV/TSV (PLAN.md §9): mover la celda seleccionada en vez del
+/// cursor de texto, `Tab`/`Shift+Tab` para saltar de celda (como en una
+/// hoja de cálculo) y `Enter`/`F2` para empezar a editar la celda actual
+/// — la edición en sí (escribir/confirmar/cancelar) la captura un bloque
+/// modal aparte en el bucle principal, igual que la barra de búsqueda.
+fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
+    let delimitador = delimitador_por_extension(&layout.panel_activo().ruta_mostrada);
+    let texto = layout.panel_activo().editor.buffer().a_texto();
+    let tabla = analizar_csv(&texto, delimitador).unwrap_or_default();
+    let (num_filas, num_columnas) = (tabla.num_filas(), tabla.num_columnas());
+
+    let panel = layout.panel_activo_mut();
+    match comando {
+        "cursor.arriba" => panel.estado_csv.mover_arriba(),
+        "cursor.abajo" => panel.estado_csv.mover_abajo(num_filas),
+        "cursor.izquierda" => panel.estado_csv.mover_izquierda(),
+        "cursor.derecha" => panel.estado_csv.mover_derecha(num_columnas),
+        "editor.indentar_o_autocompletar" => panel.estado_csv.tab(num_filas, num_columnas),
+        "editor.desindentar" => panel.estado_csv.shift_tab(num_columnas),
+        "editor.nueva_linea" | "csv.editar_celda" => {
+            let valor_actual =
+                tabla.filas.get(panel.estado_csv.fila()).and_then(|f| f.celdas.get(panel.estado_csv.columna()));
+            panel.estado_csv.iniciar_edicion(valor_actual.map(String::as_str).unwrap_or(""));
+        }
+        _ => {}
+    }
+    Accion::Continuar
+}
+
+/// `Enter` con una celda de la vista CSV/TSV en edición: reemplaza la
+/// fila completa reserializada (ver `tcode_core::csv::serializar_fila`)
+/// en el buffer, y si `avanzar` es `true` mueve la selección a la fila
+/// siguiente (como confirmar una celda en una hoja de cálculo).
+fn confirmar_edicion_celda_csv(layout: &mut PanelLayout, avanzar: bool) {
+    let panel = layout.panel_activo_mut();
+    let Some(nuevo_valor) = panel.estado_csv.confirmar_edicion() else { return };
+
+    let delimitador = delimitador_por_extension(&panel.ruta_mostrada);
+    let texto = panel.editor.buffer().a_texto();
+    let Ok(tabla) = analizar_csv(&texto, delimitador) else { return };
+    let Some(fila) = tabla.filas.get(panel.estado_csv.fila()) else { return };
+
+    let mut celdas = fila.celdas.clone();
+    if panel.estado_csv.columna() >= celdas.len() {
+        celdas.resize(panel.estado_csv.columna() + 1, String::new());
+    }
+    celdas[panel.estado_csv.columna()] = nuevo_valor;
+
+    let Ok(nueva_fila_texto) = serializar_fila_csv(&celdas, delimitador) else { return };
+    panel.editor.reemplazar_rango_bytes(fila.inicio_byte, fila.fin_byte, &nueva_fila_texto);
+
+    if avanzar {
+        let num_filas =
+            analizar_csv(&panel.editor.buffer().a_texto(), delimitador).map(|t| t.num_filas()).unwrap_or(0);
+        panel.estado_csv.mover_abajo(num_filas);
+    }
 }
 
 /// `config.recargar` (`Ctrl+K Ctrl+L`): recarga `config.toml` desde disco

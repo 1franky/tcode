@@ -40,6 +40,7 @@ tree-sitter-md = "0.5"
 tempfile = "3"
 regex = "1"
 pulldown-cmark = "0.12"
+csv = "1"
 
 [profile.release]
 lto = true
