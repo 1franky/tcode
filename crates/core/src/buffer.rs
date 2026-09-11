@@ -95,6 +95,15 @@ impl Buffer {
             .collect()
     }
 
+    /// Offset en bytes (UTF-8) del inicio de una línea dentro del texto
+    /// completo. Es lo que permite correlacionar los rangos de bytes que
+    /// produce `tcode-syntax` (que trabaja sobre el archivo completo) con
+    /// el texto de una línea concreta al dibujarla.
+    pub fn inicio_byte_linea(&self, linea: usize) -> usize {
+        let linea = linea.min(self.rope.len_lines().saturating_sub(1));
+        self.rope.line_to_byte(linea)
+    }
+
     /// Longitud (en caracteres) de una línea sin contar el salto de línea.
     /// Es el límite de columna válido para el cursor en esa línea.
     pub fn longitud_visible_linea(&self, linea: usize) -> usize {
