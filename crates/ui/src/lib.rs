@@ -12,6 +12,7 @@ mod panel_busqueda;
 mod panel_paleta;
 mod statusbar;
 mod vista_codigo;
+mod vista_csv;
 mod vista_markdown;
 
 use ratatui::layout::{Constraint, Direction, Layout as LayoutRatatui};
@@ -23,7 +24,7 @@ use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_syntax::Resaltador;
 
 pub use paleta::Paleta;
-pub use paneles::{DireccionSplit, Layout, ModoMarkdown, PanelEditor};
+pub use paneles::{DireccionSplit, Layout, ModoCsv, ModoMarkdown, PanelEditor};
 
 /// Ancho fijo (en columnas) del panel lateral del explorador cuando está
 /// visible.

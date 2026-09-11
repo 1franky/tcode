@@ -4,16 +4,20 @@
 
 pub mod buffer;
 pub mod busqueda;
+pub mod csv;
 pub mod cursor;
 pub mod editor;
 pub mod estado_busqueda;
+pub mod estado_csv;
 pub mod history;
 
 pub use buffer::Buffer;
 pub use busqueda::{buscar_coincidencias, Coincidencia, OpcionesBusqueda};
+pub use csv::{analizar as analizar_csv, delimitador_por_extension, serializar_fila as serializar_fila_csv, FilaCsv, TablaCsv};
 pub use cursor::Cursor;
 pub use editor::{Editor, Modo};
 pub use estado_busqueda::{CampoBusqueda, EstadoBusqueda};
+pub use estado_csv::EstadoCsv;
 pub use history::Historia;
 
 #[cfg(test)]
