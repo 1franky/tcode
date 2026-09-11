@@ -9,4 +9,6 @@ description = "Renderizado en terminal (ratatui) de tcode: vista de código y ba
 
 [dependencies]
 tcode-core.workspace = true
+tcode-config.workspace = true
 ratatui.workspace = true
+anyhow.workspace = true
