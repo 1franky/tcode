@@ -4,14 +4,15 @@
 //!
 //! No ejecuta comandos — solo produce el *nombre* del comando en español
 //! (`"archivo.guardar"`) que le corresponde a una secuencia de teclas. La
-//! ejecución real (el dispatcher comando -> acción) vive en el crate `app`
-//! por ahora; se moverá a un crate `commands` dedicado cuando llegue la
-//! paleta de comandos en M2.
+//! ejecución real (el dispatcher comando -> acción) vive en el crate `app`.
 
 mod combinacion;
 mod keymap;
 mod resolvedor;
 
-pub use combinacion::{desde_evento, parsear_atajo, parsear_combinacion, Combinacion, Direccion, Tecla};
+pub use combinacion::{
+    desde_evento, formatear_atajo, formatear_combinacion, parsear_atajo, parsear_combinacion, Combinacion,
+    Direccion, Tecla,
+};
 pub use keymap::{cargar, detectar_conflictos, keymap_por_defecto, ruta_keymap_usuario, Conflicto, Keymap};
 pub use resolvedor::{Resolucion, Resolvedor};

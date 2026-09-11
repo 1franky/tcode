@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/ui", "crates/config", "crates/keymap", "crates/syntax", "crates/fs", "crates/app"]
+members = ["crates/core", "crates/ui", "crates/config", "crates/keymap", "crates/syntax", "crates/fs", "crates/fuzzy", "crates/commands", "crates/app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -16,6 +16,8 @@ tcode-config = { path = "crates/config" }
 tcode-keymap = { path = "crates/keymap" }
 tcode-syntax = { path = "crates/syntax" }
 tcode-fs = { path = "crates/fs" }
+tcode-fuzzy = { path = "crates/fuzzy" }
+tcode-commands = { path = "crates/commands" }
 ropey = "1.6"
 crossterm = "0.28"
 ratatui = "0.29"
