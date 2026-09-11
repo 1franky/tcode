@@ -1,0 +1,12 @@
+[package]
+name = "tcode-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Núcleo del editor tcode: buffer (ropey), cursor e historial de deshacer/rehacer. Sin dependencias de UI."
+
+[dependencies]
+ropey.workspace = true
+anyhow.workspace = true

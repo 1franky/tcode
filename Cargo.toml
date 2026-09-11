@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/ui", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Francisco López"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/1franky/tcode"
+
+[workspace.dependencies]
+tcode-core = { path = "crates/core" }
+tcode-ui = { path = "crates/ui" }
+ropey = "1.6"
+crossterm = "0.28"
+ratatui = "0.29"
+anyhow = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

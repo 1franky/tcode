@@ -1,0 +1,19 @@
+[package]
+name = "tcode"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "tcode: editor TUI portable con atajos estilo VSCode."
+
+[[bin]]
+name = "tcode"
+path = "src/main.rs"
+
+[dependencies]
+tcode-core.workspace = true
+tcode-ui.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+anyhow.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "tcode-ui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Renderizado en terminal (ratatui) de tcode: vista de código y barra de estado."
+
+[dependencies]
+tcode-core.workspace = true
+ratatui.workspace = true
