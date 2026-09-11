@@ -5,44 +5,43 @@
 
 mod overlay;
 mod paleta;
+mod paneles;
 mod panel_archivos;
 mod panel_buscador;
 mod panel_paleta;
 mod statusbar;
 mod vista_codigo;
 
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout as LayoutRatatui};
 use ratatui::Frame;
 
 use tcode_commands::EstadoPaleta;
-use tcode_core::Editor;
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_syntax::Resaltador;
 
 pub use paleta::Paleta;
+pub use paneles::{DireccionSplit, Layout, PanelEditor};
 
 /// Ancho fijo (en columnas) del panel lateral del explorador cuando está
 /// visible.
 const ANCHO_PANEL_LATERAL: u16 = 30;
 
 /// Estado propio de la UI que no pertenece al `core` — por ahora, solo el
-/// desplazamiento vertical del viewport.
+/// desplazamiento vertical del viewport (uno por [`PanelEditor`]).
 #[derive(Default)]
 pub struct EstadoUi {
     scroll_vertical: usize,
 }
 
 /// Dibuja un frame completo: panel lateral del explorador (si está
-/// visible, `Ctrl+B`) a la izquierda, vista de código y statusbar a la
-/// derecha (PLAN.md §1), y la paleta de comandos (`Ctrl+Shift+P`/`F1`) o
-/// el buscador de archivos (`Ctrl+P`) encima de todo cuando alguno de los
-/// dos está abierto (nunca los dos a la vez).
-#[allow(clippy::too_many_arguments)]
+/// visible, `Ctrl+B`) a la izquierda, el árbol de paneles de edición
+/// (`Ctrl+\`/`Ctrl+K Ctrl+\`, PLAN.md §4) a la derecha, y la paleta de
+/// comandos (`Ctrl+Shift+P`/`F1`) o el buscador de archivos (`Ctrl+P`)
+/// encima de todo cuando alguno de los dos está abierto (nunca los dos a
+/// la vez).
 pub fn dibujar(
     frame: &mut Frame,
-    editor: &Editor,
-    estado: &mut EstadoUi,
-    ruta_mostrada: &str,
+    layout: &mut Layout,
     paleta: &Paleta,
     resaltador: &mut Resaltador,
     explorador: &Explorador,
@@ -52,7 +51,7 @@ pub fn dibujar(
     let area_total = frame.area();
 
     let area_principal = if explorador.visible() {
-        let partes = Layout::default()
+        let partes = LayoutRatatui::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(ANCHO_PANEL_LATERAL), Constraint::Min(1)])
             .split(area_total);
@@ -62,13 +61,7 @@ pub fn dibujar(
         area_total
     };
 
-    let partes = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(area_principal);
-
-    vista_codigo::dibujar(frame, partes[0], editor, estado, paleta, resaltador, ruta_mostrada);
-    statusbar::dibujar(frame, partes[1], editor, ruta_mostrada, paleta);
+    layout.dibujar(frame, area_principal, paleta, resaltador);
 
     if paleta_comandos.activa() {
         panel_paleta::dibujar(frame, area_total, paleta_comandos, paleta);

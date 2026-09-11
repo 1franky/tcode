@@ -4,14 +4,14 @@
 //!
 //! Los eventos de teclado pasan por el [`Resolvedor`] de `tcode-keymap`
 //! para convertirse en nombres de comando en español (`"archivo.guardar"`);
-//! `ejecutar_comando` es el dispatcher que los traduce a llamadas sobre
-//! [`Editor`] o el [`Explorador`]. La paleta de comandos (`Ctrl+Shift+P`/
+//! `ejecutar_comando` es el dispatcher que los traduce a llamadas sobre el
+//! [`tcode_ui::Layout`] activo (que puede tener varios paneles divididos,
+//! `Ctrl+\`) o el [`Explorador`]. La paleta de comandos (`Ctrl+Shift+P`/
 //! `F1`) y el buscador de archivos (`Ctrl+P`) producen esos mismos ids por
 //! otra vía (buscar por nombre en vez de memorizar un atajo) y terminan en
 //! el mismo dispatcher.
 
 use std::io::{self, Stdout};
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -32,17 +32,18 @@ use tcode_core::Editor;
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_syntax::Resaltador;
-use tcode_ui::{EstadoUi, Paleta};
+use tcode_ui::{DireccionSplit, Layout as PanelLayout, Paleta};
 
 type Backend = CrosstermBackend<Stdout>;
 
 fn main() -> Result<()> {
     let ruta_arg = std::env::args().nth(1);
 
-    let mut editor = match &ruta_arg {
+    let editor = match &ruta_arg {
         Some(ruta) => Editor::abrir(ruta)?,
         None => Editor::nuevo(),
     };
+    let mut layout = PanelLayout::nuevo(editor, ruta_arg.clone().unwrap_or_else(|| "[Sin nombre]".to_string()));
 
     // La config y el keymap nunca hacen fallar el arranque: si el archivo
     // del usuario está corrupto, se sigue con los valores por defecto en
@@ -52,7 +53,7 @@ fn main() -> Result<()> {
     let explorador = crear_explorador(ruta_arg.as_deref());
 
     let (mut terminal, protocolo_kitty) = iniciar_terminal()?;
-    let resultado = ejecutar(&mut terminal, &mut editor, config, &keymap, explorador, ruta_arg.as_deref());
+    let resultado = ejecutar(&mut terminal, &mut layout, config, &keymap, explorador, ruta_arg.as_deref());
     finalizar_terminal(&mut terminal, protocolo_kitty)?;
 
     resultado
@@ -103,30 +104,29 @@ fn finalizar_terminal(terminal: &mut Terminal<Backend>, protocolo_kitty: bool) -
 
 /// Qué panel recibe las teclas de navegación/edición genéricas
 /// (`cursor.*`, `Enter`...). Los comandos globales (guardar, deshacer,
-/// salir, recargar config) funcionan sin importar el foco. Mientras la
-/// paleta de comandos o el buscador de archivos están abiertos, ningún
-/// foco importa: capturan el teclado por completo (ver `ejecutar`).
+/// salir, recargar config, dividir/cerrar/ir a un panel) funcionan sin
+/// importar el foco. Mientras la paleta de comandos o el buscador de
+/// archivos están abiertos, ningún foco importa: capturan el teclado por
+/// completo (ver `ejecutar`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Foco {
     Editor,
     Explorador,
 }
 
-/// Resultado de ejecutar un comando: si el bucle principal debe seguir,
-/// terminar, o si se abrió un archivo nuevo (desde el explorador o el
-/// buscador) y hay que actualizar la ruta mostrada en la statusbar.
+/// Resultado de ejecutar un comando: si el bucle principal debe seguir o
+/// terminar.
 enum Accion {
     Continuar,
     Salir,
-    ArchivoAbierto(PathBuf),
 }
 
 /// Todo el estado mutable que un comando puede necesitar tocar, agrupado
 /// para no ir sumando parámetros sueltos a cada función del dispatcher
-/// según crece la lista de comandos (M2 ya suma paleta de comandos +
-/// buscador de archivos; vendrán más piezas). `editor` se mantiene aparte,
-/// fuera de este struct: es el documento activo, conceptualmente distinto
-/// de "todo lo demás".
+/// según crece la lista de comandos. `layout` (el árbol de paneles de
+/// edición, cada uno con su propio documento) se mantiene aparte, fuera
+/// de este struct: es "el documento activo", conceptualmente distinto de
+/// "todo lo demás".
 struct EstadoApp {
     config: Config,
     paleta: Paleta,
@@ -143,14 +143,12 @@ fn sin_modificadores(key: KeyEvent) -> bool {
 
 fn ejecutar(
     terminal: &mut Terminal<Backend>,
-    editor: &mut Editor,
+    layout: &mut PanelLayout,
     config: Config,
     keymap: &Keymap,
     explorador: Explorador,
     ruta_arg: Option<&str>,
 ) -> Result<()> {
-    let mut estado_ui = EstadoUi::default();
-    let mut ruta_mostrada = ruta_arg.unwrap_or("[Sin nombre]").to_string();
     let mut resaltador = Resaltador::nuevo();
     let mut resolvedor = Resolvedor::nuevo(keymap);
 
@@ -171,9 +169,7 @@ fn ejecutar(
         terminal.draw(|frame| {
             tcode_ui::dibujar(
                 frame,
-                editor,
-                &mut estado_ui,
-                &ruta_mostrada,
+                layout,
                 &estado.paleta,
                 &mut resaltador,
                 &estado.explorador,
@@ -205,10 +201,8 @@ fn ejecutar(
                 KeyCode::Backspace => estado.paleta_comandos.borrar(),
                 KeyCode::Enter => {
                     if let Some(id) = estado.paleta_comandos.confirmar() {
-                        match procesar_comando(id, editor, &mut estado) {
-                            Accion::Salir => break,
-                            Accion::Continuar => {}
-                            Accion::ArchivoAbierto(ruta) => ruta_mostrada = ruta.display().to_string(),
+                        if let Accion::Salir = procesar_comando(id, layout, &mut estado) {
+                            break;
                         }
                     }
                 }
@@ -228,8 +222,7 @@ fn ejecutar(
                 KeyCode::Enter => {
                     if let Some(ruta) = estado.buscador_archivos.confirmar() {
                         if let Ok(nuevo_editor) = Editor::abrir(&ruta) {
-                            *editor = nuevo_editor;
-                            ruta_mostrada = ruta.display().to_string();
+                            layout.abrir_en_activo(nuevo_editor, ruta.display().to_string());
                         }
                     }
                 }
@@ -247,11 +240,11 @@ fn ejecutar(
         }
 
         match resolucion {
-            Resolucion::Comando(nombre) => match procesar_comando(&nombre, editor, &mut estado) {
-                Accion::Salir => break,
-                Accion::Continuar => {}
-                Accion::ArchivoAbierto(ruta) => ruta_mostrada = ruta.display().to_string(),
-            },
+            Resolucion::Comando(nombre) => {
+                if let Accion::Salir = procesar_comando(&nombre, layout, &mut estado) {
+                    break;
+                }
+            }
             Resolucion::Pendiente | Resolucion::Cancelado => {}
             Resolucion::SinCoincidencia => {
                 // Ninguna tecla/chord configurado coincide: si es un
@@ -261,7 +254,7 @@ fn ejecutar(
                 if estado.foco == Foco::Editor {
                     if let KeyCode::Char(c) = key.code {
                         if sin_modificadores(key) {
-                            editor.insertar_char(c);
+                            layout.editor_activo_mut().insertar_char(c);
                         }
                     }
                 }
@@ -278,7 +271,7 @@ fn ejecutar(
 /// estado que no le corresponde a `ejecutar_comando` (la paleta de
 /// colores, los propios overlays), así que se interceptan aquí antes de
 /// delegar.
-fn procesar_comando(id: &str, editor: &mut Editor, estado: &mut EstadoApp) -> Accion {
+fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp) -> Accion {
     match id {
         "config.recargar" => {
             recargar_config_y_tema(&mut estado.config, &mut estado.paleta);
@@ -294,7 +287,7 @@ fn procesar_comando(id: &str, editor: &mut Editor, estado: &mut EstadoApp) -> Ac
         }
         _ => ejecutar_comando(
             id,
-            editor,
+            layout,
             &estado.config,
             &mut estado.explorador,
             &mut estado.foco,
@@ -307,7 +300,7 @@ fn procesar_comando(id: &str, editor: &mut Editor, estado: &mut EstadoApp) -> Ac
 /// `runtime/keymaps/default.toml` y con PLAN.md §4.
 fn ejecutar_comando(
     comando: &str,
-    editor: &mut Editor,
+    layout: &mut PanelLayout,
     config: &Config,
     explorador: &mut Explorador,
     foco: &mut Foco,
@@ -316,7 +309,7 @@ fn ejecutar_comando(
     // Comandos globales: funcionan sin importar qué panel tiene el foco.
     match comando {
         "app.salir" => {
-            if editor.buffer().modificado() && !*confirmar_salida {
+            if layout.editor_activo().buffer().modificado() && !*confirmar_salida {
                 *confirmar_salida = true;
             } else {
                 return Accion::Salir;
@@ -327,15 +320,15 @@ fn ejecutar_comando(
         // comandos en M2): si el buffer no tiene ruta, Ctrl+S no hace nada
         // en vez de hacer fallar el editor entero.
         "archivo.guardar" => {
-            let _ = editor.guardar();
+            let _ = layout.editor_activo_mut().guardar();
             return Accion::Continuar;
         }
         "editor.deshacer" => {
-            editor.deshacer();
+            layout.editor_activo_mut().deshacer();
             return Accion::Continuar;
         }
         "editor.rehacer" => {
-            editor.rehacer();
+            layout.editor_activo_mut().rehacer();
             return Accion::Continuar;
         }
         "panel.alternar_lateral" => {
@@ -347,13 +340,38 @@ fn ejecutar_comando(
             *foco = Foco::Editor;
             return Accion::Continuar;
         }
+        "panel.dividir_vertical" => {
+            layout.dividir(DireccionSplit::Vertical);
+            return Accion::Continuar;
+        }
+        "panel.dividir_horizontal" => {
+            layout.dividir(DireccionSplit::Horizontal);
+            return Accion::Continuar;
+        }
+        "panel.cerrar" => {
+            layout.cerrar_activo();
+            return Accion::Continuar;
+        }
+        "panel.ir_a_1" => {
+            layout.ir_a_panel(0);
+            return Accion::Continuar;
+        }
+        "panel.ir_a_2" => {
+            layout.ir_a_panel(1);
+            return Accion::Continuar;
+        }
+        "panel.ir_a_3" => {
+            layout.ir_a_panel(2);
+            return Accion::Continuar;
+        }
         _ => {}
     }
 
     if *foco == Foco::Explorador {
-        return ejecutar_comando_explorador(comando, editor, explorador, foco);
+        return ejecutar_comando_explorador(comando, layout, explorador, foco);
     }
 
+    let editor = layout.editor_activo_mut();
     match comando {
         "cursor.arriba" => editor.mover_arriba(),
         "cursor.abajo" => editor.mover_abajo(),
@@ -375,19 +393,18 @@ fn ejecutar_comando(
 /// Comandos genéricos de navegación reinterpretados para el explorador:
 /// las mismas teclas mueven la selección del árbol o abren/expanden la
 /// fila seleccionada, en vez de mover el cursor del editor.
-fn ejecutar_comando_explorador(comando: &str, editor: &mut Editor, explorador: &mut Explorador, foco: &mut Foco) -> Accion {
+fn ejecutar_comando_explorador(comando: &str, layout: &mut PanelLayout, explorador: &mut Explorador, foco: &mut Foco) -> Accion {
     match comando {
         "cursor.arriba" => explorador.mover_arriba(),
         "cursor.abajo" => explorador.mover_abajo(),
         "editor.nueva_linea" => {
             if let Ok(Some(ruta)) = explorador.activar_seleccion() {
                 if let Ok(nuevo_editor) = Editor::abrir(&ruta) {
-                    *editor = nuevo_editor;
+                    layout.abrir_en_activo(nuevo_editor, ruta.display().to_string());
                     // Abrir un archivo devuelve el foco al editor: el
                     // usuario ya eligió qué quería, tiene sentido poder
                     // escribir de inmediato en vez de seguir en el árbol.
                     *foco = Foco::Editor;
-                    return Accion::ArchivoAbierto(ruta);
                 }
             }
         }
