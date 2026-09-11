@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/ui", "crates/config", "crates/app"]
+members = ["crates/core", "crates/ui", "crates/config", "crates/keymap", "crates/app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,6 +13,7 @@ repository = "https://github.com/1franky/tcode"
 tcode-core = { path = "crates/core" }
 tcode-ui = { path = "crates/ui" }
 tcode-config = { path = "crates/config" }
+tcode-keymap = { path = "crates/keymap" }
 ropey = "1.6"
 crossterm = "0.28"
 ratatui = "0.29"

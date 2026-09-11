@@ -595,6 +595,7 @@ dependencies = [
  "ratatui",
  "tcode-config",
  "tcode-core",
+ "tcode-keymap",
  "tcode-ui",
 ]
 
@@ -614,6 +615,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ropey",
+]
+
+[[package]]
+name = "tcode-keymap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "serde",
+ "tcode-config",
+ "toml",
 ]
 
 [[package]]
