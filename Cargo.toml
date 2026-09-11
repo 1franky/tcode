@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/ui", "crates/config", "crates/keymap", "crates/syntax", "crates/app"]
+members = ["crates/core", "crates/ui", "crates/config", "crates/keymap", "crates/syntax", "crates/fs", "crates/app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,6 +15,7 @@ tcode-ui = { path = "crates/ui" }
 tcode-config = { path = "crates/config" }
 tcode-keymap = { path = "crates/keymap" }
 tcode-syntax = { path = "crates/syntax" }
+tcode-fs = { path = "crates/fs" }
 ropey = "1.6"
 crossterm = "0.28"
 ratatui = "0.29"
@@ -29,6 +30,7 @@ tree-sitter-python = "0.25"
 tree-sitter-javascript = "0.25"
 tree-sitter-go = "0.25"
 tree-sitter-md = "0.5"
+tempfile = "3"
 
 [profile.release]
 lto = true
