@@ -100,6 +100,44 @@ fn configurar_consola_utf8() {
 #[cfg(not(windows))]
 fn configurar_consola_utf8() {}
 
+/// `ratatui` normalmente solo redibuja las celdas que cambiaron entre un
+/// frame y el siguiente (diffing). Un reporte real en Windows (Windows
+/// Terminal, no la consola clásica — se creyó eso al principio, pero
+/// `$env:WT_SESSION` confirmó lo contrario) mostró que, tras abrir un
+/// archivo desde el explorador (`Ctrl+B`), el contenido queda mal
+/// dibujado de forma PERMANENTE (no se autocorrige en frames
+/// posteriores) — consistente con que ese frame de transición grande
+/// (todo el panel de código cambia de golpe) desincroniza el buffer
+/// interno de "último frame" de `ratatui` contra lo que el terminal
+/// realmente tiene en pantalla.
+///
+/// Forzar `Terminal::clear()` en TODOS los frames (intentado en v0.1.3)
+/// empeoró el problema — probablemente por saturar la conexión ConPTY
+/// con mucho más volumen de datos del necesario en cada tecla. Este fix
+/// es quirúrgico: solo se limpia cuando la "forma" de lo que hay en
+/// pantalla cambió de verdad (otro archivo activo, otro número de
+/// paneles, el explorador se mostró/ocultó) — no en cada tecla.
+#[cfg(windows)]
+fn forzar_redibujado_completo(terminal: &mut Terminal<Backend>) -> Result<()> {
+    terminal.clear()?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn forzar_redibujado_completo(_terminal: &mut Terminal<Backend>) -> Result<()> {
+    Ok(())
+}
+
+/// Resumen barato de "qué tan distinta se ve la pantalla en términos
+/// estructurales" — no del contenido línea a línea (eso cambia
+/// constantemente al escribir, no amerita un redibujado completo), sino
+/// de la forma general: qué archivo está activo, cuántos paneles hay,
+/// si el explorador está visible. Comparar esto antes/después de
+/// procesar una tecla es lo que decide si hace falta forzar limpieza.
+fn firma_estructural(layout: &PanelLayout, explorador: &Explorador) -> (String, usize, bool) {
+    (layout.panel_activo().ruta_mostrada.clone(), layout.num_paneles(), explorador.visible())
+}
+
 /// Además de inicializar la terminal, intenta activar el protocolo de
 /// teclado extendido de Kitty (best-effort: si el terminal no lo soporta
 /// no pasa nada, `desde_evento` sigue funcionando igual). Sin esto,
@@ -201,7 +239,17 @@ async fn ejecutar(
     // lenguaje tiene uno configurado.
     sincronizar_lsp(layout, &mut estado.lsp).await;
 
+    // Ver `forzar_redibujado_completo`: en Windows, si la "forma" de la
+    // pantalla cambió (otro archivo activo, otro número de paneles, el
+    // explorador se mostró/ocultó), se limpia antes del próximo draw.
+    let mut necesita_redibujado = false;
+
     loop {
+        if necesita_redibujado {
+            forzar_redibujado_completo(terminal)?;
+            necesita_redibujado = false;
+        }
+
         terminal.draw(|frame| {
             tcode_ui::dibujar(
                 frame,
@@ -213,6 +261,8 @@ async fn ejecutar(
                 &estado.buscador_archivos,
             )
         })?;
+
+        let firma_antes = firma_estructural(layout, &estado.explorador);
 
         let key = tokio::select! {
             evento = eventos.next() => {
@@ -251,6 +301,7 @@ async fn ejecutar(
                 _ => {}
             }
             sincronizar_lsp(layout, &mut estado.lsp).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
 
@@ -272,6 +323,7 @@ async fn ejecutar(
                 _ => {}
             }
             sincronizar_lsp(layout, &mut estado.lsp).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
 
@@ -305,6 +357,7 @@ async fn ejecutar(
         }
 
         sincronizar_lsp(layout, &mut estado.lsp).await;
+        necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
     }
 
     estado.lsp.cerrar().await;
