@@ -49,7 +49,11 @@ main() {
     command -v curl >/dev/null 2>&1 || error "hace falta 'curl' para descargar tcode."
     command -v tar >/dev/null 2>&1 || error "hace falta 'tar' para extraer el binario."
 
-    local plataforma url_descarga archivo_tmp dir_tmp
+    # dir_tmp NO es local: el trap de limpieza se dispara al salir del
+    # script completo (después de que main() retorna), momento en el que
+    # una variable local a esta función ya no existiría.
+    local plataforma url_descarga archivo_tmp
+    dir_tmp=""
     plataforma="$(detectar_plataforma)"
 
     if [ "$VERSION" = "latest" ]; then

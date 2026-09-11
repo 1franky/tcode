@@ -12,3 +12,6 @@
 # Configuración local que no debe versionarse
 .env
 .env.local
+
+# Artefactos internos de Claude Code
+.claude/
