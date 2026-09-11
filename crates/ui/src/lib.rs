@@ -3,8 +3,10 @@
 //! activo y el resaltado de sintaxis de `tcode-syntax`; no modifica el
 //! `core` (ver PLAN.md §3).
 
+mod overlay;
 mod paleta;
 mod panel_archivos;
+mod panel_buscador;
 mod panel_paleta;
 mod statusbar;
 mod vista_codigo;
@@ -14,7 +16,7 @@ use ratatui::Frame;
 
 use tcode_commands::EstadoPaleta;
 use tcode_core::Editor;
-use tcode_fs::Explorador;
+use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_syntax::Resaltador;
 
 pub use paleta::Paleta;
@@ -32,8 +34,9 @@ pub struct EstadoUi {
 
 /// Dibuja un frame completo: panel lateral del explorador (si está
 /// visible, `Ctrl+B`) a la izquierda, vista de código y statusbar a la
-/// derecha (PLAN.md §1), y la paleta de comandos (`Ctrl+Shift+P`) encima
-/// de todo cuando está abierta.
+/// derecha (PLAN.md §1), y la paleta de comandos (`Ctrl+Shift+P`/`F1`) o
+/// el buscador de archivos (`Ctrl+P`) encima de todo cuando alguno de los
+/// dos está abierto (nunca los dos a la vez).
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -44,6 +47,7 @@ pub fn dibujar(
     resaltador: &mut Resaltador,
     explorador: &Explorador,
     paleta_comandos: &EstadoPaleta,
+    buscador_archivos: &BuscadorArchivos,
 ) {
     let area_total = frame.area();
 
@@ -68,5 +72,7 @@ pub fn dibujar(
 
     if paleta_comandos.activa() {
         panel_paleta::dibujar(frame, area_total, paleta_comandos, paleta);
+    } else if buscador_archivos.activo() {
+        panel_buscador::dibujar(frame, area_total, buscador_archivos, paleta);
     }
 }

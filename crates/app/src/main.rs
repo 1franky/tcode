@@ -5,9 +5,10 @@
 //! Los eventos de teclado pasan por el [`Resolvedor`] de `tcode-keymap`
 //! para convertirse en nombres de comando en español (`"archivo.guardar"`);
 //! `ejecutar_comando` es el dispatcher que los traduce a llamadas sobre
-//! [`Editor`] o el [`Explorador`]. La paleta de comandos (`Ctrl+Shift+P`,
-//! `tcode-commands`) produce esos mismos ids por otra vía (buscar por
-//! nombre en vez de memorizar un atajo) y termina en el mismo dispatcher.
+//! [`Editor`] o el [`Explorador`]. La paleta de comandos (`Ctrl+Shift+P`/
+//! `F1`) y el buscador de archivos (`Ctrl+P`) producen esos mismos ids por
+//! otra vía (buscar por nombre en vez de memorizar un atajo) y terminan en
+//! el mismo dispatcher.
 
 use std::io::{self, Stdout};
 use std::path::PathBuf;
@@ -15,7 +16,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
-    self, Event, KeyCode, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
     PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
@@ -28,7 +29,7 @@ use ratatui::Terminal;
 use tcode_commands::EstadoPaleta;
 use tcode_config::Config;
 use tcode_core::Editor;
-use tcode_fs::Explorador;
+use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_syntax::Resaltador;
 use tcode_ui::{EstadoUi, Paleta};
@@ -103,8 +104,8 @@ fn finalizar_terminal(terminal: &mut Terminal<Backend>, protocolo_kitty: bool) -
 /// Qué panel recibe las teclas de navegación/edición genéricas
 /// (`cursor.*`, `Enter`...). Los comandos globales (guardar, deshacer,
 /// salir, recargar config) funcionan sin importar el foco. Mientras la
-/// paleta de comandos está abierta, ningún foco importa: captura el
-/// teclado por completo (ver `ejecutar`).
+/// paleta de comandos o el buscador de archivos están abiertos, ningún
+/// foco importa: capturan el teclado por completo (ver `ejecutar`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Foco {
     Editor,
@@ -112,34 +113,59 @@ enum Foco {
 }
 
 /// Resultado de ejecutar un comando: si el bucle principal debe seguir,
-/// terminar, o si se abrió un archivo nuevo desde el explorador (y hay que
-/// actualizar la ruta mostrada en la statusbar).
+/// terminar, o si se abrió un archivo nuevo (desde el explorador o el
+/// buscador) y hay que actualizar la ruta mostrada en la statusbar.
 enum Accion {
     Continuar,
     Salir,
     ArchivoAbierto(PathBuf),
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Todo el estado mutable que un comando puede necesitar tocar, agrupado
+/// para no ir sumando parámetros sueltos a cada función del dispatcher
+/// según crece la lista de comandos (M2 ya suma paleta de comandos +
+/// buscador de archivos; vendrán más piezas). `editor` se mantiene aparte,
+/// fuera de este struct: es el documento activo, conceptualmente distinto
+/// de "todo lo demás".
+struct EstadoApp {
+    config: Config,
+    paleta: Paleta,
+    explorador: Explorador,
+    foco: Foco,
+    confirmar_salida: bool,
+    paleta_comandos: EstadoPaleta,
+    buscador_archivos: BuscadorArchivos,
+}
+
+fn sin_modificadores(key: KeyEvent) -> bool {
+    !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT)
+}
+
 fn ejecutar(
     terminal: &mut Terminal<Backend>,
     editor: &mut Editor,
-    mut config: Config,
+    config: Config,
     keymap: &Keymap,
-    mut explorador: Explorador,
+    explorador: Explorador,
     ruta_arg: Option<&str>,
 ) -> Result<()> {
     let mut estado_ui = EstadoUi::default();
     let mut ruta_mostrada = ruta_arg.unwrap_or("[Sin nombre]").to_string();
-    let mut paleta = cargar_paleta(&config.interfaz.tema);
     let mut resaltador = Resaltador::nuevo();
     let mut resolvedor = Resolvedor::nuevo(keymap);
-    let mut paleta_comandos = EstadoPaleta::nueva();
-    let mut foco = Foco::Editor;
-    // Ctrl+Q con cambios sin guardar pide una segunda confirmación en vez de
-    // perder trabajo en silencio (nano-style). Cualquier otra resolución la
-    // cancela.
-    let mut confirmar_salida = false;
+
+    let mut estado = EstadoApp {
+        paleta: cargar_paleta(&config.interfaz.tema),
+        config,
+        explorador,
+        foco: Foco::Editor,
+        // Ctrl+Q con cambios sin guardar pide una segunda confirmación en
+        // vez de perder trabajo en silencio (nano-style). Cualquier otra
+        // resolución la cancela.
+        confirmar_salida: false,
+        paleta_comandos: EstadoPaleta::nueva(),
+        buscador_archivos: BuscadorArchivos::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
+    };
 
     loop {
         terminal.draw(|frame| {
@@ -148,10 +174,11 @@ fn ejecutar(
                 editor,
                 &mut estado_ui,
                 &ruta_mostrada,
-                &paleta,
+                &estado.paleta,
                 &mut resaltador,
-                &explorador,
-                &paleta_comandos,
+                &estado.explorador,
+                &estado.paleta_comandos,
+                &estado.buscador_archivos,
             )
         })?;
 
@@ -165,41 +192,48 @@ fn ejecutar(
             continue;
         }
 
-        // Mientras la paleta está abierta captura el teclado por completo:
-        // escribir busca, no pasa por el sistema de atajos ni llega al
-        // editor. Solo Esc/flechas/Enter tienen un significado especial
-        // aquí, distinto del resto del editor.
-        if paleta_comandos.activa() {
-            confirmar_salida = false;
+        // Paleta de comandos y buscador de archivos son modales
+        // mutuamente excluyentes que capturan el teclado por completo
+        // mientras están abiertos: escribir busca, no pasa por el sistema
+        // de atajos ni llega al editor.
+        if estado.paleta_comandos.activa() {
+            estado.confirmar_salida = false;
             match key.code {
-                KeyCode::Esc => paleta_comandos.cerrar(),
-                KeyCode::Up => paleta_comandos.mover_arriba(),
-                KeyCode::Down => paleta_comandos.mover_abajo(),
-                KeyCode::Backspace => paleta_comandos.borrar(),
+                KeyCode::Esc => estado.paleta_comandos.cerrar(),
+                KeyCode::Up => estado.paleta_comandos.mover_arriba(),
+                KeyCode::Down => estado.paleta_comandos.mover_abajo(),
+                KeyCode::Backspace => estado.paleta_comandos.borrar(),
                 KeyCode::Enter => {
-                    if let Some(id) = paleta_comandos.confirmar() {
-                        let accion = procesar_comando(
-                            id,
-                            editor,
-                            &mut config,
-                            &mut paleta,
-                            &mut explorador,
-                            &mut foco,
-                            &mut confirmar_salida,
-                            &mut paleta_comandos,
-                        );
-                        match accion {
+                    if let Some(id) = estado.paleta_comandos.confirmar() {
+                        match procesar_comando(id, editor, &mut estado) {
                             Accion::Salir => break,
                             Accion::Continuar => {}
                             Accion::ArchivoAbierto(ruta) => ruta_mostrada = ruta.display().to_string(),
                         }
                     }
                 }
-                KeyCode::Char(c)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    paleta_comandos.escribir(c);
+                KeyCode::Char(c) if sin_modificadores(key) => estado.paleta_comandos.escribir(c),
+                _ => {}
+            }
+            continue;
+        }
+
+        if estado.buscador_archivos.activo() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => estado.buscador_archivos.cerrar(),
+                KeyCode::Up => estado.buscador_archivos.mover_arriba(),
+                KeyCode::Down => estado.buscador_archivos.mover_abajo(),
+                KeyCode::Backspace => estado.buscador_archivos.borrar(),
+                KeyCode::Enter => {
+                    if let Some(ruta) = estado.buscador_archivos.confirmar() {
+                        if let Ok(nuevo_editor) = Editor::abrir(&ruta) {
+                            *editor = nuevo_editor;
+                            ruta_mostrada = ruta.display().to_string();
+                        }
+                    }
                 }
+                KeyCode::Char(c) if sin_modificadores(key) => estado.buscador_archivos.escribir(c),
                 _ => {}
             }
             continue;
@@ -209,36 +243,24 @@ fn ejecutar(
 
         let reintentando_salida = matches!(&resolucion, Resolucion::Comando(n) if n == "app.salir");
         if !reintentando_salida {
-            confirmar_salida = false;
+            estado.confirmar_salida = false;
         }
 
         match resolucion {
-            Resolucion::Comando(nombre) => {
-                let accion = procesar_comando(
-                    &nombre,
-                    editor,
-                    &mut config,
-                    &mut paleta,
-                    &mut explorador,
-                    &mut foco,
-                    &mut confirmar_salida,
-                    &mut paleta_comandos,
-                );
-                match accion {
-                    Accion::Salir => break,
-                    Accion::Continuar => {}
-                    Accion::ArchivoAbierto(ruta) => ruta_mostrada = ruta.display().to_string(),
-                }
-            }
+            Resolucion::Comando(nombre) => match procesar_comando(&nombre, editor, &mut estado) {
+                Accion::Salir => break,
+                Accion::Continuar => {}
+                Accion::ArchivoAbierto(ruta) => ruta_mostrada = ruta.display().to_string(),
+            },
             Resolucion::Pendiente | Resolucion::Cancelado => {}
             Resolucion::SinCoincidencia => {
                 // Ninguna tecla/chord configurado coincide: si es un
                 // carácter imprimible sin Ctrl/Alt Y el foco está en el
                 // editor, se inserta como texto normal (escribir no pasa
                 // por el sistema de atajos; el explorador no recibe texto).
-                if foco == Foco::Editor {
+                if estado.foco == Foco::Editor {
                     if let KeyCode::Char(c) = key.code {
-                        if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) {
+                        if sin_modificadores(key) {
                             editor.insertar_char(c);
                         }
                     }
@@ -252,30 +274,32 @@ fn ejecutar(
 
 /// Punto de entrada único para ejecutar un id de comando, venga de un
 /// atajo de teclado o de confirmar un resultado en la paleta de comandos.
-/// `config.recargar` y `paleta.comandos` necesitan estado que no le
-/// corresponde a `ejecutar_comando` (la paleta de colores, la propia
-/// paleta de comandos), así que se interceptan aquí antes de delegar.
-#[allow(clippy::too_many_arguments)]
-fn procesar_comando(
-    id: &str,
-    editor: &mut Editor,
-    config: &mut Config,
-    paleta: &mut Paleta,
-    explorador: &mut Explorador,
-    foco: &mut Foco,
-    confirmar_salida: &mut bool,
-    paleta_comandos: &mut EstadoPaleta,
-) -> Accion {
+/// `config.recargar`, `paleta.comandos` y `buscar.archivos` necesitan
+/// estado que no le corresponde a `ejecutar_comando` (la paleta de
+/// colores, los propios overlays), así que se interceptan aquí antes de
+/// delegar.
+fn procesar_comando(id: &str, editor: &mut Editor, estado: &mut EstadoApp) -> Accion {
     match id {
         "config.recargar" => {
-            recargar_config_y_tema(config, paleta);
+            recargar_config_y_tema(&mut estado.config, &mut estado.paleta);
             Accion::Continuar
         }
         "paleta.comandos" => {
-            paleta_comandos.abrir();
+            estado.paleta_comandos.abrir();
             Accion::Continuar
         }
-        _ => ejecutar_comando(id, editor, config, explorador, foco, confirmar_salida),
+        "buscar.archivos" => {
+            estado.buscador_archivos.abrir();
+            Accion::Continuar
+        }
+        _ => ejecutar_comando(
+            id,
+            editor,
+            &estado.config,
+            &mut estado.explorador,
+            &mut estado.foco,
+            &mut estado.confirmar_salida,
+        ),
     }
 }
 

@@ -5,10 +5,11 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Explorador de archivos de tcode: árbol de directorios navegable con carga perezosa."
+description = "Explorador de archivos de tcode: árbol de directorios navegable, buscador difuso."
 
 [dependencies]
 anyhow.workspace = true
+tcode-fuzzy.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

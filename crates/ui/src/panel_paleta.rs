@@ -1,86 +1,25 @@
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
+use ratatui::layout::Rect;
 use ratatui::Frame;
 
 use tcode_commands::EstadoPaleta;
 
-use crate::Paleta;
+use crate::{overlay, Paleta};
 
-/// Dibuja la paleta de comandos (`Ctrl+Shift+P`, PLAN.md §4) como un
-/// recuadro centrado encima de todo lo demás: campo de búsqueda arriba,
-/// resultados filtrados abajo con las letras coincidentes resaltadas.
+/// Dibuja la paleta de comandos (`Ctrl+Shift+P`/`F1`, PLAN.md §4).
 pub fn dibujar(frame: &mut Frame, area_total: Rect, paleta_comandos: &EstadoPaleta, paleta: &Paleta) {
-    let area = area_centrada(area_total, 60, 60);
-    frame.render_widget(Clear, area);
-
-    let partes = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(1)])
-        .split(area);
-
-    let estilo_base = Style::default().bg(paleta.fondo).fg(paleta.texto);
-
-    let campo = Paragraph::new(Line::from(format!("> {}", paleta_comandos.consulta())))
-        .block(Block::default().borders(Borders::ALL).title(" Paleta de comandos "))
-        .style(estilo_base);
-    frame.render_widget(campo, partes[0]);
-
-    let seleccion = paleta_comandos.seleccion();
-    let items: Vec<ListItem> = paleta_comandos
+    let filas: Vec<(String, Vec<usize>)> = paleta_comandos
         .resultados()
         .into_iter()
-        .enumerate()
-        .map(|(idx, resultado)| {
-            let estilo_fila = if idx == seleccion {
-                estilo_base.bg(paleta.linea_actual)
-            } else {
-                estilo_base
-            };
-            let spans: Vec<Span> = resultado
-                .comando
-                .descripcion
-                .chars()
-                .enumerate()
-                .map(|(i, c)| {
-                    let estilo = if resultado.posiciones.contains(&i) {
-                        estilo_fila.add_modifier(Modifier::BOLD)
-                    } else {
-                        estilo_fila
-                    };
-                    Span::styled(c.to_string(), estilo)
-                })
-                .collect();
-            ListItem::new(Line::from(spans)).style(estilo_fila)
-        })
+        .map(|r| (r.comando.descripcion.to_string(), r.posiciones))
         .collect();
 
-    let lista = List::new(items)
-        .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM).style(estilo_base));
-    frame.render_widget(lista, partes[1]);
-}
-
-/// Recorta `area` a un rectángulo centrado que ocupa `porcentaje_ancho`% x
-/// `porcentaje_alto`% del total.
-fn area_centrada(area: Rect, porcentaje_ancho: u16, porcentaje_alto: u16) -> Rect {
-    let margen_vertical = (100 - porcentaje_alto) / 2;
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(margen_vertical),
-            Constraint::Percentage(porcentaje_alto),
-            Constraint::Percentage(margen_vertical),
-        ])
-        .split(area);
-
-    let margen_horizontal = (100 - porcentaje_ancho) / 2;
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(margen_horizontal),
-            Constraint::Percentage(porcentaje_ancho),
-            Constraint::Percentage(margen_horizontal),
-        ])
-        .split(vertical[1])[1]
+    overlay::dibujar(
+        frame,
+        area_total,
+        "Paleta de comandos",
+        paleta_comandos.consulta(),
+        &filas,
+        paleta_comandos.seleccion(),
+        paleta,
+    );
 }

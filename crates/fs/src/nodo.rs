@@ -113,7 +113,7 @@ impl Nodo {
 /// mayoría de exploradores antes de cualquier configuración adicional. Qué
 /// más ocultar (p. ej. `target/`, `node_modules/`) es configurable desde el
 /// panel de administración en M4 (PLAN.md §5).
-fn nombre_oculto(nombre: &str) -> bool {
+pub(crate) fn nombre_oculto(nombre: &str) -> bool {
     nombre.starts_with('.')
 }
 

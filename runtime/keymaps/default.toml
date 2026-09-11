@@ -31,6 +31,7 @@
 # extendido de Kitty, Ctrl+Shift+<letra> es indistinguible de Ctrl+<letra>
 # (confirmado en tmux). F1 (como en VSCode) funciona en cualquier terminal.
 "F1"            = "paleta.comandos"
+"Ctrl+P"        = "buscar.archivos"
 
 [editor]
 
