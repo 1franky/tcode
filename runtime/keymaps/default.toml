@@ -1,0 +1,32 @@
+# Atajos por defecto de tcode (PLAN.md §4). Editable copiando este archivo
+# a ~/.config/tcode/keymap.toml (o el equivalente de tu SO) y recargable en
+# caliente con Ctrl+K Ctrl+L, sin reiniciar el editor.
+#
+# Solo [global] y [editor] están activos en M1: la vista de código es la
+# única que existe todavía. [markdown] y [csv] se validan como TOML pero se
+# conectan cuando esas vistas lleguen en M3.
+
+[global]
+"Ctrl+S"        = "archivo.guardar"
+"Ctrl+Q"        = "app.salir"
+"Ctrl+Z"        = "editor.deshacer"
+"Ctrl+Y"        = "editor.rehacer"
+"Up"            = "cursor.arriba"
+"Down"          = "cursor.abajo"
+"Left"          = "cursor.izquierda"
+"Right"         = "cursor.derecha"
+"Home"          = "cursor.inicio_linea"
+"End"           = "cursor.fin_linea"
+"Ctrl+Home"     = "cursor.inicio_archivo"
+"Ctrl+End"      = "cursor.fin_archivo"
+"Backspace"     = "editor.borrar_atras"
+"Delete"        = "editor.borrar_adelante"
+"Enter"         = "editor.nueva_linea"
+"Tab"           = "editor.indentar_o_autocompletar"
+"Ctrl+K Ctrl+L" = "config.recargar"
+
+[editor]
+
+[markdown]
+
+[csv]

@@ -1,15 +1,19 @@
-//! Binario principal de `tcode`: carga de configuración, arranque/apagado de
-//! la terminal y el bucle de eventos (PLAN.md §3, crate `app`).
+//! Binario principal de `tcode`: carga de configuración y de atajos,
+//! arranque/apagado de la terminal, y el bucle de eventos (PLAN.md §3,
+//! crate `app`).
 //!
-//! M0/M1: atajos todavía hardcodeados (`Ctrl+S`, `Ctrl+Q`, `Ctrl+Z`,
-//! `Ctrl+Y`, flechas, Home/End, Backspace/Delete, Tab). El sistema de
-//! atajos configurable en TOML (crate `keymap`) es otra pieza de M1.
+//! Los eventos de teclado pasan por el [`Resolvedor`] de `tcode-keymap`
+//! para convertirse en nombres de comando en español (`"archivo.guardar"`);
+//! `ejecutar_comando` es el dispatcher que los traduce a llamadas sobre
+//! [`Editor`]. Ese dispatcher se moverá a un crate `commands` dedicado
+//! cuando llegue la paleta de comandos en M2 — por ahora vive aquí porque
+//! es el único lugar que lo necesita.
 
 use std::io::{self, Stdout};
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
@@ -17,6 +21,7 @@ use ratatui::Terminal;
 
 use tcode_config::Config;
 use tcode_core::Editor;
+use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_ui::{EstadoUi, Paleta};
 
 type Backend = CrosstermBackend<Stdout>;
@@ -29,14 +34,14 @@ fn main() -> Result<()> {
         None => Editor::nuevo(),
     };
 
-    // La config y el tema nunca hacen fallar el arranque: si el archivo del
-    // usuario está corrupto o el tema configurado no existe, se sigue con
-    // los valores por defecto en vez de negarse a abrir el editor.
+    // La config y el keymap nunca hacen fallar el arranque: si el archivo
+    // del usuario está corrupto, se sigue con los valores por defecto en
+    // vez de negarse a abrir el editor.
     let config = tcode_config::cargar().unwrap_or_default();
-    let paleta = cargar_paleta(&config.interfaz.tema);
+    let keymap = tcode_keymap::cargar().unwrap_or_else(|_| tcode_keymap::keymap_por_defecto());
 
     let mut terminal = iniciar_terminal()?;
-    let resultado = ejecutar(&mut terminal, &mut editor, &config, &paleta, ruta_arg.as_deref());
+    let resultado = ejecutar(&mut terminal, &mut editor, config, &keymap, ruta_arg.as_deref());
     finalizar_terminal(&mut terminal)?;
 
     resultado
@@ -61,7 +66,7 @@ fn finalizar_terminal(terminal: &mut Terminal<Backend>) -> Result<()> {
     Ok(())
 }
 
-/// Resultado de procesar una tecla: si el bucle principal debe seguir o
+/// Resultado de ejecutar un comando: si el bucle principal debe seguir o
 /// terminar.
 enum Accion {
     Continuar,
@@ -71,24 +76,25 @@ enum Accion {
 fn ejecutar(
     terminal: &mut Terminal<Backend>,
     editor: &mut Editor,
-    config: &Config,
-    paleta: &Paleta,
+    mut config: Config,
+    keymap: &Keymap,
     ruta_arg: Option<&str>,
 ) -> Result<()> {
     let mut estado_ui = EstadoUi::default();
     let ruta_mostrada = ruta_arg.unwrap_or("[Sin nombre]").to_string();
+    let mut paleta = cargar_paleta(&config.interfaz.tema);
+    let mut resolvedor = Resolvedor::nuevo(keymap);
     // Ctrl+Q con cambios sin guardar pide una segunda confirmación en vez de
-    // perder trabajo en silencio (nano-style). Cualquier otra tecla la
+    // perder trabajo en silencio (nano-style). Cualquier otra resolución la
     // cancela.
     let mut confirmar_salida = false;
 
     loop {
-        terminal.draw(|frame| tcode_ui::dibujar(frame, editor, &mut estado_ui, &ruta_mostrada, paleta))?;
+        terminal.draw(|frame| tcode_ui::dibujar(frame, editor, &mut estado_ui, &ruta_mostrada, &paleta))?;
 
         if !event::poll(Duration::from_millis(200))? {
             continue;
         }
-
         let Event::Key(key) = event::read()? else {
             continue;
         };
@@ -96,59 +102,85 @@ fn ejecutar(
             continue;
         }
 
-        if !es_ctrl_q(key) {
+        let resolucion = resolvedor.procesar(tcode_keymap::desde_evento(key));
+
+        let reintentando_salida = matches!(&resolucion, Resolucion::Comando(n) if n == "app.salir");
+        if !reintentando_salida {
             confirmar_salida = false;
         }
 
-        match manejar_tecla(editor, config, key, &mut confirmar_salida) {
-            Accion::Salir => break,
-            Accion::Continuar => {}
+        match resolucion {
+            Resolucion::Comando(nombre) if nombre == "config.recargar" => {
+                recargar_config_y_tema(&mut config, &mut paleta);
+            }
+            Resolucion::Comando(nombre) => match ejecutar_comando(&nombre, editor, &config, &mut confirmar_salida) {
+                Accion::Salir => break,
+                Accion::Continuar => {}
+            },
+            Resolucion::Pendiente | Resolucion::Cancelado => {}
+            Resolucion::SinCoincidencia => {
+                // Ninguna tecla/chord configurado coincide: si es un
+                // carácter imprimible sin Ctrl/Alt, se inserta como texto
+                // normal (escribir no pasa por el sistema de atajos).
+                if let KeyCode::Char(c) = key.code {
+                    if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) {
+                        editor.insertar_char(c);
+                    }
+                }
+            }
         }
     }
 
     Ok(())
 }
 
-fn es_ctrl_q(key: KeyEvent) -> bool {
-    key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL)
-}
-
-fn manejar_tecla(editor: &mut Editor, config: &Config, key: KeyEvent, confirmar_salida: &mut bool) -> Accion {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-
-    match key.code {
-        KeyCode::Char('q') if ctrl => {
+/// Dispatcher comando -> acción sobre el `Editor`. Los nombres coinciden
+/// con los de `runtime/keymaps/default.toml` y con PLAN.md §4.
+fn ejecutar_comando(comando: &str, editor: &mut Editor, config: &Config, confirmar_salida: &mut bool) -> Accion {
+    match comando {
+        "app.salir" => {
             if editor.buffer().modificado() && !*confirmar_salida {
                 *confirmar_salida = true;
             } else {
                 return Accion::Salir;
             }
         }
-        // M0/M1 no tienen "guardar como" todavía (llega con la paleta de
+        // M1 no tiene "guardar como" todavía (llega con la paleta de
         // comandos en M2): si el buffer no tiene ruta, Ctrl+S no hace nada
         // en vez de hacer fallar el editor entero.
-        KeyCode::Char('s') if ctrl => {
+        "archivo.guardar" => {
             let _ = editor.guardar();
         }
-        KeyCode::Char('z') if ctrl => editor.deshacer(),
-        KeyCode::Char('y') if ctrl => editor.rehacer(),
-        KeyCode::Char(c) if !ctrl => editor.insertar_char(c),
-        KeyCode::Tab => insertar_tabulacion(editor, config),
-        KeyCode::Enter => editor.insertar_char('\n'),
-        KeyCode::Backspace => editor.borrar_atras(),
-        KeyCode::Delete => editor.borrar_adelante(),
-        KeyCode::Left => editor.mover_izquierda(),
-        KeyCode::Right => editor.mover_derecha(),
-        KeyCode::Up => editor.mover_arriba(),
-        KeyCode::Down => editor.mover_abajo(),
-        KeyCode::Home if ctrl => editor.inicio_archivo(),
-        KeyCode::End if ctrl => editor.fin_archivo(),
-        KeyCode::Home => editor.inicio_linea(),
-        KeyCode::End => editor.fin_linea(),
+        "editor.deshacer" => editor.deshacer(),
+        "editor.rehacer" => editor.rehacer(),
+        "cursor.arriba" => editor.mover_arriba(),
+        "cursor.abajo" => editor.mover_abajo(),
+        "cursor.izquierda" => editor.mover_izquierda(),
+        "cursor.derecha" => editor.mover_derecha(),
+        "cursor.inicio_linea" => editor.inicio_linea(),
+        "cursor.fin_linea" => editor.fin_linea(),
+        "cursor.inicio_archivo" => editor.inicio_archivo(),
+        "cursor.fin_archivo" => editor.fin_archivo(),
+        "editor.borrar_atras" => editor.borrar_atras(),
+        "editor.borrar_adelante" => editor.borrar_adelante(),
+        "editor.nueva_linea" => editor.insertar_char('\n'),
+        "editor.indentar_o_autocompletar" => insertar_tabulacion(editor, config),
         _ => {}
     }
-
     Accion::Continuar
+}
+
+/// `config.recargar` (`Ctrl+K Ctrl+L`): recarga `config.toml` desde disco
+/// sin reiniciar el editor (PLAN.md §4) y reconstruye la paleta de colores
+/// si el tema activo cambió.
+fn recargar_config_y_tema(config: &mut Config, paleta: &mut Paleta) {
+    if let Ok(nueva) = tcode_config::cargar() {
+        let tema_cambio = nueva.interfaz.tema != config.interfaz.tema;
+        *config = nueva;
+        if tema_cambio {
+            *paleta = cargar_paleta(&config.interfaz.tema);
+        }
+    }
 }
 
 /// `editor.tamano_tabulacion` / `editor.usar_espacios` de `config.toml`
