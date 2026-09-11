@@ -20,6 +20,11 @@ pub struct Paleta {
     pub diagnostico_advertencia: Color,
     pub diagnostico_info: Color,
     pub diagnostico_sugerencia: Color,
+    /// Fondo resaltado de la coincidencia de búsqueda sobre la que está
+    /// el cursor de búsqueda, y de las demás coincidencias visibles
+    /// (`Ctrl+F`/`Ctrl+H`, PLAN.md §4).
+    pub busqueda_actual: Color,
+    pub busqueda_otras: Color,
     /// Estilo por token de sintaxis (PLAN.md §7), indexado por uno de los
     /// nombres canónicos de [`tcode_syntax::NOMBRES_RESALTADO`].
     sintaxis: HashMap<&'static str, Style>,
@@ -49,6 +54,8 @@ impl Paleta {
             diagnostico_advertencia: color_diagnostico(&tema.diagnostics.warning, Color::Yellow),
             diagnostico_info: color_diagnostico(&tema.diagnostics.info, Color::Cyan),
             diagnostico_sugerencia: color_diagnostico(&tema.diagnostics.hint, Color::Gray),
+            busqueda_actual: color_diagnostico(&tema.search.coincidencia_actual, Color::Yellow),
+            busqueda_otras: color_diagnostico(&tema.search.otras_coincidencias, Color::DarkGray),
             sintaxis,
         })
     }
@@ -70,6 +77,8 @@ impl Paleta {
             diagnostico_advertencia: Color::Yellow,
             diagnostico_info: Color::Cyan,
             diagnostico_sugerencia: Color::Gray,
+            busqueda_actual: Color::Yellow,
+            busqueda_otras: Color::DarkGray,
             sintaxis: HashMap::new(),
         }
     }

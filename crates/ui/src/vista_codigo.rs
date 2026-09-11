@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use tcode_core::Editor;
+use tcode_core::{Coincidencia, Editor};
 use tcode_lsp::{DiagnosticoSimple, Severidad};
 use tcode_syntax::{Lenguaje, Resaltador, Token};
 
@@ -12,11 +12,13 @@ use crate::{EstadoUi, Paleta};
 
 /// Dibuja el contenido del archivo (coloreado por tree-sitter si la
 /// extensión corresponde a uno de los lenguajes de M1, PLAN.md §11),
-/// resalta la línea del cursor y subraya las líneas con diagnósticos LSP
-/// (M2, PLAN.md §2: "diagnósticos inline"). `mostrar_cursor` posiciona
-/// además el cursor real (parpadeante) de la terminal — solo debe ser
-/// `true` para el panel activo cuando hay varios (`Ctrl+\`, PLAN.md §4):
-/// solo puede haber un cursor de terminal visible a la vez.
+/// resalta la línea del cursor, subraya las líneas con diagnósticos LSP
+/// (M2, PLAN.md §2: "diagnósticos inline") y resalta el fondo de las
+/// coincidencias de búsqueda activas (`Ctrl+F`/`Ctrl+H`, PLAN.md §4).
+/// `mostrar_cursor` posiciona además el cursor real (parpadeante) de la
+/// terminal — solo debe ser `true` para el panel activo cuando hay varios
+/// (`Ctrl+\`, PLAN.md §4): solo puede haber un cursor de terminal visible
+/// a la vez.
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -28,6 +30,8 @@ pub fn dibujar(
     ruta: &str,
     mostrar_cursor: bool,
     diagnosticos: &[DiagnosticoSimple],
+    coincidencias_busqueda: &[Coincidencia],
+    indice_coincidencia_actual: Option<usize>,
 ) {
     let alto_visible = area.height as usize;
     let ancho_visible = area.width as usize;
@@ -44,7 +48,14 @@ pub fn dibujar(
         .take(alto_visible)
         .map(|(idx, linea)| {
             let inicio_byte = editor.buffer().inicio_byte_linea(idx);
-            let mut spans = spans_de_linea(linea, inicio_byte, &tokens, paleta);
+            let mut spans = spans_de_linea(
+                linea,
+                inicio_byte,
+                &tokens,
+                paleta,
+                coincidencias_busqueda,
+                indice_coincidencia_actual,
+            );
             if idx == cursor.linea {
                 // Se añade un span final de relleno para que el resaltado
                 // de la línea actual cubra todo el ancho, no solo el texto.
@@ -53,7 +64,12 @@ pub fn dibujar(
                     spans.push(Span::raw(" ".repeat(ancho_visible - ocupado)));
                 }
                 for span in &mut spans {
-                    span.style = span.style.bg(paleta.linea_actual);
+                    // No pisa el fondo si el span ya tiene uno propio (una
+                    // coincidencia de búsqueda): esa señal debe seguir
+                    // siendo visible aunque el cursor esté en esa línea.
+                    if span.style.bg.is_none() {
+                        span.style = span.style.bg(paleta.linea_actual);
+                    }
                 }
             }
             if let Some(severidad) = severidad_mas_grave_en_linea(diagnosticos, idx) {
@@ -117,37 +133,77 @@ fn calcular_tokens(editor: &Editor, resaltador: &mut Resaltador, ruta: &str) -> 
 }
 
 /// Construye los spans coloreados de una línea a partir de los tokens del
-/// archivo completo (en offsets de byte), recortados al rango de esta
-/// línea. Los tokens llegan sin solapes y en orden, así que basta un barrido
-/// lineal.
-fn spans_de_linea<'a>(texto_linea: &'a str, inicio_byte_linea: usize, tokens: &[Token], paleta: &Paleta) -> Vec<Span<'a>> {
-    if tokens.is_empty() {
+/// archivo completo (en offsets de byte) y de las coincidencias de
+/// búsqueda activas (mismo tipo de offset, ver `tcode_core::busqueda`),
+/// recortados ambos al rango de esta línea. Como un rango de búsqueda
+/// puede caer a mitad de un token de sintaxis (o viceversa), se calculan
+/// los puntos de corte combinados de ambas fuentes y se resuelve el
+/// estilo (color de texto + fondo de coincidencia) por cada segmento
+/// resultante.
+fn spans_de_linea<'a>(
+    texto_linea: &'a str,
+    inicio_byte_linea: usize,
+    tokens: &[Token],
+    paleta: &Paleta,
+    coincidencias: &[Coincidencia],
+    indice_coincidencia_actual: Option<usize>,
+) -> Vec<Span<'a>> {
+    let fin_byte_linea = inicio_byte_linea + texto_linea.len();
+
+    let tokens_en_linea: Vec<&Token> =
+        tokens.iter().filter(|t| t.fin > inicio_byte_linea && t.inicio < fin_byte_linea).collect();
+
+    // Rangos de coincidencia recortados a offsets LOCALES (relativos al
+    // inicio de esta línea), con si cada una es la coincidencia actual.
+    let coincidencias_en_linea: Vec<(usize, usize, bool)> = coincidencias
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.fin > inicio_byte_linea && c.inicio < fin_byte_linea)
+        .map(|(i, c)| {
+            let inicio = c.inicio.max(inicio_byte_linea) - inicio_byte_linea;
+            let fin = c.fin.min(fin_byte_linea) - inicio_byte_linea;
+            (inicio, fin, Some(i) == indice_coincidencia_actual)
+        })
+        .collect();
+
+    if tokens_en_linea.is_empty() && coincidencias_en_linea.is_empty() {
         return vec![Span::raw(texto_linea)];
     }
 
-    let fin_byte_linea = inicio_byte_linea + texto_linea.len();
-    let mut spans = Vec::new();
-    let mut cursor = inicio_byte_linea;
+    let mut puntos: Vec<usize> = vec![0, texto_linea.len()];
+    for t in &tokens_en_linea {
+        puntos.push(t.inicio.max(inicio_byte_linea) - inicio_byte_linea);
+        puntos.push(t.fin.min(fin_byte_linea) - inicio_byte_linea);
+    }
+    for (inicio, fin, _) in &coincidencias_en_linea {
+        puntos.push(*inicio);
+        puntos.push(*fin);
+    }
+    puntos.sort_unstable();
+    puntos.dedup();
 
-    for token in tokens {
-        if token.fin <= inicio_byte_linea || token.inicio >= fin_byte_linea {
+    let mut spans = Vec::new();
+    for ventana in puntos.windows(2) {
+        let (inicio, fin) = (ventana[0], ventana[1]);
+        if inicio >= fin {
             continue;
         }
-        let inicio = token.inicio.max(inicio_byte_linea);
-        let fin = token.fin.min(fin_byte_linea);
 
-        if inicio > cursor {
-            spans.push(Span::raw(&texto_linea[(cursor - inicio_byte_linea)..(inicio - inicio_byte_linea)]));
+        let offset_abs = inicio_byte_linea + inicio;
+        let mut estilo = tokens_en_linea
+            .iter()
+            .find(|t| t.inicio <= offset_abs && offset_abs < t.fin)
+            .map(|t| paleta.estilo_sintaxis(t.nombre))
+            .unwrap_or_default();
+
+        if let Some((_, _, actual)) =
+            coincidencias_en_linea.iter().find(|(ci, cf, _)| inicio >= *ci && fin <= *cf)
+        {
+            let color = if *actual { paleta.busqueda_actual } else { paleta.busqueda_otras };
+            estilo = estilo.bg(color);
         }
-        spans.push(Span::styled(
-            &texto_linea[(inicio - inicio_byte_linea)..(fin - inicio_byte_linea)],
-            paleta.estilo_sintaxis(token.nombre),
-        ));
-        cursor = fin;
-    }
 
-    if cursor < fin_byte_linea {
-        spans.push(Span::raw(&texto_linea[(cursor - inicio_byte_linea)..]));
+        spans.push(Span::styled(&texto_linea[inicio..fin], estilo));
     }
 
     spans

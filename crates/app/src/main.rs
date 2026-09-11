@@ -34,7 +34,7 @@ use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
 use tcode_config::Config;
-use tcode_core::Editor;
+use tcode_core::{CampoBusqueda, Editor, EstadoBusqueda};
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_syntax::Resaltador;
@@ -202,6 +202,7 @@ struct EstadoApp {
     confirmar_salida: bool,
     paleta_comandos: EstadoPaleta,
     buscador_archivos: BuscadorArchivos,
+    estado_busqueda: EstadoBusqueda,
     lsp: lsp::EstadoLsp,
 }
 
@@ -232,6 +233,7 @@ async fn ejecutar(
         confirmar_salida: false,
         paleta_comandos: EstadoPaleta::nueva(),
         buscador_archivos: BuscadorArchivos::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
+        estado_busqueda: EstadoBusqueda::nueva(),
         lsp: lsp::EstadoLsp::nuevo(),
     };
 
@@ -259,6 +261,7 @@ async fn ejecutar(
                 &estado.explorador,
                 &estado.paleta_comandos,
                 &estado.buscador_archivos,
+                &estado.estado_busqueda,
             )
         })?;
 
@@ -320,6 +323,57 @@ async fn ejecutar(
                     }
                 }
                 KeyCode::Char(c) if sin_modificadores(key) => estado.buscador_archivos.escribir(c),
+                _ => {}
+            }
+            sincronizar_lsp(layout, &mut estado.lsp).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
+        // La barra de búsqueda/reemplazo (`Ctrl+F`/`Ctrl+H`) también
+        // captura el teclado por completo mientras está abierta, pero a
+        // diferencia de la paleta/buscador de archivos algunos de sus
+        // atajos (`Alt+R/C/W`, `F3`) coinciden con combinaciones que el
+        // keymap también define como comandos globales — se manejan aquí
+        // directamente en vez de pasar por el `Resolvedor` para no
+        // duplicar esa lógica dos veces.
+        if estado.estado_busqueda.activa() {
+            estado.confirmar_salida = false;
+            let editor = layout.editor_activo_mut();
+            let texto = editor.buffer().a_texto();
+            match key.code {
+                KeyCode::Esc => estado.estado_busqueda.cerrar(),
+                KeyCode::Tab => estado.estado_busqueda.alternar_campo(),
+                KeyCode::Backspace => estado.estado_busqueda.borrar(&texto),
+                KeyCode::F(3) if key.modifiers.contains(KeyModifiers::SHIFT) => estado.estado_busqueda.anterior(),
+                KeyCode::F(3) => estado.estado_busqueda.siguiente(),
+                KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::ALT) => {
+                    estado.estado_busqueda.alternar_regex(&texto)
+                }
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::ALT) => {
+                    estado.estado_busqueda.alternar_mayusculas(&texto)
+                }
+                KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::ALT) => {
+                    estado.estado_busqueda.alternar_palabra(&texto)
+                }
+                // `Ctrl+Alt+Enter` es el atajo "canónico", pero terminales
+                // clásicas sin el protocolo extendido de Kitty a veces no
+                // transmiten ambos modificadores a la vez sobre `Enter`
+                // (confirmado en tmux); `Alt+Enter` a secas sí se
+                // distingue siempre, así que también vale. Solo en modo
+                // reemplazar: en modo "solo buscar" no hay texto de
+                // reemplazo que usar (sería reemplazar todo por "").
+                KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) && estado.estado_busqueda.modo_reemplazar() => {
+                    reemplazar_todas_las_coincidencias(editor, &mut estado.estado_busqueda);
+                }
+                KeyCode::Enter
+                    if estado.estado_busqueda.modo_reemplazar()
+                        && estado.estado_busqueda.campo_activo() == CampoBusqueda::Reemplazo =>
+                {
+                    reemplazar_coincidencia_actual(editor, &mut estado.estado_busqueda);
+                }
+                KeyCode::Enter => estado.estado_busqueda.siguiente(),
+                KeyCode::Char(c) if sin_modificadores(key) => estado.estado_busqueda.escribir(c, &texto),
                 _ => {}
             }
             sincronizar_lsp(layout, &mut estado.lsp).await;
@@ -392,6 +446,40 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp) 
         }
         "buscar.archivos" => {
             estado.buscador_archivos.abrir();
+            Accion::Continuar
+        }
+        "buscar.en_archivo" | "buscar.reemplazar" => {
+            let texto = layout.editor_activo().buffer().a_texto();
+            estado.estado_busqueda.abrir(id == "buscar.reemplazar", &texto);
+            saltar_a_coincidencia_actual(layout, &estado.estado_busqueda);
+            Accion::Continuar
+        }
+        // Repiten la última búsqueda aunque la barra esté cerrada (estilo
+        // VSCode): útil para seguir saltando entre coincidencias sin
+        // volver a abrir `Ctrl+F` cada vez.
+        "buscar.siguiente" => {
+            estado.estado_busqueda.siguiente();
+            saltar_a_coincidencia_actual(layout, &estado.estado_busqueda);
+            Accion::Continuar
+        }
+        "buscar.anterior" => {
+            estado.estado_busqueda.anterior();
+            saltar_a_coincidencia_actual(layout, &estado.estado_busqueda);
+            Accion::Continuar
+        }
+        "buscar.alternar_regex" => {
+            let texto = layout.editor_activo().buffer().a_texto();
+            estado.estado_busqueda.alternar_regex(&texto);
+            Accion::Continuar
+        }
+        "buscar.alternar_mayusculas" => {
+            let texto = layout.editor_activo().buffer().a_texto();
+            estado.estado_busqueda.alternar_mayusculas(&texto);
+            Accion::Continuar
+        }
+        "buscar.alternar_palabra" => {
+            let texto = layout.editor_activo().buffer().a_texto();
+            estado.estado_busqueda.alternar_palabra(&texto);
             Accion::Continuar
         }
         _ => ejecutar_comando(
@@ -546,4 +634,39 @@ fn insertar_tabulacion(editor: &mut Editor, config: &Config) {
     } else {
         editor.insertar_char('\t');
     }
+}
+
+/// Mueve el cursor del editor activo a la coincidencia de búsqueda
+/// seleccionada, si hay alguna — usado tanto al abrir la barra (`Ctrl+F`)
+/// como al saltar con `F3`/`Shift+F3`, con la barra abierta o cerrada.
+fn saltar_a_coincidencia_actual(layout: &mut PanelLayout, estado_busqueda: &EstadoBusqueda) {
+    if let Some(coincidencia) = estado_busqueda.coincidencia_actual() {
+        layout.editor_activo_mut().mover_cursor_a_byte(coincidencia.inicio);
+    }
+}
+
+/// `Ctrl+H` con el foco en el campo de reemplazo, `Enter`: reemplaza solo
+/// la coincidencia actual y deja seleccionada la siguiente (o vuelve a la
+/// primera si no queda ninguna después), sin tocar el resto del archivo.
+fn reemplazar_coincidencia_actual(editor: &mut Editor, estado_busqueda: &mut EstadoBusqueda) {
+    let Some(coincidencia) = estado_busqueda.coincidencia_actual() else {
+        return;
+    };
+    let reemplazo = estado_busqueda.reemplazo().to_string();
+    editor.reemplazar_rango_bytes(coincidencia.inicio, coincidencia.fin, &reemplazo);
+    let punto_edicion = coincidencia.inicio + reemplazo.len();
+    estado_busqueda.recalcular_y_posicionar(&editor.buffer().a_texto(), punto_edicion);
+}
+
+/// `Ctrl+Alt+Enter`: reemplaza todas las coincidencias de una vez. Se
+/// recorren de atrás hacia adelante para que reemplazar una no invalide
+/// los offsets de bytes de las que todavía faltan (una más corta o más
+/// larga que el patrón desplaza todo lo que viene después, pero nunca lo
+/// que viene antes).
+fn reemplazar_todas_las_coincidencias(editor: &mut Editor, estado_busqueda: &mut EstadoBusqueda) {
+    let reemplazo = estado_busqueda.reemplazo().to_string();
+    for coincidencia in estado_busqueda.coincidencias().iter().rev() {
+        editor.reemplazar_rango_bytes(coincidencia.inicio, coincidencia.fin, &reemplazo);
+    }
+    estado_busqueda.recalcular(&editor.buffer().a_texto());
 }

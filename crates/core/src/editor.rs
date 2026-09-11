@@ -148,6 +148,23 @@ impl Editor {
         self.cursor.fin_archivo(&self.buffer);
     }
 
+    /// Mueve el cursor a la posición del offset de bytes `offset_byte`
+    /// (usado para saltar a una coincidencia de búsqueda, PLAN.md §4).
+    pub fn mover_cursor_a_byte(&mut self, offset_byte: usize) {
+        let (linea, columna) = self.buffer.linea_columna_desde_byte(offset_byte);
+        self.cursor.linea = linea;
+        self.cursor.columna = columna;
+    }
+
+    /// Reemplaza el texto en el rango de bytes `[inicio, fin)` por
+    /// `reemplazo` (PLAN.md §4, "buscar.reemplazar") y deja el cursor
+    /// justo después del texto insertado.
+    pub fn reemplazar_rango_bytes(&mut self, inicio_byte: usize, fin_byte: usize, reemplazo: &str) {
+        self.registrar_snapshot();
+        self.buffer.reemplazar_rango_bytes(inicio_byte, fin_byte, reemplazo);
+        self.mover_cursor_a_byte(inicio_byte + reemplazo.len());
+    }
+
     pub fn deshacer(&mut self) {
         if let Some((rope, cursor)) = self.historia.deshacer(self.buffer.rope(), self.cursor) {
             self.buffer.reemplazar_rope(rope);

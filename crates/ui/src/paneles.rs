@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Rect};
 use ratatui::Frame;
 
-use tcode_core::Editor;
+use tcode_core::{Editor, EstadoBusqueda};
 use tcode_lsp::DiagnosticoSimple;
 use tcode_syntax::Resaltador;
 
@@ -179,13 +179,21 @@ impl Layout {
     /// Dibuja el árbol de paneles completo dentro de `area`, recursivo:
     /// cada división reparte el espacio 50/50 entre sus dos sub-árboles.
     /// Solo el panel activo recibe el cursor real de la terminal.
-    pub fn dibujar(&mut self, frame: &mut Frame, area: Rect, paleta: &Paleta, resaltador: &mut Resaltador) {
+    pub fn dibujar(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        paleta: &Paleta,
+        resaltador: &mut Resaltador,
+        estado_busqueda: &EstadoBusqueda,
+    ) {
         let activo = self.activo;
         let mut indice_actual = 0;
-        dibujar_panel(frame, area, &mut self.raiz, activo, &mut indice_actual, paleta, resaltador);
+        dibujar_panel(frame, area, &mut self.raiz, activo, &mut indice_actual, paleta, resaltador, estado_busqueda);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dibujar_panel(
     frame: &mut Frame,
     area: Rect,
@@ -194,6 +202,7 @@ fn dibujar_panel(
     indice_actual: &mut usize,
     paleta: &Paleta,
     resaltador: &mut Resaltador,
+    estado_busqueda: &EstadoBusqueda,
 ) {
     match panel {
         Panel::Hoja(panel_editor) => {
@@ -205,6 +214,14 @@ fn dibujar_panel(
                 .constraints([Constraint::Min(1), Constraint::Length(1)])
                 .split(area);
 
+            // La búsqueda opera solo sobre el buffer del panel activo: los
+            // demás paneles no reciben coincidencias que resaltar.
+            let (coincidencias, indice_coincidencia): (&[_], Option<usize>) = if es_activo {
+                (estado_busqueda.coincidencias(), estado_busqueda.indice_actual())
+            } else {
+                (&[], None)
+            };
+
             vista_codigo::dibujar(
                 frame,
                 partes[0],
@@ -213,8 +230,13 @@ fn dibujar_panel(
                 paleta,
                 resaltador,
                 &panel_editor.ruta_mostrada,
-                es_activo,
+                // Mientras la barra de búsqueda está abierta, el cursor
+                // real de la terminal se posiciona en ella (ver
+                // `panel_busqueda::dibujar`), no en el código.
+                es_activo && !estado_busqueda.activa(),
                 &panel_editor.diagnosticos,
+                coincidencias,
+                indice_coincidencia,
             );
             statusbar::dibujar(
                 frame,
@@ -237,8 +259,8 @@ fn dibujar_panel(
                 .direction(direccion_ratatui)
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                 .split(area);
-            dibujar_panel(frame, partes[0], primero, activo, indice_actual, paleta, resaltador);
-            dibujar_panel(frame, partes[1], segundo, activo, indice_actual, paleta, resaltador);
+            dibujar_panel(frame, partes[0], primero, activo, indice_actual, paleta, resaltador, estado_busqueda);
+            dibujar_panel(frame, partes[1], segundo, activo, indice_actual, paleta, resaltador, estado_busqueda);
         }
     }
 }

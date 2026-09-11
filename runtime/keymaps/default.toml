@@ -51,6 +51,17 @@
 "Ctrl+K 1"      = "panel.ir_a_1"
 "Ctrl+K 2"      = "panel.ir_a_2"
 "Ctrl+K 3"      = "panel.ir_a_3"
+"Ctrl+F"        = "buscar.en_archivo"
+"Ctrl+H"        = "buscar.reemplazar"
+# F3/Shift+F3 y Alt+R/C/W funcionan tanto con la barra abierta (capturados
+# directo en el bucle de eventos, como la paleta de comandos) como con la
+# barra cerrada, repitiendo la última búsqueda (estilo VSCode) — de ahí
+# que también estén en el keymap global.
+"F3"            = "buscar.siguiente"
+"Shift+F3"      = "buscar.anterior"
+"Alt+R"         = "buscar.alternar_regex"
+"Alt+C"         = "buscar.alternar_mayusculas"
+"Alt+W"         = "buscar.alternar_palabra"
 
 [editor]
 
