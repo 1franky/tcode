@@ -1,0 +1,42 @@
+# Tema Dracula (https://draculatheme.com) — paleta oficial.
+# Uno de los 3 temas básicos embebidos en el binario para M1. El resto de
+# los 10+ temas de PLAN.md §7 y el selector visual llegan en M4.
+name = "Dracula"
+type = "dark"
+
+[ui]
+background         = "#282a36"
+foreground         = "#f8f8f2"
+cursor             = "#f8f8f2"
+selection          = "#44475a"
+line_number        = "#6272a4"
+line_number_active = "#f8f8f2"
+current_line       = "#44475a"
+
+[statusbar]
+background     = "#191a21"
+foreground     = "#f8f8f2"
+modo_insertar  = "#50fa7b"
+modo_seleccion = "#f1fa8c"
+
+[syntax]
+keyword  = { fg = "#ff79c6", style = "bold" }
+string   = "#f1fa8c"
+number   = "#bd93f9"
+comment  = { fg = "#6272a4", style = "italic" }
+function = "#50fa7b"
+type     = "#8be9fd"
+variable = "#f8f8f2"
+constant = "#bd93f9"
+operator = "#ff79c6"
+
+[diagnostics]
+error   = "#ff5555"
+warning = "#f1fa8c"
+info    = "#8be9fd"
+hint    = "#6272a4"
+
+[git]
+added    = "#50fa7b"
+modified = "#f1fa8c"
+deleted  = "#ff5555"

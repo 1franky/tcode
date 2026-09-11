@@ -1,0 +1,41 @@
+# Tema claro genérico incluido por defecto, inspirado en la paleta de
+# GitHub Light: familiar, limpio, buen contraste en pantallas muy iluminadas.
+name = "Claro"
+type = "light"
+
+[ui]
+background         = "#ffffff"
+foreground         = "#24292e"
+cursor             = "#24292e"
+selection          = "#c8e1ff"
+line_number        = "#6e7781"
+line_number_active = "#24292e"
+current_line       = "#f6f8fa"
+
+[statusbar]
+background     = "#f6f8fa"
+foreground     = "#24292e"
+modo_insertar  = "#116329"
+modo_seleccion = "#9a6700"
+
+[syntax]
+keyword  = { fg = "#cf222e", style = "bold" }
+string   = "#0a3069"
+number   = "#0550ae"
+comment  = { fg = "#6e7781", style = "italic" }
+function = "#8250df"
+type     = "#953800"
+variable = "#24292e"
+constant = "#0550ae"
+operator = "#cf222e"
+
+[diagnostics]
+error   = "#cf222e"
+warning = "#9a6700"
+info    = "#0969da"
+hint    = "#6e7781"
+
+[git]
+added    = "#1a7f37"
+modified = "#9a6700"
+deleted  = "#cf222e"

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/ui", "crates/app"]
+members = ["crates/core", "crates/ui", "crates/config", "crates/app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,10 +12,14 @@ repository = "https://github.com/1franky/tcode"
 [workspace.dependencies]
 tcode-core = { path = "crates/core" }
 tcode-ui = { path = "crates/ui" }
+tcode-config = { path = "crates/config" }
 ropey = "1.6"
 crossterm = "0.28"
 ratatui = "0.29"
 anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "5"
 
 [profile.release]
 lto = true

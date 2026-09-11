@@ -1,0 +1,41 @@
+# Tema oscuro genérico incluido por defecto, inspirado en la paleta clásica
+# de editores de código (azules/grises neutros, alto contraste moderado).
+name = "Oscuro"
+type = "dark"
+
+[ui]
+background         = "#1e1e1e"
+foreground         = "#d4d4d4"
+cursor             = "#ffffff"
+selection          = "#264f78"
+line_number        = "#858585"
+line_number_active = "#c6c6c6"
+current_line       = "#2a2a2a"
+
+[statusbar]
+background     = "#007acc"
+foreground     = "#ffffff"
+modo_insertar  = "#89d185"
+modo_seleccion = "#cca700"
+
+[syntax]
+keyword  = { fg = "#569cd6", style = "bold" }
+string   = "#ce9178"
+number   = "#b5cea8"
+comment  = { fg = "#6a9955", style = "italic" }
+function = "#dcdcaa"
+type     = "#4ec9b0"
+variable = "#9cdcfe"
+constant = "#4fc1ff"
+operator = "#d4d4d4"
+
+[diagnostics]
+error   = "#f14c4c"
+warning = "#cca700"
+info    = "#3794ff"
+hint    = "#6a9955"
+
+[git]
+added    = "#487e02"
+modified = "#e2c08d"
+deleted  = "#f14c4c"

@@ -1,0 +1,14 @@
+[package]
+name = "tcode-config"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Configuración de tcode: config.toml (ajustes del editor) y carga de temas (runtime/themes/*.toml)."
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+toml.workspace = true
+dirs.workspace = true
