@@ -40,3 +40,7 @@ hint    = "#6272a4"
 added    = "#50fa7b"
 modified = "#f1fa8c"
 deleted  = "#ff5555"
+
+[search]
+coincidencia_actual  = "#ffb86c"
+otras_coincidencias  = "#44475a"

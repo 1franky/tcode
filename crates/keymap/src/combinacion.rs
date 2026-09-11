@@ -62,7 +62,13 @@ pub fn desde_evento(key: KeyEvent) -> Combinacion {
             Tecla::Caracter(c.to_ascii_lowercase())
         }
         KeyCode::Enter => Tecla::Enter,
-        KeyCode::Tab => Tecla::Tab,
+        // `Shift+Tab` no llega como `Tab` + modificador Shift: los
+        // terminales lo codifican como una tecla aparte (`BackTab`,
+        // `CSI Z`) que sí trae el modificador Shift marcado — se
+        // normaliza aquí a la misma `Tecla::Tab` para que
+        // `"Shift+Tab"` en el keymap funcione igual que cualquier otra
+        // combinación con Shift.
+        KeyCode::Tab | KeyCode::BackTab => Tecla::Tab,
         KeyCode::Backspace => Tecla::Backspace,
         KeyCode::Delete => Tecla::Delete,
         KeyCode::Esc => Tecla::Esc,
@@ -266,6 +272,15 @@ mod tests {
         let c = desde_evento(evento);
         assert_eq!(c.tecla, Tecla::Caracter('p'));
         assert!(c.shift);
+    }
+
+    #[test]
+    fn desde_evento_normaliza_backtab_a_shift_tab() {
+        let evento = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
+        let c = desde_evento(evento);
+        assert_eq!(c.tecla, Tecla::Tab);
+        assert!(c.shift);
+        assert_eq!(c, parsear_combinacion("Shift+Tab").unwrap());
     }
 
     #[test]

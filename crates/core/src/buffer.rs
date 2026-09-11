@@ -164,6 +164,39 @@ impl Buffer {
     pub fn a_texto(&self) -> String {
         self.rope.to_string()
     }
+
+    /// Convierte un offset de bytes absoluto (en el texto completo, el
+    /// mismo tipo de offset que usan `tcode-syntax` y la búsqueda de
+    /// `tcode_core::busqueda`) a una posición línea/columna — columna en
+    /// caracteres, igual que el resto de `Cursor`. Usado para mover el
+    /// cursor a una coincidencia de búsqueda.
+    pub fn linea_columna_desde_byte(&self, offset_byte: usize) -> (usize, usize) {
+        let offset_byte = offset_byte.min(self.rope.len_bytes());
+        let linea = self.rope.byte_to_line(offset_byte);
+        let inicio_linea_byte = self.rope.line_to_byte(linea);
+        let offset_local_byte = offset_byte - inicio_linea_byte;
+        let columna = self.rope.line(linea).byte_to_char(offset_local_byte);
+        (linea, columna)
+    }
+
+    /// Reemplaza el texto en el rango de bytes `[inicio, fin)` por
+    /// `reemplazo` (usado por "reemplazar" en la búsqueda, PLAN.md §4).
+    pub fn reemplazar_rango_bytes(&mut self, inicio_byte: usize, fin_byte: usize, reemplazo: &str) {
+        let inicio_char = self.rope.byte_to_char(inicio_byte);
+        let fin_char = self.rope.byte_to_char(fin_byte);
+        self.rope.remove(inicio_char..fin_char);
+        self.rope.insert(inicio_char, reemplazo);
+        self.modificado = true;
+    }
+
+    /// Offset de bytes absoluto de una posición línea/columna, recortada
+    /// a límites válidos — inversa de `linea_columna_desde_byte`. Permite
+    /// tratar cualquier cursor como un offset de bytes uniforme, el mismo
+    /// sistema de coordenadas que ya usan la búsqueda y el CSV (multi-
+    /// cursor, PLAN.md §11 M3).
+    pub fn offset_byte(&self, linea: usize, columna: usize) -> usize {
+        self.rope.char_to_byte(self.indice_char(linea, columna))
+    }
 }
 
 impl Default for Buffer {

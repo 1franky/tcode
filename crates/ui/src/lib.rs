@@ -8,19 +8,23 @@ mod paleta;
 mod paneles;
 mod panel_archivos;
 mod panel_buscador;
+mod panel_busqueda;
 mod panel_paleta;
 mod statusbar;
 mod vista_codigo;
+mod vista_csv;
+mod vista_markdown;
 
 use ratatui::layout::{Constraint, Direction, Layout as LayoutRatatui};
 use ratatui::Frame;
 
 use tcode_commands::EstadoPaleta;
+use tcode_core::EstadoBusqueda;
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_syntax::Resaltador;
 
 pub use paleta::Paleta;
-pub use paneles::{DireccionSplit, Layout, PanelEditor};
+pub use paneles::{DireccionSplit, Layout, ModoCsv, ModoMarkdown, PanelEditor};
 
 /// Ancho fijo (en columnas) del panel lateral del explorador cuando está
 /// visible.
@@ -35,10 +39,12 @@ pub struct EstadoUi {
 
 /// Dibuja un frame completo: panel lateral del explorador (si está
 /// visible, `Ctrl+B`) a la izquierda, el árbol de paneles de edición
-/// (`Ctrl+\`/`Ctrl+K Ctrl+\`, PLAN.md §4) a la derecha, y la paleta de
-/// comandos (`Ctrl+Shift+P`/`F1`) o el buscador de archivos (`Ctrl+P`)
-/// encima de todo cuando alguno de los dos está abierto (nunca los dos a
-/// la vez).
+/// (`Ctrl+\`/`Ctrl+K Ctrl+\`, PLAN.md §4) a la derecha, la barra de
+/// búsqueda/reemplazo (`Ctrl+F`/`Ctrl+H`) flotando en la esquina superior
+/// derecha del área de edición si está abierta, y la paleta de comandos
+/// (`Ctrl+Shift+P`/`F1`) o el buscador de archivos (`Ctrl+P`) encima de
+/// todo cuando alguno de los dos está abierto (nunca los dos a la vez).
+#[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
     layout: &mut Layout,
@@ -47,6 +53,7 @@ pub fn dibujar(
     explorador: &Explorador,
     paleta_comandos: &EstadoPaleta,
     buscador_archivos: &BuscadorArchivos,
+    estado_busqueda: &EstadoBusqueda,
 ) {
     let area_total = frame.area();
 
@@ -61,7 +68,8 @@ pub fn dibujar(
         area_total
     };
 
-    layout.dibujar(frame, area_principal, paleta, resaltador);
+    layout.dibujar(frame, area_principal, paleta, resaltador, estado_busqueda);
+    panel_busqueda::dibujar(frame, area_principal, estado_busqueda, paleta);
 
     if paleta_comandos.activa() {
         panel_paleta::dibujar(frame, area_total, paleta_comandos, paleta);

@@ -2,9 +2,9 @@
 # a ~/.config/tcode/keymap.toml (o el equivalente de tu SO) y recargable en
 # caliente con Ctrl+K Ctrl+L, sin reiniciar el editor.
 #
-# Solo [global] y [editor] están activos en M1: la vista de código es la
-# única que existe todavía. [markdown] y [csv] se validan como TOML pero se
-# conectan cuando esas vistas lleguen en M3.
+# [global], [editor], [markdown] y [csv] se combinan todos en un único
+# conjunto de atajos activos (no hay todavía un concepto de "ámbito
+# activo" — el comando mismo decide si aplica al archivo actual).
 
 [global]
 "Ctrl+S"        = "archivo.guardar"
@@ -23,6 +23,10 @@
 "Delete"        = "editor.borrar_adelante"
 "Enter"         = "editor.nueva_linea"
 "Tab"           = "editor.indentar_o_autocompletar"
+# "Desindentar" todavía no hace nada fuera de la vista CSV (M3, PLAN.md
+# §9), donde se reinterpreta como "celda anterior" — igual que `Tab` se
+# reinterpreta ahí como "celda siguiente" en vez de indentar.
+"Shift+Tab"     = "editor.desindentar"
 "Ctrl+K Ctrl+L" = "config.recargar"
 "Ctrl+B"        = "panel.alternar_lateral"
 "Esc"           = "explorador.enfocar_editor"
@@ -51,9 +55,37 @@
 "Ctrl+K 1"      = "panel.ir_a_1"
 "Ctrl+K 2"      = "panel.ir_a_2"
 "Ctrl+K 3"      = "panel.ir_a_3"
+"Ctrl+F"        = "buscar.en_archivo"
+"Ctrl+H"        = "buscar.reemplazar"
+# F3/Shift+F3 y Alt+R/C/W funcionan tanto con la barra abierta (capturados
+# directo en el bucle de eventos, como la paleta de comandos) como con la
+# barra cerrada, repitiendo la última búsqueda (estilo VSCode) — de ahí
+# que también estén en el keymap global.
+"F3"            = "buscar.siguiente"
+"Shift+F3"      = "buscar.anterior"
+"Alt+R"         = "buscar.alternar_regex"
+"Alt+C"         = "buscar.alternar_mayusculas"
+"Alt+W"         = "buscar.alternar_palabra"
+"Ctrl+D"        = "cursor.seleccionar_siguiente_ocurrencia"
+"Ctrl+Shift+L"  = "cursor.seleccionar_todas_ocurrencias"
+# Alternativa: mismo problema de siempre con Ctrl+Shift+<letra> en
+# terminales sin protocolo Kitty (confirmado repetidas veces en tmux a lo
+# largo de este proyecto) — chord con Ctrl+K, sin esa ambigüedad.
+"Ctrl+K L"      = "cursor.seleccionar_todas_ocurrencias"
+"Ctrl+Alt+Up"   = "cursor.agregar_arriba"
+"Ctrl+Alt+Down" = "cursor.agregar_abajo"
 
 [editor]
 
 [markdown]
+# Ctrl+Shift+V no está en [global] a propósito: es Ctrl+V con Shift, una
+# combinación con la que muchos emuladores de terminal (y el propio
+# usuario, por costumbre) esperan "pegar" — mantenerla agrupada aquí dejar
+# claro que solo aplica con un archivo Markdown activo (el comando mismo
+# no hace nada si no lo es, ver `markdown.preview_solo` en `app/main.rs`).
+"Ctrl+K V"      = "markdown.alternar_preview"
+"Ctrl+Shift+V"  = "markdown.preview_solo"
 
 [csv]
+"Ctrl+K T" = "csv.alternar_vista_tabla"
+"F2"       = "csv.editar_celda"

@@ -14,25 +14,25 @@ fn directorio_config() -> PathBuf {
 
 /// Forma cruda del archivo `keymap.toml` (PLAN.md §4): una tabla por
 /// ámbito, cada una mapeando el texto del atajo al nombre del comando en
-/// español. En M1 solo existe la vista de código, así que únicamente
-/// `[global]` y `[editor]` se resuelven a atajos activos. Un `keymap.toml`
-/// con secciones `[markdown]`/`[csv]` (como el `default.toml` embebido, que
-/// las deja vacías a modo de plantilla) sigue cargando sin error gracias al
-/// comportamiento por defecto de `serde` de ignorar tablas no declaradas
-/// aquí — no hace falta declararlas para eso.
+/// español.
 #[derive(Debug, Clone, Deserialize, Default)]
 struct KeymapCrudo {
     #[serde(default)]
     global: HashMap<String, String>,
     #[serde(default)]
     editor: HashMap<String, String>,
+    #[serde(default)]
+    markdown: HashMap<String, String>,
+    #[serde(default)]
+    csv: HashMap<String, String>,
 }
 
 /// Keymap ya resuelto: secuencia de combinaciones -> nombre de comando.
-/// Solo `[global]` y `[editor]` se resuelven a `Combinacion` en M1;
-/// `[markdown]`/`[csv]` se validan como TOML (vía `KeymapCrudo`) pero se
-/// descartan hasta que esas vistas existan (M3) — no hay nada que
-/// conservar todavía, así que no se guardan en esta estructura.
+/// `[global]`, `[editor]`, `[markdown]` y `[csv]` se combinan en un único
+/// mapa plano — no hay todavía un concepto de "ámbito activo" (el comando
+/// mismo decide si aplica, p. ej. `markdown.alternar_preview` no hace
+/// nada si el archivo activo no es Markdown), así que no hace falta
+/// mantenerlos separados.
 pub struct Keymap {
     atajos: HashMap<Vec<Combinacion>, String>,
 }
@@ -40,7 +40,8 @@ pub struct Keymap {
 impl Keymap {
     fn desde_crudo(crudo: KeymapCrudo) -> Result<Self> {
         let mut atajos = HashMap::new();
-        for (texto, comando) in crudo.global.iter().chain(crudo.editor.iter()) {
+        let todos = crudo.global.iter().chain(crudo.editor.iter()).chain(crudo.markdown.iter()).chain(crudo.csv.iter());
+        for (texto, comando) in todos {
             let secuencia = parsear_atajo(texto)
                 .with_context(|| format!("atajo inválido '{texto}' -> '{comando}'"))?;
             atajos.insert(secuencia, comando.clone());
@@ -185,9 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn seccion_markdown_no_rompe_la_carga_ni_genera_atajos_activos() {
-        // Válido como TOML y no revienta la carga, pero tampoco genera
-        // atajos activos todavía: esa vista no existe hasta M3.
+    fn seccion_markdown_se_combina_con_los_atajos_activos() {
         let crudo: KeymapCrudo = toml::from_str(
             r#"
             [markdown]
@@ -196,6 +195,19 @@ mod tests {
         )
         .unwrap();
         let keymap = Keymap::desde_crudo(crudo).unwrap();
-        assert_eq!(keymap.num_atajos(), 0);
+        assert_eq!(keymap.num_atajos(), 1);
+    }
+
+    #[test]
+    fn seccion_csv_se_combina_con_los_atajos_activos() {
+        let crudo: KeymapCrudo = toml::from_str(
+            r#"
+            [csv]
+            "Ctrl+K T" = "csv.alternar_vista_tabla"
+            "#,
+        )
+        .unwrap();
+        let keymap = Keymap::desde_crudo(crudo).unwrap();
+        assert_eq!(keymap.num_atajos(), 1);
     }
 }

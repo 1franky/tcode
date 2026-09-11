@@ -120,6 +120,15 @@ pub struct TemaGit {
     pub deleted: Option<String>,
 }
 
+/// Colores de la barra de búsqueda/reemplazo (`Ctrl+F`/`Ctrl+H`, PLAN.md
+/// §4): el fondo de la coincidencia sobre la que está el cursor de
+/// búsqueda, y el de las demás coincidencias visibles en el buffer.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct TemaBusqueda {
+    pub coincidencia_actual: Option<String>,
+    pub otras_coincidencias: Option<String>,
+}
+
 /// Un tema completo, tal como se define en `runtime/themes/*.toml`
 /// (PLAN.md §7). `syntax` todavía no se usa (el resaltado con tree-sitter
 /// llega en una pieza aparte de M1); se parsea desde ya para no tener que
@@ -137,6 +146,8 @@ pub struct Tema {
     pub diagnostics: TemaDiagnosticos,
     #[serde(default)]
     pub git: TemaGit,
+    #[serde(default)]
+    pub search: TemaBusqueda,
 }
 
 const TEMA_DRACULA: &str = include_str!("../../../runtime/themes/dracula.toml");

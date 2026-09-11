@@ -9,9 +9,12 @@ macOS). Ver el diseño completo en [PLAN.md](./PLAN.md).
 
 ## Estado
 
-M0 (fundamentos), M1 (temas/atajos/sintaxis/explorador) y M2 (paleta de
-comandos, buscador difuso, splits, cliente LSP) completos en `develop`. Ver
-[PLAN.md](./PLAN.md) §11 para el roadmap completo.
+M0 (fundamentos), M1 (temas/atajos/sintaxis/explorador), M2 (paleta de
+comandos, buscador difuso, splits, cliente LSP) y M3 (búsqueda/reemplazo,
+vista Markdown, vista CSV, multi-cursor) completos en `develop`. Ver
+[PLAN.md](./PLAN.md) §11 para el roadmap completo y
+[PRUEBAS.md](./PRUEBAS.md) para el checklist de pruebas manuales antes de
+cada release.
 
 ## Instalación
 

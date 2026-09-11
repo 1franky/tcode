@@ -34,11 +34,11 @@ use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
 use tcode_config::Config;
-use tcode_core::Editor;
+use tcode_core::{analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda};
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_syntax::Resaltador;
-use tcode_ui::{DireccionSplit, Layout as PanelLayout, Paleta};
+use tcode_ui::{DireccionSplit, Layout as PanelLayout, ModoCsv, Paleta};
 
 type Backend = CrosstermBackend<Stdout>;
 
@@ -202,6 +202,7 @@ struct EstadoApp {
     confirmar_salida: bool,
     paleta_comandos: EstadoPaleta,
     buscador_archivos: BuscadorArchivos,
+    estado_busqueda: EstadoBusqueda,
     lsp: lsp::EstadoLsp,
 }
 
@@ -232,6 +233,7 @@ async fn ejecutar(
         confirmar_salida: false,
         paleta_comandos: EstadoPaleta::nueva(),
         buscador_archivos: BuscadorArchivos::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
+        estado_busqueda: EstadoBusqueda::nueva(),
         lsp: lsp::EstadoLsp::nuevo(),
     };
 
@@ -259,6 +261,7 @@ async fn ejecutar(
                 &estado.explorador,
                 &estado.paleta_comandos,
                 &estado.buscador_archivos,
+                &estado.estado_busqueda,
             )
         })?;
 
@@ -327,6 +330,77 @@ async fn ejecutar(
             continue;
         }
 
+        // La barra de búsqueda/reemplazo (`Ctrl+F`/`Ctrl+H`) también
+        // captura el teclado por completo mientras está abierta, pero a
+        // diferencia de la paleta/buscador de archivos algunos de sus
+        // atajos (`Alt+R/C/W`, `F3`) coinciden con combinaciones que el
+        // keymap también define como comandos globales — se manejan aquí
+        // directamente en vez de pasar por el `Resolvedor` para no
+        // duplicar esa lógica dos veces.
+        if estado.estado_busqueda.activa() {
+            estado.confirmar_salida = false;
+            let editor = layout.editor_activo_mut();
+            let texto = editor.buffer().a_texto();
+            match key.code {
+                KeyCode::Esc => estado.estado_busqueda.cerrar(),
+                KeyCode::Tab => estado.estado_busqueda.alternar_campo(),
+                KeyCode::Backspace => estado.estado_busqueda.borrar(&texto),
+                KeyCode::F(3) if key.modifiers.contains(KeyModifiers::SHIFT) => estado.estado_busqueda.anterior(),
+                KeyCode::F(3) => estado.estado_busqueda.siguiente(),
+                KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::ALT) => {
+                    estado.estado_busqueda.alternar_regex(&texto)
+                }
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::ALT) => {
+                    estado.estado_busqueda.alternar_mayusculas(&texto)
+                }
+                KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::ALT) => {
+                    estado.estado_busqueda.alternar_palabra(&texto)
+                }
+                // `Ctrl+Alt+Enter` es el atajo "canónico", pero terminales
+                // clásicas sin el protocolo extendido de Kitty a veces no
+                // transmiten ambos modificadores a la vez sobre `Enter`
+                // (confirmado en tmux); `Alt+Enter` a secas sí se
+                // distingue siempre, así que también vale. Solo en modo
+                // reemplazar: en modo "solo buscar" no hay texto de
+                // reemplazo que usar (sería reemplazar todo por "").
+                KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) && estado.estado_busqueda.modo_reemplazar() => {
+                    reemplazar_todas_las_coincidencias(editor, &mut estado.estado_busqueda);
+                }
+                KeyCode::Enter
+                    if estado.estado_busqueda.modo_reemplazar()
+                        && estado.estado_busqueda.campo_activo() == CampoBusqueda::Reemplazo =>
+                {
+                    reemplazar_coincidencia_actual(editor, &mut estado.estado_busqueda);
+                }
+                KeyCode::Enter => estado.estado_busqueda.siguiente(),
+                KeyCode::Char(c) if sin_modificadores(key) => estado.estado_busqueda.escribir(c, &texto),
+                _ => {}
+            }
+            sincronizar_lsp(layout, &mut estado.lsp).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
+        // Edición de una celda de la vista CSV/TSV (`Enter`/`F2` sobre
+        // una celda, PLAN.md §9): captura el teclado por completo igual
+        // que los bloques anteriores, mientras dura la edición de esa
+        // celda puntual (la navegación entre celdas, cuando NO se está
+        // editando ninguna, pasa por el `Resolvedor` normal más abajo,
+        // reinterpretada en `ejecutar_comando_csv`).
+        if layout.panel_activo().estado_csv.editando() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => layout.panel_activo_mut().estado_csv.cancelar_edicion(),
+                KeyCode::Backspace => layout.panel_activo_mut().estado_csv.borrar(),
+                KeyCode::Enter => confirmar_edicion_celda_csv(layout, true),
+                KeyCode::Char(c) if sin_modificadores(key) => layout.panel_activo_mut().estado_csv.escribir(c),
+                _ => {}
+            }
+            sincronizar_lsp(layout, &mut estado.lsp).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
         let resolucion = resolvedor.procesar(tcode_keymap::desde_evento(key));
 
         let reintentando_salida = matches!(&resolucion, Resolucion::Comando(n) if n == "app.salir");
@@ -345,8 +419,13 @@ async fn ejecutar(
                 // Ninguna tecla/chord configurado coincide: si es un
                 // carácter imprimible sin Ctrl/Alt Y el foco está en el
                 // editor, se inserta como texto normal (escribir no pasa
-                // por el sistema de atajos; el explorador no recibe texto).
-                if estado.foco == Foco::Editor {
+                // por el sistema de atajos; el explorador no recibe
+                // texto). La vista de tabla CSV/TSV tampoco: no hay
+                // cursor de texto visible ahí — insertarlo a ciegas en el
+                // buffer crudo corrompería el archivo sin que se vea en
+                // pantalla. Escribir en una celda pasa por el bloque
+                // modal de edición (`Enter`/`F2`), no por aquí.
+                if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
                     if let KeyCode::Char(c) = key.code {
                         if sin_modificadores(key) {
                             layout.editor_activo_mut().insertar_char(c);
@@ -392,6 +471,40 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp) 
         }
         "buscar.archivos" => {
             estado.buscador_archivos.abrir();
+            Accion::Continuar
+        }
+        "buscar.en_archivo" | "buscar.reemplazar" => {
+            let texto = layout.editor_activo().buffer().a_texto();
+            estado.estado_busqueda.abrir(id == "buscar.reemplazar", &texto);
+            saltar_a_coincidencia_actual(layout, &estado.estado_busqueda);
+            Accion::Continuar
+        }
+        // Repiten la última búsqueda aunque la barra esté cerrada (estilo
+        // VSCode): útil para seguir saltando entre coincidencias sin
+        // volver a abrir `Ctrl+F` cada vez.
+        "buscar.siguiente" => {
+            estado.estado_busqueda.siguiente();
+            saltar_a_coincidencia_actual(layout, &estado.estado_busqueda);
+            Accion::Continuar
+        }
+        "buscar.anterior" => {
+            estado.estado_busqueda.anterior();
+            saltar_a_coincidencia_actual(layout, &estado.estado_busqueda);
+            Accion::Continuar
+        }
+        "buscar.alternar_regex" => {
+            let texto = layout.editor_activo().buffer().a_texto();
+            estado.estado_busqueda.alternar_regex(&texto);
+            Accion::Continuar
+        }
+        "buscar.alternar_mayusculas" => {
+            let texto = layout.editor_activo().buffer().a_texto();
+            estado.estado_busqueda.alternar_mayusculas(&texto);
+            Accion::Continuar
+        }
+        "buscar.alternar_palabra" => {
+            let texto = layout.editor_activo().buffer().a_texto();
+            estado.estado_busqueda.alternar_palabra(&texto);
             Accion::Continuar
         }
         _ => ejecutar_comando(
@@ -446,6 +559,10 @@ fn ejecutar_comando(
             return Accion::Continuar;
         }
         "explorador.enfocar_editor" => {
+            // `Esc` siempre significa "volver a un solo cursor" también
+            // (PLAN.md §11 M3, `cursor.una_seleccion`) — no hace falta un
+            // atajo aparte: si ya había uno solo, esto no hace nada.
+            layout.editor_activo_mut().colapsar_cursores();
             *foco = Foco::Editor;
             return Accion::Continuar;
         }
@@ -473,11 +590,47 @@ fn ejecutar_comando(
             layout.ir_a_panel(2);
             return Accion::Continuar;
         }
+        "markdown.alternar_preview" => {
+            layout.alternar_preview_markdown();
+            return Accion::Continuar;
+        }
+        "markdown.preview_solo" => {
+            layout.alternar_preview_solo_markdown();
+            return Accion::Continuar;
+        }
+        "csv.alternar_vista_tabla" => {
+            layout.alternar_vista_tabla_csv();
+            return Accion::Continuar;
+        }
+        "cursor.seleccionar_siguiente_ocurrencia" => {
+            layout.editor_activo_mut().seleccionar_siguiente_ocurrencia();
+            return Accion::Continuar;
+        }
+        "cursor.seleccionar_todas_ocurrencias" => {
+            layout.editor_activo_mut().seleccionar_todas_ocurrencias();
+            return Accion::Continuar;
+        }
+        "cursor.agregar_arriba" => {
+            layout.editor_activo_mut().agregar_cursor_arriba();
+            return Accion::Continuar;
+        }
+        "cursor.agregar_abajo" => {
+            layout.editor_activo_mut().agregar_cursor_abajo();
+            return Accion::Continuar;
+        }
         _ => {}
     }
 
     if *foco == Foco::Explorador {
         return ejecutar_comando_explorador(comando, layout, explorador, foco);
+    }
+
+    // La vista de tabla CSV/TSV reinterpreta la navegación genérica igual
+    // que el explorador (arriba): mover celda en vez de mover el cursor
+    // de texto, `Tab`/`Shift+Tab` para saltar de celda, `Enter`/`F2` para
+    // empezar a editar la celda seleccionada (PLAN.md §9).
+    if layout.panel_activo().modo_csv == ModoCsv::Tabla {
+        return ejecutar_comando_csv(comando, layout);
     }
 
     let editor = layout.editor_activo_mut();
@@ -522,6 +675,65 @@ fn ejecutar_comando_explorador(comando: &str, layout: &mut PanelLayout, explorad
     Accion::Continuar
 }
 
+/// Comandos genéricos de navegación reinterpretados para la vista de
+/// tabla CSV/TSV (PLAN.md §9): mover la celda seleccionada en vez del
+/// cursor de texto, `Tab`/`Shift+Tab` para saltar de celda (como en una
+/// hoja de cálculo) y `Enter`/`F2` para empezar a editar la celda actual
+/// — la edición en sí (escribir/confirmar/cancelar) la captura un bloque
+/// modal aparte en el bucle principal, igual que la barra de búsqueda.
+fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
+    let delimitador = delimitador_por_extension(&layout.panel_activo().ruta_mostrada);
+    let texto = layout.panel_activo().editor.buffer().a_texto();
+    let tabla = analizar_csv(&texto, delimitador).unwrap_or_default();
+    let (num_filas, num_columnas) = (tabla.num_filas(), tabla.num_columnas());
+
+    let panel = layout.panel_activo_mut();
+    match comando {
+        "cursor.arriba" => panel.estado_csv.mover_arriba(),
+        "cursor.abajo" => panel.estado_csv.mover_abajo(num_filas),
+        "cursor.izquierda" => panel.estado_csv.mover_izquierda(),
+        "cursor.derecha" => panel.estado_csv.mover_derecha(num_columnas),
+        "editor.indentar_o_autocompletar" => panel.estado_csv.tab(num_filas, num_columnas),
+        "editor.desindentar" => panel.estado_csv.shift_tab(num_columnas),
+        "editor.nueva_linea" | "csv.editar_celda" => {
+            let valor_actual =
+                tabla.filas.get(panel.estado_csv.fila()).and_then(|f| f.celdas.get(panel.estado_csv.columna()));
+            panel.estado_csv.iniciar_edicion(valor_actual.map(String::as_str).unwrap_or(""));
+        }
+        _ => {}
+    }
+    Accion::Continuar
+}
+
+/// `Enter` con una celda de la vista CSV/TSV en edición: reemplaza la
+/// fila completa reserializada (ver `tcode_core::csv::serializar_fila`)
+/// en el buffer, y si `avanzar` es `true` mueve la selección a la fila
+/// siguiente (como confirmar una celda en una hoja de cálculo).
+fn confirmar_edicion_celda_csv(layout: &mut PanelLayout, avanzar: bool) {
+    let panel = layout.panel_activo_mut();
+    let Some(nuevo_valor) = panel.estado_csv.confirmar_edicion() else { return };
+
+    let delimitador = delimitador_por_extension(&panel.ruta_mostrada);
+    let texto = panel.editor.buffer().a_texto();
+    let Ok(tabla) = analizar_csv(&texto, delimitador) else { return };
+    let Some(fila) = tabla.filas.get(panel.estado_csv.fila()) else { return };
+
+    let mut celdas = fila.celdas.clone();
+    if panel.estado_csv.columna() >= celdas.len() {
+        celdas.resize(panel.estado_csv.columna() + 1, String::new());
+    }
+    celdas[panel.estado_csv.columna()] = nuevo_valor;
+
+    let Ok(nueva_fila_texto) = serializar_fila_csv(&celdas, delimitador) else { return };
+    panel.editor.reemplazar_rango_bytes(fila.inicio_byte, fila.fin_byte, &nueva_fila_texto);
+
+    if avanzar {
+        let num_filas =
+            analizar_csv(&panel.editor.buffer().a_texto(), delimitador).map(|t| t.num_filas()).unwrap_or(0);
+        panel.estado_csv.mover_abajo(num_filas);
+    }
+}
+
 /// `config.recargar` (`Ctrl+K Ctrl+L`): recarga `config.toml` desde disco
 /// sin reiniciar el editor (PLAN.md §4) y reconstruye la paleta de colores
 /// si el tema activo cambió.
@@ -546,4 +758,39 @@ fn insertar_tabulacion(editor: &mut Editor, config: &Config) {
     } else {
         editor.insertar_char('\t');
     }
+}
+
+/// Mueve el cursor del editor activo a la coincidencia de búsqueda
+/// seleccionada, si hay alguna — usado tanto al abrir la barra (`Ctrl+F`)
+/// como al saltar con `F3`/`Shift+F3`, con la barra abierta o cerrada.
+fn saltar_a_coincidencia_actual(layout: &mut PanelLayout, estado_busqueda: &EstadoBusqueda) {
+    if let Some(coincidencia) = estado_busqueda.coincidencia_actual() {
+        layout.editor_activo_mut().mover_cursor_a_byte(coincidencia.inicio);
+    }
+}
+
+/// `Ctrl+H` con el foco en el campo de reemplazo, `Enter`: reemplaza solo
+/// la coincidencia actual y deja seleccionada la siguiente (o vuelve a la
+/// primera si no queda ninguna después), sin tocar el resto del archivo.
+fn reemplazar_coincidencia_actual(editor: &mut Editor, estado_busqueda: &mut EstadoBusqueda) {
+    let Some(coincidencia) = estado_busqueda.coincidencia_actual() else {
+        return;
+    };
+    let reemplazo = estado_busqueda.reemplazo().to_string();
+    editor.reemplazar_rango_bytes(coincidencia.inicio, coincidencia.fin, &reemplazo);
+    let punto_edicion = coincidencia.inicio + reemplazo.len();
+    estado_busqueda.recalcular_y_posicionar(&editor.buffer().a_texto(), punto_edicion);
+}
+
+/// `Ctrl+Alt+Enter`: reemplaza todas las coincidencias de una vez. Se
+/// recorren de atrás hacia adelante para que reemplazar una no invalide
+/// los offsets de bytes de las que todavía faltan (una más corta o más
+/// larga que el patrón desplaza todo lo que viene después, pero nunca lo
+/// que viene antes).
+fn reemplazar_todas_las_coincidencias(editor: &mut Editor, estado_busqueda: &mut EstadoBusqueda) {
+    let reemplazo = estado_busqueda.reemplazo().to_string();
+    for coincidencia in estado_busqueda.coincidencias().iter().rev() {
+        editor.reemplazar_rango_bytes(coincidencia.inicio, coincidencia.fin, &reemplazo);
+    }
+    estado_busqueda.recalcular(&editor.buffer().a_texto());
 }
