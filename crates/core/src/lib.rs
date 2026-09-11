@@ -85,6 +85,19 @@ mod tests {
     }
 
     #[test]
+    fn inicio_byte_linea_correlaciona_con_el_texto_completo() {
+        let mut editor = Editor::nuevo();
+        for c in "áé\nb\ncd".chars() {
+            editor.insertar_char(c);
+        }
+        let buffer = editor.buffer();
+        assert_eq!(buffer.inicio_byte_linea(0), 0);
+        // "áé\n" son 5 bytes en UTF-8 (2+2+1), no 3 (que sería en chars).
+        assert_eq!(buffer.inicio_byte_linea(1), "áé\n".len());
+        assert_eq!(buffer.inicio_byte_linea(2), "áé\nb\n".len());
+    }
+
+    #[test]
     fn cursor_no_se_sale_de_los_limites() {
         let mut editor = Editor::nuevo();
         editor.mover_izquierda();

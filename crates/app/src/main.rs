@@ -22,6 +22,7 @@ use ratatui::Terminal;
 use tcode_config::Config;
 use tcode_core::Editor;
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
+use tcode_syntax::Resaltador;
 use tcode_ui::{EstadoUi, Paleta};
 
 type Backend = CrosstermBackend<Stdout>;
@@ -83,6 +84,7 @@ fn ejecutar(
     let mut estado_ui = EstadoUi::default();
     let ruta_mostrada = ruta_arg.unwrap_or("[Sin nombre]").to_string();
     let mut paleta = cargar_paleta(&config.interfaz.tema);
+    let mut resaltador = Resaltador::nuevo();
     let mut resolvedor = Resolvedor::nuevo(keymap);
     // Ctrl+Q con cambios sin guardar pide una segunda confirmación en vez de
     // perder trabajo en silencio (nano-style). Cualquier otra resolución la
@@ -90,7 +92,9 @@ fn ejecutar(
     let mut confirmar_salida = false;
 
     loop {
-        terminal.draw(|frame| tcode_ui::dibujar(frame, editor, &mut estado_ui, &ruta_mostrada, &paleta))?;
+        terminal.draw(|frame| {
+            tcode_ui::dibujar(frame, editor, &mut estado_ui, &ruta_mostrada, &paleta, &mut resaltador)
+        })?;
 
         if !event::poll(Duration::from_millis(200))? {
             continue;
