@@ -5,12 +5,14 @@
 
 mod paleta;
 mod panel_archivos;
+mod panel_paleta;
 mod statusbar;
 mod vista_codigo;
 
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::Frame;
 
+use tcode_commands::EstadoPaleta;
 use tcode_core::Editor;
 use tcode_fs::Explorador;
 use tcode_syntax::Resaltador;
@@ -30,7 +32,8 @@ pub struct EstadoUi {
 
 /// Dibuja un frame completo: panel lateral del explorador (si está
 /// visible, `Ctrl+B`) a la izquierda, vista de código y statusbar a la
-/// derecha (PLAN.md §1).
+/// derecha (PLAN.md §1), y la paleta de comandos (`Ctrl+Shift+P`) encima
+/// de todo cuando está abierta.
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -40,6 +43,7 @@ pub fn dibujar(
     paleta: &Paleta,
     resaltador: &mut Resaltador,
     explorador: &Explorador,
+    paleta_comandos: &EstadoPaleta,
 ) {
     let area_total = frame.area();
 
@@ -61,4 +65,8 @@ pub fn dibujar(
 
     vista_codigo::dibujar(frame, partes[0], editor, estado, paleta, resaltador, ruta_mostrada);
     statusbar::dibujar(frame, partes[1], editor, ruta_mostrada, paleta);
+
+    if paleta_comandos.activa() {
+        panel_paleta::dibujar(frame, area_total, paleta_comandos, paleta);
+    }
 }

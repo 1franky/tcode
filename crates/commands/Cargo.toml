@@ -1,0 +1,11 @@
+[package]
+name = "tcode-commands"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Registro de comandos y paleta de comandos (Ctrl+Shift+P) de tcode."
+
+[dependencies]
+tcode-fuzzy.workspace = true

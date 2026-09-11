@@ -167,6 +167,52 @@ pub fn parsear_atajo(cadena: &str) -> Result<Vec<Combinacion>> {
     Ok(secuencia)
 }
 
+/// Texto legible de una combinación, inverso de [`parsear_combinacion`]
+/// (`Ctrl+Shift+P`). Se usa para mostrar el atajo de un comando en la
+/// paleta de comandos (`Ctrl+Shift+P`, M2) y, más adelante, en el editor
+/// visual de atajos del panel de administración (M4).
+pub fn formatear_combinacion(c: &Combinacion) -> String {
+    let mut partes = Vec::new();
+    if c.ctrl {
+        partes.push("Ctrl".to_string());
+    }
+    if c.alt {
+        partes.push("Alt".to_string());
+    }
+    if c.shift {
+        partes.push("Shift".to_string());
+    }
+    partes.push(formatear_tecla(&c.tecla));
+    partes.join("+")
+}
+
+/// Texto legible de un atajo completo, inverso de [`parsear_atajo`]
+/// (`Ctrl+K Ctrl+O`).
+pub fn formatear_atajo(secuencia: &[Combinacion]) -> String {
+    secuencia.iter().map(formatear_combinacion).collect::<Vec<_>>().join(" ")
+}
+
+fn formatear_tecla(t: &Tecla) -> String {
+    match t {
+        Tecla::Caracter(c) => c.to_uppercase().to_string(),
+        Tecla::Flecha(Direccion::Arriba) => "Up".to_string(),
+        Tecla::Flecha(Direccion::Abajo) => "Down".to_string(),
+        Tecla::Flecha(Direccion::Izquierda) => "Left".to_string(),
+        Tecla::Flecha(Direccion::Derecha) => "Right".to_string(),
+        Tecla::Enter => "Enter".to_string(),
+        Tecla::Tab => "Tab".to_string(),
+        Tecla::Backspace => "Backspace".to_string(),
+        Tecla::Delete => "Delete".to_string(),
+        Tecla::Esc => "Esc".to_string(),
+        Tecla::Home => "Home".to_string(),
+        Tecla::End => "End".to_string(),
+        Tecla::PageUp => "PageUp".to_string(),
+        Tecla::PageDown => "PageDown".to_string(),
+        Tecla::F(n) => format!("F{n}"),
+        Tecla::Otra => "?".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +266,13 @@ mod tests {
         let c = desde_evento(evento);
         assert_eq!(c.tecla, Tecla::Caracter('p'));
         assert!(c.shift);
+    }
+
+    #[test]
+    fn formatear_es_el_inverso_de_parsear() {
+        for texto in ["Ctrl+S", "Ctrl+Shift+P", "F12", "Esc", "Ctrl+Home", "Ctrl+K Ctrl+O"] {
+            let secuencia = parsear_atajo(texto).unwrap();
+            assert_eq!(formatear_atajo(&secuencia), texto);
+        }
     }
 }

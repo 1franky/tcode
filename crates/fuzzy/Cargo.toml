@@ -1,0 +1,10 @@
+[package]
+name = "tcode-fuzzy"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Coincidencia difusa (fuzzy matching) de tcode, compartida por la paleta de comandos y el buscador de archivos."
+
+[dependencies]

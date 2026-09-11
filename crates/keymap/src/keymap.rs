@@ -64,6 +64,18 @@ impl Keymap {
     pub fn num_atajos(&self) -> usize {
         self.atajos.len()
     }
+
+    /// Todas las secuencias de teclas asignadas a `comando` (normalmente
+    /// una sola, pero nada impide tener más de un atajo para el mismo
+    /// comando). Se usa para mostrar el atajo junto al comando en la
+    /// paleta de comandos (`Ctrl+Shift+P`, M2).
+    pub fn atajos_para(&self, comando: &str) -> Vec<&[Combinacion]> {
+        self.atajos
+            .iter()
+            .filter(|(_, c)| c.as_str() == comando)
+            .map(|(secuencia, _)| secuencia.as_slice())
+            .collect()
+    }
 }
 
 const KEYMAP_POR_DEFECTO: &str = include_str!("../../../runtime/keymaps/default.toml");
@@ -135,6 +147,15 @@ mod tests {
         assert!(keymap.num_atajos() > 0);
         let guardar = vec![parsear_combinacion("Ctrl+S").unwrap()];
         assert_eq!(keymap.buscar(&guardar), Some("archivo.guardar"));
+    }
+
+    #[test]
+    fn atajos_para_encuentra_la_secuencia_de_un_comando() {
+        let keymap = keymap_por_defecto();
+        let atajos = keymap.atajos_para("archivo.guardar");
+        assert_eq!(atajos.len(), 1);
+        assert_eq!(atajos[0], [parsear_combinacion("Ctrl+S").unwrap()]);
+        assert!(keymap.atajos_para("comando.inexistente").is_empty());
     }
 
     #[test]
