@@ -15,6 +15,7 @@ path = "src/main.rs"
 tcode-core.workspace = true
 tcode-ui.workspace = true
 tcode-config.workspace = true
+tcode-keymap.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 anyhow.workspace = true
