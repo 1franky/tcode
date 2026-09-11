@@ -5,21 +5,27 @@
 //! Los eventos de teclado pasan por el [`Resolvedor`] de `tcode-keymap`
 //! para convertirse en nombres de comando en español (`"archivo.guardar"`);
 //! `ejecutar_comando` es el dispatcher que los traduce a llamadas sobre
-//! [`Editor`] o el [`Explorador`]. Ese dispatcher se moverá a un crate
-//! `commands` dedicado cuando llegue la paleta de comandos en M2 — por
-//! ahora vive aquí porque es el único lugar que lo necesita.
+//! [`Editor`] o el [`Explorador`]. La paleta de comandos (`Ctrl+Shift+P`,
+//! `tcode-commands`) produce esos mismos ids por otra vía (buscar por
+//! nombre en vez de memorizar un atajo) y termina en el mismo dispatcher.
 
 use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
+};
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
+use tcode_commands::EstadoPaleta;
 use tcode_config::Config;
 use tcode_core::Editor;
 use tcode_fs::Explorador;
@@ -44,9 +50,9 @@ fn main() -> Result<()> {
     let keymap = tcode_keymap::cargar().unwrap_or_else(|_| tcode_keymap::keymap_por_defecto());
     let explorador = crear_explorador(ruta_arg.as_deref());
 
-    let mut terminal = iniciar_terminal()?;
+    let (mut terminal, protocolo_kitty) = iniciar_terminal()?;
     let resultado = ejecutar(&mut terminal, &mut editor, config, &keymap, explorador, ruta_arg.as_deref());
-    finalizar_terminal(&mut terminal)?;
+    finalizar_terminal(&mut terminal, protocolo_kitty)?;
 
     resultado
 }
@@ -64,14 +70,30 @@ fn crear_explorador(ruta_arg: Option<&str>) -> Explorador {
     Explorador::nuevo(raiz).unwrap_or_else(|_| Explorador::vacio())
 }
 
-fn iniciar_terminal() -> Result<Terminal<Backend>> {
+/// Además de inicializar la terminal, intenta activar el protocolo de
+/// teclado extendido de Kitty (best-effort: si el terminal no lo soporta
+/// no pasa nada, `desde_evento` sigue funcionando igual). Sin esto,
+/// `Ctrl+Shift+<letra>` es indistinguible de `Ctrl+<letra>` en terminales
+/// clásicas (confirmado con un diagnóstico directo contra `crossterm` en
+/// tmux) — por eso `paleta.comandos` también tiene `F1` como atajo
+/// alternativo universal en `runtime/keymaps/default.toml`.
+fn iniciar_terminal() -> Result<(Terminal<Backend>, bool)> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
-    Ok(Terminal::new(CrosstermBackend::new(stdout))?)
+
+    let protocolo_kitty = supports_keyboard_enhancement().unwrap_or(false);
+    if protocolo_kitty {
+        execute!(stdout, PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES))?;
+    }
+
+    Ok((Terminal::new(CrosstermBackend::new(stdout))?, protocolo_kitty))
 }
 
-fn finalizar_terminal(terminal: &mut Terminal<Backend>) -> Result<()> {
+fn finalizar_terminal(terminal: &mut Terminal<Backend>, protocolo_kitty: bool) -> Result<()> {
+    if protocolo_kitty {
+        execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
+    }
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -80,7 +102,9 @@ fn finalizar_terminal(terminal: &mut Terminal<Backend>) -> Result<()> {
 
 /// Qué panel recibe las teclas de navegación/edición genéricas
 /// (`cursor.*`, `Enter`...). Los comandos globales (guardar, deshacer,
-/// salir, recargar config) funcionan sin importar el foco.
+/// salir, recargar config) funcionan sin importar el foco. Mientras la
+/// paleta de comandos está abierta, ningún foco importa: captura el
+/// teclado por completo (ver `ejecutar`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Foco {
     Editor,
@@ -110,6 +134,7 @@ fn ejecutar(
     let mut paleta = cargar_paleta(&config.interfaz.tema);
     let mut resaltador = Resaltador::nuevo();
     let mut resolvedor = Resolvedor::nuevo(keymap);
+    let mut paleta_comandos = EstadoPaleta::nueva();
     let mut foco = Foco::Editor;
     // Ctrl+Q con cambios sin guardar pide una segunda confirmación en vez de
     // perder trabajo en silencio (nano-style). Cualquier otra resolución la
@@ -118,7 +143,16 @@ fn ejecutar(
 
     loop {
         terminal.draw(|frame| {
-            tcode_ui::dibujar(frame, editor, &mut estado_ui, &ruta_mostrada, &paleta, &mut resaltador, &explorador)
+            tcode_ui::dibujar(
+                frame,
+                editor,
+                &mut estado_ui,
+                &ruta_mostrada,
+                &paleta,
+                &mut resaltador,
+                &explorador,
+                &paleta_comandos,
+            )
         })?;
 
         if !event::poll(Duration::from_millis(200))? {
@@ -131,6 +165,46 @@ fn ejecutar(
             continue;
         }
 
+        // Mientras la paleta está abierta captura el teclado por completo:
+        // escribir busca, no pasa por el sistema de atajos ni llega al
+        // editor. Solo Esc/flechas/Enter tienen un significado especial
+        // aquí, distinto del resto del editor.
+        if paleta_comandos.activa() {
+            confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => paleta_comandos.cerrar(),
+                KeyCode::Up => paleta_comandos.mover_arriba(),
+                KeyCode::Down => paleta_comandos.mover_abajo(),
+                KeyCode::Backspace => paleta_comandos.borrar(),
+                KeyCode::Enter => {
+                    if let Some(id) = paleta_comandos.confirmar() {
+                        let accion = procesar_comando(
+                            id,
+                            editor,
+                            &mut config,
+                            &mut paleta,
+                            &mut explorador,
+                            &mut foco,
+                            &mut confirmar_salida,
+                            &mut paleta_comandos,
+                        );
+                        match accion {
+                            Accion::Salir => break,
+                            Accion::Continuar => {}
+                            Accion::ArchivoAbierto(ruta) => ruta_mostrada = ruta.display().to_string(),
+                        }
+                    }
+                }
+                KeyCode::Char(c)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    paleta_comandos.escribir(c);
+                }
+                _ => {}
+            }
+            continue;
+        }
+
         let resolucion = resolvedor.procesar(tcode_keymap::desde_evento(key));
 
         let reintentando_salida = matches!(&resolucion, Resolucion::Comando(n) if n == "app.salir");
@@ -139,11 +213,17 @@ fn ejecutar(
         }
 
         match resolucion {
-            Resolucion::Comando(nombre) if nombre == "config.recargar" => {
-                recargar_config_y_tema(&mut config, &mut paleta);
-            }
             Resolucion::Comando(nombre) => {
-                let accion = ejecutar_comando(&nombre, editor, &config, &mut explorador, &mut foco, &mut confirmar_salida);
+                let accion = procesar_comando(
+                    &nombre,
+                    editor,
+                    &mut config,
+                    &mut paleta,
+                    &mut explorador,
+                    &mut foco,
+                    &mut confirmar_salida,
+                    &mut paleta_comandos,
+                );
                 match accion {
                     Accion::Salir => break,
                     Accion::Continuar => {}
@@ -168,6 +248,35 @@ fn ejecutar(
     }
 
     Ok(())
+}
+
+/// Punto de entrada único para ejecutar un id de comando, venga de un
+/// atajo de teclado o de confirmar un resultado en la paleta de comandos.
+/// `config.recargar` y `paleta.comandos` necesitan estado que no le
+/// corresponde a `ejecutar_comando` (la paleta de colores, la propia
+/// paleta de comandos), así que se interceptan aquí antes de delegar.
+#[allow(clippy::too_many_arguments)]
+fn procesar_comando(
+    id: &str,
+    editor: &mut Editor,
+    config: &mut Config,
+    paleta: &mut Paleta,
+    explorador: &mut Explorador,
+    foco: &mut Foco,
+    confirmar_salida: &mut bool,
+    paleta_comandos: &mut EstadoPaleta,
+) -> Accion {
+    match id {
+        "config.recargar" => {
+            recargar_config_y_tema(config, paleta);
+            Accion::Continuar
+        }
+        "paleta.comandos" => {
+            paleta_comandos.abrir();
+            Accion::Continuar
+        }
+        _ => ejecutar_comando(id, editor, config, explorador, foco, confirmar_salida),
+    }
 }
 
 /// Dispatcher comando -> acción. Los nombres coinciden con los de

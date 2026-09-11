@@ -18,6 +18,7 @@ tcode-config.workspace = true
 tcode-keymap.workspace = true
 tcode-syntax.workspace = true
 tcode-fs.workspace = true
+tcode-commands.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 anyhow.workspace = true

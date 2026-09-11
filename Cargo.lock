@@ -721,12 +721,20 @@ dependencies = [
  "anyhow",
  "crossterm",
  "ratatui",
+ "tcode-commands",
  "tcode-config",
  "tcode-core",
  "tcode-fs",
  "tcode-keymap",
  "tcode-syntax",
  "tcode-ui",
+]
+
+[[package]]
+name = "tcode-commands"
+version = "0.1.0"
+dependencies = [
+ "tcode-fuzzy",
 ]
 
 [[package]]
@@ -754,6 +762,10 @@ dependencies = [
  "anyhow",
  "tempfile",
 ]
+
+[[package]]
+name = "tcode-fuzzy"
+version = "0.1.0"
 
 [[package]]
 name = "tcode-keymap"
@@ -786,6 +798,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ratatui",
+ "tcode-commands",
  "tcode-config",
  "tcode-core",
  "tcode-fs",
