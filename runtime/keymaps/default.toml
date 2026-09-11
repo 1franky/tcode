@@ -32,6 +32,25 @@
 # (confirmado en tmux). F1 (como en VSCode) funciona en cualquier terminal.
 "F1"            = "paleta.comandos"
 "Ctrl+P"        = "buscar.archivos"
+'Ctrl+\'        = "panel.dividir_vertical"
+'Ctrl+K Ctrl+\' = "panel.dividir_horizontal"
+# Alternativas: en terminales clásicos Ctrl+\ suele decodificarse como
+# otra combinación (confirmado en tmux: llega como Ctrl+4, el código de
+# control 0x1C es compartido). Ctrl+K seguido del símbolo sin modificador
+# no tiene esa ambigüedad.
+"Ctrl+K \\"     = "panel.dividir_vertical"
+"Ctrl+K -"      = "panel.dividir_horizontal"
+"Ctrl+K F"      = "panel.cerrar"
+"Ctrl+1"        = "panel.ir_a_1"
+"Ctrl+2"        = "panel.ir_a_2"
+"Ctrl+3"        = "panel.ir_a_3"
+# Alternativas: Ctrl+<dígito> no tiene codificación de control estándar en
+# absoluto en terminales clásicos (confirmado en tmux: Ctrl+1 llega igual
+# que "1" solo, sin ningún modificador) — a diferencia de Ctrl+letra, que
+# si tiene un byte de control dedicado.
+"Ctrl+K 1"      = "panel.ir_a_1"
+"Ctrl+K 2"      = "panel.ir_a_2"
+"Ctrl+K 3"      = "panel.ir_a_3"
 
 [editor]
 

@@ -10,9 +10,11 @@ use tcode_syntax::{Lenguaje, Resaltador, Token};
 use crate::{EstadoUi, Paleta};
 
 /// Dibuja el contenido del archivo (coloreado por tree-sitter si la
-/// extensión corresponde a uno de los lenguajes de M1, PLAN.md §11),
-/// resalta la línea del cursor y posiciona el cursor real de la terminal
-/// sobre él.
+/// extensión corresponde a uno de los lenguajes de M1, PLAN.md §11) y
+/// resalta la línea del cursor. `mostrar_cursor` posiciona además el
+/// cursor real (parpadeante) de la terminal — solo debe ser `true` para
+/// el panel activo cuando hay varios (`Ctrl+\`, PLAN.md §4): solo puede
+/// haber un cursor de terminal visible a la vez.
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -22,6 +24,7 @@ pub fn dibujar(
     paleta: &Paleta,
     resaltador: &mut Resaltador,
     ruta: &str,
+    mostrar_cursor: bool,
 ) {
     let alto_visible = area.height as usize;
     let ancho_visible = area.width as usize;
@@ -59,9 +62,11 @@ pub fn dibujar(
         area,
     );
 
-    let columna = area.x + cursor.columna as u16;
-    let fila = area.y + (cursor.linea - estado.scroll_vertical) as u16;
-    frame.set_cursor_position((columna, fila));
+    if mostrar_cursor {
+        let columna = area.x + cursor.columna as u16;
+        let fila = area.y + (cursor.linea - estado.scroll_vertical) as u16;
+        frame.set_cursor_position((columna, fila));
+    }
 }
 
 /// Resalta el archivo completo si su extensión corresponde a uno de los 5
