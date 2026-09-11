@@ -1,15 +1,17 @@
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use tcode_core::{Editor, Modo};
 
+use crate::Paleta;
+
 /// Barra de estado inferior (PLAN.md §1): posición del cursor, total de
 /// líneas, codificación, fin de línea, lenguaje detectado y modo. La rama
 /// git y el estado del LSP llegan en fases posteriores.
-pub fn dibujar(frame: &mut Frame, area: Rect, editor: &Editor, ruta_mostrada: &str) {
+pub fn dibujar(frame: &mut Frame, area: Rect, editor: &Editor, ruta_mostrada: &str, paleta: &Paleta) {
     let cursor = editor.cursor();
     let marca_modificado = if editor.buffer().modificado() {
         " ●"
@@ -31,7 +33,7 @@ pub fn dibujar(frame: &mut Frame, area: Rect, editor: &Editor, ruta_mostrada: &s
 
     frame.render_widget(
         Paragraph::new(Line::from(texto))
-            .style(Style::default().bg(Color::DarkGray).fg(Color::White)),
+            .style(Style::default().bg(paleta.statusbar_fondo).fg(paleta.statusbar_texto)),
         area,
     );
 }
