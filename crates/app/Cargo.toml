@@ -19,6 +19,11 @@ tcode-keymap.workspace = true
 tcode-syntax.workspace = true
 tcode-fs.workspace = true
 tcode-commands.workspace = true
+tcode-lsp.workspace = true
 ratatui.workspace = true
-crossterm.workspace = true
+crossterm = { workspace = true, features = ["event-stream"] }
 anyhow.workspace = true
+lsp-types.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "io-util", "sync"] }
+tokio-stream.workspace = true

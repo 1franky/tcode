@@ -2,6 +2,7 @@ use ratatui::layout::{Constraint, Direction, Rect};
 use ratatui::Frame;
 
 use tcode_core::Editor;
+use tcode_lsp::DiagnosticoSimple;
 use tcode_syntax::Resaltador;
 
 use crate::{statusbar, vista_codigo, EstadoUi, Paleta};
@@ -19,17 +20,19 @@ pub enum DireccionSplit {
 }
 
 /// Un documento abierto en un panel: su editor, la ruta que se muestra en
-/// la statusbar, y su propio desplazamiento vertical — cada panel se
-/// desplaza de forma independiente.
+/// la statusbar, su propio desplazamiento vertical (cada panel se
+/// desplaza de forma independiente), y los diagnósticos LSP más recientes
+/// para ese archivo (M2, PLAN.md §2: "diagnósticos inline").
 pub struct PanelEditor {
     pub editor: Editor,
     pub ruta_mostrada: String,
     pub estado_ui: EstadoUi,
+    pub diagnosticos: Vec<DiagnosticoSimple>,
 }
 
 impl PanelEditor {
     pub fn nuevo(editor: Editor, ruta_mostrada: String) -> Self {
-        Self { editor, ruta_mostrada, estado_ui: EstadoUi::default() }
+        Self { editor, ruta_mostrada, estado_ui: EstadoUi::default(), diagnosticos: Vec::new() }
     }
 
     fn vacio() -> Self {
@@ -135,6 +138,13 @@ impl Layout {
         panel.editor = editor;
         panel.ruta_mostrada = ruta_mostrada;
         panel.estado_ui = EstadoUi::default();
+        panel.diagnosticos.clear();
+    }
+
+    /// Reemplaza los diagnósticos LSP del panel activo (llega una
+    /// notificación `textDocument/publishDiagnostics` nueva).
+    pub fn establecer_diagnosticos_activo(&mut self, diagnosticos: Vec<DiagnosticoSimple>) {
+        self.panel_activo_mut().diagnosticos = diagnosticos;
     }
 
     /// Divide el panel activo en dos: el documento actual se queda en el
@@ -204,8 +214,16 @@ fn dibujar_panel(
                 resaltador,
                 &panel_editor.ruta_mostrada,
                 es_activo,
+                &panel_editor.diagnosticos,
             );
-            statusbar::dibujar(frame, partes[1], &panel_editor.editor, &panel_editor.ruta_mostrada, paleta);
+            statusbar::dibujar(
+                frame,
+                partes[1],
+                &panel_editor.editor,
+                &panel_editor.ruta_mostrada,
+                paleta,
+                &panel_editor.diagnosticos,
+            );
         }
         Panel::Division { direccion, primero, segundo } => {
             // Ojo: un split "vertical" (PLAN.md §4) reparte el ANCHO —

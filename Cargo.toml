@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/ui", "crates/config", "crates/keymap", "crates/syntax", "crates/fs", "crates/fuzzy", "crates/commands", "crates/app"]
+members = ["crates/core", "crates/ui", "crates/config", "crates/keymap", "crates/syntax", "crates/fs", "crates/fuzzy", "crates/commands", "crates/lsp", "crates/app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -18,13 +18,18 @@ tcode-syntax = { path = "crates/syntax" }
 tcode-fs = { path = "crates/fs" }
 tcode-fuzzy = { path = "crates/fuzzy" }
 tcode-commands = { path = "crates/commands" }
+tcode-lsp = { path = "crates/lsp" }
 ropey = "1.6"
 crossterm = "0.28"
 ratatui = "0.29"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"
 dirs = "5"
+tokio = "1"
+tokio-stream = "0.1"
+lsp-types = "0.97"
 tree-sitter = "0.27"
 tree-sitter-highlight = "0.27"
 tree-sitter-rust = "0.24"

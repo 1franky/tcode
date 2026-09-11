@@ -1,0 +1,16 @@
+[package]
+name = "tcode-lsp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Cliente LSP de tcode: habla el protocolo por stdio con servers externos (rust-analyzer, pyright...)."
+
+[dependencies]
+anyhow.workspace = true
+lsp-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tcode-syntax.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "rt-multi-thread", "macros", "sync"] }
