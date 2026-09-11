@@ -79,6 +79,27 @@ fn crear_explorador(ruta_arg: Option<&str>) -> Explorador {
     Explorador::nuevo(raiz).unwrap_or_else(|_| Explorador::vacio())
 }
 
+/// La consola clásica de Windows (`conhost.exe`: `cmd.exe` y
+/// `powershell.exe` sin Windows Terminal) no usa UTF-8 por defecto —
+/// interpreta cada byte de los caracteres especiales de tcode (`│`, `▾`,
+/// `▸`, `●`) como un glifo separado del codepage regional del sistema,
+/// descuadrando el ancho de columna que `ratatui` calculó. Al redibujar
+/// (p. ej. al mover el cursor) eso se ve como texto "faltante" o con
+/// artefactos — reportado y confirmado en Windows (CMD y PowerShell
+/// clásico) el 2026-09-11: el archivo en disco quedaba intacto, solo la
+/// pantalla se veía mal. Forzar el codepage de salida/entrada a UTF-8
+/// (65001) antes de dibujar nada lo soluciona.
+#[cfg(windows)]
+fn configurar_consola_utf8() {
+    unsafe {
+        windows_sys::Win32::System::Console::SetConsoleOutputCP(65001);
+        windows_sys::Win32::System::Console::SetConsoleCP(65001);
+    }
+}
+
+#[cfg(not(windows))]
+fn configurar_consola_utf8() {}
+
 /// Además de inicializar la terminal, intenta activar el protocolo de
 /// teclado extendido de Kitty (best-effort: si el terminal no lo soporta
 /// no pasa nada, `desde_evento` sigue funcionando igual). Sin esto,
@@ -87,6 +108,7 @@ fn crear_explorador(ruta_arg: Option<&str>) -> Explorador {
 /// tmux) — por eso `paleta.comandos` también tiene `F1` como atajo
 /// alternativo universal en `runtime/keymaps/default.toml`.
 fn iniciar_terminal() -> Result<(Terminal<Backend>, bool)> {
+    configurar_consola_utf8();
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
