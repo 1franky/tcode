@@ -27,6 +27,22 @@ impl Lenguaje {
         }
     }
 
+    /// Detecta el lenguaje por la etiqueta de un bloque de código cercado
+    /// de Markdown (` ```rust `, ` ```py `...) — usado por la vista de
+    /// preview de Markdown (PLAN.md §8: "code blocks → resaltado con
+    /// tree-sitter del lenguaje declarado"). Acepta alias comunes además
+    /// del nombre completo.
+    pub fn detectar_por_etiqueta(etiqueta: &str) -> Option<Lenguaje> {
+        match etiqueta.trim().to_lowercase().as_str() {
+            "rust" | "rs" => Some(Lenguaje::Rust),
+            "python" | "py" => Some(Lenguaje::Python),
+            "javascript" | "js" | "jsx" => Some(Lenguaje::JavaScript),
+            "go" | "golang" => Some(Lenguaje::Go),
+            "markdown" | "md" => Some(Lenguaje::Markdown),
+            _ => None,
+        }
+    }
+
     pub fn nombre_mostrado(&self) -> &'static str {
         match self {
             Lenguaje::Rust => "Rust",
@@ -56,5 +72,15 @@ mod tests {
     fn extension_desconocida_no_tiene_lenguaje() {
         assert_eq!(Lenguaje::detectar_por_extension("datos.csv"), None);
         assert_eq!(Lenguaje::detectar_por_extension("sin_extension"), None);
+    }
+
+    #[test]
+    fn detecta_lenguaje_por_etiqueta_de_bloque_de_codigo() {
+        assert_eq!(Lenguaje::detectar_por_etiqueta("rust"), Some(Lenguaje::Rust));
+        assert_eq!(Lenguaje::detectar_por_etiqueta("py"), Some(Lenguaje::Python));
+        assert_eq!(Lenguaje::detectar_por_etiqueta("JS"), Some(Lenguaje::JavaScript));
+        assert_eq!(Lenguaje::detectar_por_etiqueta("golang"), Some(Lenguaje::Go));
+        assert_eq!(Lenguaje::detectar_por_etiqueta("brainfuck"), None);
+        assert_eq!(Lenguaje::detectar_por_etiqueta(""), None);
     }
 }

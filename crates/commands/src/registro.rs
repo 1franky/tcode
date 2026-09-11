@@ -23,6 +23,8 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "editor.rehacer", descripcion: "Editor: Rehacer" },
         Comando { id: "panel.alternar_lateral", descripcion: "Ver: Alternar explorador de archivos" },
         Comando { id: "config.recargar", descripcion: "Configuración: Recargar" },
+        Comando { id: "markdown.alternar_preview", descripcion: "Markdown: Alternar preview" },
+        Comando { id: "markdown.preview_solo", descripcion: "Markdown: Ver solo preview" },
     ]
 }
 

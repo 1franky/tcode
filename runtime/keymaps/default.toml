@@ -66,5 +66,12 @@
 [editor]
 
 [markdown]
+# Ctrl+Shift+V no está en [global] a propósito: es Ctrl+V con Shift, una
+# combinación con la que muchos emuladores de terminal (y el propio
+# usuario, por costumbre) esperan "pegar" — mantenerla agrupada aquí dejar
+# claro que solo aplica con un archivo Markdown activo (el comando mismo
+# no hace nada si no lo es, ver `markdown.preview_solo` en `app/main.rs`).
+"Ctrl+K V"      = "markdown.alternar_preview"
+"Ctrl+Shift+V"  = "markdown.preview_solo"
 
 [csv]

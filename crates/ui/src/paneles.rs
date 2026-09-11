@@ -3,9 +3,9 @@ use ratatui::Frame;
 
 use tcode_core::{Editor, EstadoBusqueda};
 use tcode_lsp::DiagnosticoSimple;
-use tcode_syntax::Resaltador;
+use tcode_syntax::{Lenguaje, Resaltador};
 
-use crate::{statusbar, vista_codigo, EstadoUi, Paleta};
+use crate::{statusbar, vista_codigo, vista_markdown, EstadoUi, Paleta};
 
 /// Cómo se divide un panel (`Ctrl+\`/`Ctrl+K Ctrl+\`, PLAN.md §4): en
 /// paneles lado a lado (una línea divisoria vertical entre ellos) o
@@ -19,24 +19,51 @@ pub enum DireccionSplit {
     Horizontal,
 }
 
+/// Vista de un panel cuyo archivo es Markdown (PLAN.md §8, `Ctrl+K V` /
+/// `Ctrl+Shift+V`): solo el código fuente (comportamiento normal de
+/// cualquier otro archivo), fuente + preview lado a lado, o solo el
+/// preview. Se ignora por completo si el archivo activo no es
+/// `.md`/`.markdown` — no hay forma de "quedar atascado" en modo preview
+/// al cambiar a otro archivo, cada `PanelEditor` es dueño de su propio
+/// modo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModoMarkdown {
+    #[default]
+    Fuente,
+    Dividido,
+    SoloPreview,
+}
+
 /// Un documento abierto en un panel: su editor, la ruta que se muestra en
 /// la statusbar, su propio desplazamiento vertical (cada panel se
-/// desplaza de forma independiente), y los diagnósticos LSP más recientes
-/// para ese archivo (M2, PLAN.md §2: "diagnósticos inline").
+/// desplaza de forma independiente), los diagnósticos LSP más recientes
+/// para ese archivo (M2, PLAN.md §2: "diagnósticos inline") y, si es
+/// Markdown, su [`ModoMarkdown`] (PLAN.md §8).
 pub struct PanelEditor {
     pub editor: Editor,
     pub ruta_mostrada: String,
     pub estado_ui: EstadoUi,
     pub diagnosticos: Vec<DiagnosticoSimple>,
+    pub modo_markdown: ModoMarkdown,
 }
 
 impl PanelEditor {
     pub fn nuevo(editor: Editor, ruta_mostrada: String) -> Self {
-        Self { editor, ruta_mostrada, estado_ui: EstadoUi::default(), diagnosticos: Vec::new() }
+        Self {
+            editor,
+            ruta_mostrada,
+            estado_ui: EstadoUi::default(),
+            diagnosticos: Vec::new(),
+            modo_markdown: ModoMarkdown::default(),
+        }
     }
 
     fn vacio() -> Self {
         Self::nuevo(Editor::nuevo(), String::new())
+    }
+
+    fn es_markdown(&self) -> bool {
+        Lenguaje::detectar_por_extension(&self.ruta_mostrada) == Some(Lenguaje::Markdown)
     }
 }
 
@@ -139,6 +166,35 @@ impl Layout {
         panel.ruta_mostrada = ruta_mostrada;
         panel.estado_ui = EstadoUi::default();
         panel.diagnosticos.clear();
+        panel.modo_markdown = ModoMarkdown::default();
+    }
+
+    /// `Ctrl+K V`: alterna el panel activo entre solo-fuente y
+    /// fuente+preview lado a lado (PLAN.md §8). No hace nada si el
+    /// archivo activo no es Markdown.
+    pub fn alternar_preview_markdown(&mut self) {
+        let panel = self.panel_activo_mut();
+        if !panel.es_markdown() {
+            return;
+        }
+        panel.modo_markdown = match panel.modo_markdown {
+            ModoMarkdown::Dividido => ModoMarkdown::Fuente,
+            ModoMarkdown::Fuente | ModoMarkdown::SoloPreview => ModoMarkdown::Dividido,
+        };
+    }
+
+    /// `Ctrl+Shift+V`: alterna el panel activo entre solo-preview y
+    /// solo-fuente (PLAN.md §8). No hace nada si el archivo activo no es
+    /// Markdown.
+    pub fn alternar_preview_solo_markdown(&mut self) {
+        let panel = self.panel_activo_mut();
+        if !panel.es_markdown() {
+            return;
+        }
+        panel.modo_markdown = match panel.modo_markdown {
+            ModoMarkdown::SoloPreview => ModoMarkdown::Fuente,
+            ModoMarkdown::Fuente | ModoMarkdown::Dividido => ModoMarkdown::SoloPreview,
+        };
     }
 
     /// Reemplaza los diagnósticos LSP del panel activo (llega una
@@ -222,22 +278,68 @@ fn dibujar_panel(
                 (&[], None)
             };
 
-            vista_codigo::dibujar(
-                frame,
-                partes[0],
-                &panel_editor.editor,
-                &mut panel_editor.estado_ui,
-                paleta,
-                resaltador,
-                &panel_editor.ruta_mostrada,
-                // Mientras la barra de búsqueda está abierta, el cursor
-                // real de la terminal se posiciona en ella (ver
-                // `panel_busqueda::dibujar`), no en el código.
-                es_activo && !estado_busqueda.activa(),
-                &panel_editor.diagnosticos,
-                coincidencias,
-                indice_coincidencia,
-            );
+            // Mientras la barra de búsqueda está abierta, el cursor real
+            // de la terminal se posiciona en ella (ver
+            // `panel_busqueda::dibujar`), no en el código.
+            let mostrar_cursor = es_activo && !estado_busqueda.activa();
+            let area_markdown = if panel_editor.es_markdown() { panel_editor.modo_markdown } else { ModoMarkdown::Fuente };
+
+            match area_markdown {
+                ModoMarkdown::Fuente => {
+                    vista_codigo::dibujar(
+                        frame,
+                        partes[0],
+                        &panel_editor.editor,
+                        &mut panel_editor.estado_ui,
+                        paleta,
+                        resaltador,
+                        &panel_editor.ruta_mostrada,
+                        mostrar_cursor,
+                        &panel_editor.diagnosticos,
+                        coincidencias,
+                        indice_coincidencia,
+                    );
+                }
+                ModoMarkdown::Dividido => {
+                    let columnas = ratatui::layout::Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .split(partes[0]);
+                    vista_codigo::dibujar(
+                        frame,
+                        columnas[0],
+                        &panel_editor.editor,
+                        &mut panel_editor.estado_ui,
+                        paleta,
+                        resaltador,
+                        &panel_editor.ruta_mostrada,
+                        mostrar_cursor,
+                        &panel_editor.diagnosticos,
+                        coincidencias,
+                        indice_coincidencia,
+                    );
+                    vista_markdown::dibujar(
+                        frame,
+                        columnas[1],
+                        &panel_editor.editor.buffer().a_texto(),
+                        panel_editor.estado_ui.scroll_vertical,
+                        panel_editor.editor.buffer().num_lineas(),
+                        paleta,
+                        resaltador,
+                    );
+                }
+                ModoMarkdown::SoloPreview => {
+                    vista_markdown::dibujar(
+                        frame,
+                        partes[0],
+                        &panel_editor.editor.buffer().a_texto(),
+                        panel_editor.estado_ui.scroll_vertical,
+                        panel_editor.editor.buffer().num_lineas(),
+                        paleta,
+                        resaltador,
+                    );
+                }
+            }
             statusbar::dibujar(
                 frame,
                 partes[1],
@@ -327,6 +429,56 @@ mod tests {
 
     fn layout_de_prueba() -> Layout {
         Layout::nuevo(Editor::nuevo(), "a.txt".to_string())
+    }
+
+    #[test]
+    fn alternar_preview_markdown_no_hace_nada_en_un_archivo_no_markdown() {
+        let mut layout = layout_de_prueba();
+        layout.alternar_preview_markdown();
+        assert_eq!(layout.panel_activo().modo_markdown, ModoMarkdown::Fuente);
+    }
+
+    #[test]
+    fn alternar_preview_markdown_pasa_a_dividido_y_de_vuelta_a_fuente() {
+        let mut layout = Layout::nuevo(Editor::nuevo(), "notas.md".to_string());
+        assert_eq!(layout.panel_activo().modo_markdown, ModoMarkdown::Fuente);
+
+        layout.alternar_preview_markdown();
+        assert_eq!(layout.panel_activo().modo_markdown, ModoMarkdown::Dividido);
+
+        layout.alternar_preview_markdown();
+        assert_eq!(layout.panel_activo().modo_markdown, ModoMarkdown::Fuente);
+    }
+
+    #[test]
+    fn alternar_preview_solo_markdown_pasa_a_solo_preview_y_de_vuelta_a_fuente() {
+        let mut layout = Layout::nuevo(Editor::nuevo(), "notas.md".to_string());
+
+        layout.alternar_preview_solo_markdown();
+        assert_eq!(layout.panel_activo().modo_markdown, ModoMarkdown::SoloPreview);
+
+        layout.alternar_preview_solo_markdown();
+        assert_eq!(layout.panel_activo().modo_markdown, ModoMarkdown::Fuente);
+    }
+
+    #[test]
+    fn alternar_preview_desde_solo_preview_deja_el_panel_dividido() {
+        let mut layout = Layout::nuevo(Editor::nuevo(), "notas.md".to_string());
+        layout.alternar_preview_solo_markdown();
+        assert_eq!(layout.panel_activo().modo_markdown, ModoMarkdown::SoloPreview);
+
+        layout.alternar_preview_markdown();
+        assert_eq!(layout.panel_activo().modo_markdown, ModoMarkdown::Dividido);
+    }
+
+    #[test]
+    fn abrir_en_activo_reinicia_el_modo_markdown() {
+        let mut layout = Layout::nuevo(Editor::nuevo(), "notas.md".to_string());
+        layout.alternar_preview_markdown();
+        assert_eq!(layout.panel_activo().modo_markdown, ModoMarkdown::Dividido);
+
+        layout.abrir_en_activo(Editor::nuevo(), "otro.md".to_string());
+        assert_eq!(layout.panel_activo().modo_markdown, ModoMarkdown::Fuente);
     }
 
     #[test]
