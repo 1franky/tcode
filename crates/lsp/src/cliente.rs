@@ -1,0 +1,160 @@
+use std::process::Stdio;
+
+use anyhow::{Context, Result};
+use serde::Serialize;
+use serde_json::{json, Value};
+use tokio::io::BufReader;
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::mpsc;
+
+use crate::protocolo::{escribir_mensaje, leer_mensaje};
+
+/// Un mensaje que llega desde el servidor LSP, ya distinguido entre
+/// notificación (sin id, como `textDocument/publishDiagnostics`) y
+/// respuesta a un request que mandamos nosotros.
+#[derive(Debug)]
+pub enum MensajeEntrante {
+    Notificacion { metodo: String, params: Value },
+    Respuesta { id: i64, resultado: std::result::Result<Value, Value> },
+}
+
+/// Cliente LSP conectado a un proceso de lenguaje server externo, hablado
+/// por stdio (PLAN.md §2: "cliente + procesos externos"). Todo asíncrono:
+/// enviar (`peticion`/`notificacion`) no espera la respuesta ahí mismo,
+/// esta llega más tarde por `receptor` — quien usa el cliente decide cómo
+/// correlacionar el id devuelto por `peticion` con la respuesta.
+pub struct Cliente {
+    proceso: Child,
+    stdin: ChildStdin,
+    siguiente_id: i64,
+    pub receptor: mpsc::UnboundedReceiver<MensajeEntrante>,
+}
+
+impl Cliente {
+    /// Lanza `comando` como proceso hijo y arranca la tarea de fondo que
+    /// lee su stdout continuamente, reenviando cada mensaje por
+    /// `receptor`. El proceso se mata solo si el `Cliente` se dropea sin
+    /// pasar por `cerrar` (`kill_on_drop`).
+    pub async fn lanzar(comando: &str, args: &[&str]) -> Result<Self> {
+        let mut proceso = Command::new(comando)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .with_context(|| format!("no se pudo lanzar '{comando}': ¿está instalado y en el PATH?"))?;
+
+        let stdin = proceso.stdin.take().context("el proceso no expuso stdin")?;
+        let stdout = proceso.stdout.take().context("el proceso no expuso stdout")?;
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(leer_en_bucle(BufReader::new(stdout), tx));
+
+        Ok(Self { proceso, stdin, siguiente_id: 1, receptor: rx })
+    }
+
+    /// Envía un request identificado; la respuesta llega por `receptor`
+    /// como `MensajeEntrante::Respuesta` con este mismo id.
+    pub async fn peticion(&mut self, metodo: &str, params: impl Serialize) -> Result<i64> {
+        let id = self.siguiente_id;
+        self.siguiente_id += 1;
+        let mensaje = json!({ "jsonrpc": "2.0", "id": id, "method": metodo, "params": params });
+        escribir_mensaje(&mut self.stdin, &mensaje).await?;
+        Ok(id)
+    }
+
+    pub async fn notificacion(&mut self, metodo: &str, params: impl Serialize) -> Result<()> {
+        let mensaje = json!({ "jsonrpc": "2.0", "method": metodo, "params": params });
+        escribir_mensaje(&mut self.stdin, &mensaje).await
+    }
+
+    /// Mata el proceso del servidor. Un shutdown JSON-RPC "educado"
+    /// (`shutdown` + `exit`) queda pendiente para cuando haga falta: para
+    /// esta primera pieza, matar el proceso al cerrar tcode es aceptable.
+    pub async fn cerrar(mut self) {
+        let _ = self.proceso.kill().await;
+    }
+}
+
+async fn leer_en_bucle(mut reader: BufReader<ChildStdout>, tx: mpsc::UnboundedSender<MensajeEntrante>) {
+    loop {
+        let valor = match leer_mensaje(&mut reader).await {
+            Ok(v) => v,
+            Err(_) => break, // el proceso murió o el stream se rompió
+        };
+
+        let mensaje = if let Some(id) = valor.get("id").and_then(Value::as_i64) {
+            match valor.get("error") {
+                Some(error) => MensajeEntrante::Respuesta { id, resultado: Err(error.clone()) },
+                None => {
+                    MensajeEntrante::Respuesta { id, resultado: Ok(valor.get("result").cloned().unwrap_or(Value::Null)) }
+                }
+            }
+        } else if let Some(metodo) = valor.get("method").and_then(Value::as_str) {
+            MensajeEntrante::Notificacion {
+                metodo: metodo.to_string(),
+                params: valor.get("params").cloned().unwrap_or(Value::Null),
+            }
+        } else {
+            continue;
+        };
+
+        if tx.send(mensaje).is_err() {
+            break;
+        }
+    }
+}
+
+/// Comando y argumentos para lanzar el LSP server de un lenguaje, si
+/// `tcode` conoce uno (PLAN.md §6). `None` si no hay soporte configurado
+/// todavía — el resto de los 13 lenguajes objetivo se suman
+/// incrementalmente; el editor sigue funcionando igual sin LSP para esos.
+pub fn comando_para(lenguaje: tcode_syntax::Lenguaje) -> Option<(&'static str, &'static [&'static str])> {
+    match lenguaje {
+        tcode_syntax::Lenguaje::Python => Some(("pyright-langserver", &["--stdio"])),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn comando_para_python_es_pyright() {
+        let (comando, args) = comando_para(tcode_syntax::Lenguaje::Python).unwrap();
+        assert_eq!(comando, "pyright-langserver");
+        assert_eq!(args, &["--stdio"]);
+    }
+
+    #[test]
+    fn comando_para_rust_todavia_no_existe() {
+        assert!(comando_para(tcode_syntax::Lenguaje::Rust).is_none());
+    }
+
+    /// Verifica el ciclo de vida completo contra un proceso real y
+    /// simple (`cat`, que devuelve por stdout exactamente lo que recibe
+    /// por stdin): confirma que `lanzar` conecta los pipes correctamente
+    /// y que un mensaje enviado con `notificacion` efectivamente vuelve
+    /// por `receptor` con el framing bien interpretado en ambos sentidos.
+    /// No depende de tener un LSP server real instalado. Usa `cat`, que
+    /// es específico de Unix — se salta en Windows.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn lanzar_y_recibir_via_un_proceso_eco() {
+        let mut cliente = Cliente::lanzar("cat", &[]).await.expect("cat debería existir en cualquier Unix");
+        cliente.notificacion("prueba/eco", json!({ "hola": "mundo" })).await.unwrap();
+
+        let mensaje = cliente.receptor.recv().await.expect("cat debería hacer eco del mensaje");
+        match mensaje {
+            MensajeEntrante::Notificacion { metodo, params } => {
+                assert_eq!(metodo, "prueba/eco");
+                assert_eq!(params, json!({ "hola": "mundo" }));
+            }
+            MensajeEntrante::Respuesta { .. } => panic!("se esperaba una notificación, no una respuesta"),
+        }
+
+        cliente.cerrar().await;
+    }
+}

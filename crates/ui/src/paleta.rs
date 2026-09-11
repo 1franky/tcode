@@ -16,6 +16,10 @@ pub struct Paleta {
     pub linea_actual: Color,
     pub statusbar_fondo: Color,
     pub statusbar_texto: Color,
+    pub diagnostico_error: Color,
+    pub diagnostico_advertencia: Color,
+    pub diagnostico_info: Color,
+    pub diagnostico_sugerencia: Color,
     /// Estilo por token de sintaxis (PLAN.md §7), indexado por uno de los
     /// nombres canónicos de [`tcode_syntax::NOMBRES_RESALTADO`].
     sintaxis: HashMap<&'static str, Style>,
@@ -41,6 +45,10 @@ impl Paleta {
             linea_actual: rgb(tema.ui.linea_actual_rgb()?),
             statusbar_fondo: rgb(tema.statusbar.background_rgb()?),
             statusbar_texto: rgb(tema.statusbar.foreground_rgb()?),
+            diagnostico_error: color_diagnostico(&tema.diagnostics.error, Color::Red),
+            diagnostico_advertencia: color_diagnostico(&tema.diagnostics.warning, Color::Yellow),
+            diagnostico_info: color_diagnostico(&tema.diagnostics.info, Color::Cyan),
+            diagnostico_sugerencia: color_diagnostico(&tema.diagnostics.hint, Color::Gray),
             sintaxis,
         })
     }
@@ -58,6 +66,10 @@ impl Paleta {
             linea_actual: Color::DarkGray,
             statusbar_fondo: Color::DarkGray,
             statusbar_texto: Color::White,
+            diagnostico_error: Color::Red,
+            diagnostico_advertencia: Color::Yellow,
+            diagnostico_info: Color::Cyan,
+            diagnostico_sugerencia: Color::Gray,
             sintaxis: HashMap::new(),
         }
     }
@@ -85,6 +97,17 @@ fn campo_sintaxis<'t>(tema: &'t Tema, nombre: &str) -> Option<&'t EstiloToken> {
         "operator" => tema.syntax.operator.as_ref(),
         _ => None,
     }
+}
+
+/// Resuelve un color opcional del tema (`tema.diagnostics.*`, siempre
+/// `Option<String>` porque no todos los temas de usuario lo definen) a un
+/// `Color`, cayendo a `fallback` si falta o no se puede parsear.
+fn color_diagnostico(valor: &Option<String>, fallback: Color) -> Color {
+    valor
+        .as_deref()
+        .and_then(|hex| tcode_config::analizar_color_hex(hex).ok())
+        .map(|(r, g, b)| Color::Rgb(r, g, b))
+        .unwrap_or(fallback)
 }
 
 fn estilo_desde_token(token: &EstiloToken) -> Result<Style> {

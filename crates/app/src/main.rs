@@ -10,14 +10,19 @@
 //! `F1`) y el buscador de archivos (`Ctrl+P`) producen esos mismos ids por
 //! otra vía (buscar por nombre en vez de memorizar un atajo) y terminan en
 //! el mismo dispatcher.
+//!
+//! Desde M2 el bucle es asíncrono (`tokio`): además del teclado, hay que
+//! escuchar en paralelo los mensajes que llegan del servidor LSP activo
+//! (`lsp.rs`) sin bloquear ninguno de los dos.
+
+mod lsp;
 
 use std::io::{self, Stdout};
-use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
-    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -25,6 +30,7 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
 use tcode_config::Config;
@@ -36,7 +42,8 @@ use tcode_ui::{DireccionSplit, Layout as PanelLayout, Paleta};
 
 type Backend = CrosstermBackend<Stdout>;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let ruta_arg = std::env::args().nth(1);
 
     let editor = match &ruta_arg {
@@ -53,7 +60,7 @@ fn main() -> Result<()> {
     let explorador = crear_explorador(ruta_arg.as_deref());
 
     let (mut terminal, protocolo_kitty) = iniciar_terminal()?;
-    let resultado = ejecutar(&mut terminal, &mut layout, config, &keymap, explorador, ruta_arg.as_deref());
+    let resultado = ejecutar(&mut terminal, &mut layout, config, &keymap, explorador, ruta_arg.as_deref()).await;
     finalizar_terminal(&mut terminal, protocolo_kitty)?;
 
     resultado
@@ -135,13 +142,14 @@ struct EstadoApp {
     confirmar_salida: bool,
     paleta_comandos: EstadoPaleta,
     buscador_archivos: BuscadorArchivos,
+    lsp: lsp::EstadoLsp,
 }
 
 fn sin_modificadores(key: KeyEvent) -> bool {
     !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT)
 }
 
-fn ejecutar(
+async fn ejecutar(
     terminal: &mut Terminal<Backend>,
     layout: &mut PanelLayout,
     config: Config,
@@ -151,6 +159,7 @@ fn ejecutar(
 ) -> Result<()> {
     let mut resaltador = Resaltador::nuevo();
     let mut resolvedor = Resolvedor::nuevo(keymap);
+    let mut eventos = EventStream::new();
 
     let mut estado = EstadoApp {
         paleta: cargar_paleta(&config.interfaz.tema),
@@ -163,7 +172,12 @@ fn ejecutar(
         confirmar_salida: false,
         paleta_comandos: EstadoPaleta::nueva(),
         buscador_archivos: BuscadorArchivos::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
+        lsp: lsp::EstadoLsp::nuevo(),
     };
+
+    // El archivo abierto al arrancar también dispara el LSP si su
+    // lenguaje tiene uno configurado.
+    sincronizar_lsp(layout, &mut estado.lsp).await;
 
     loop {
         terminal.draw(|frame| {
@@ -178,15 +192,20 @@ fn ejecutar(
             )
         })?;
 
-        if !event::poll(Duration::from_millis(200))? {
-            continue;
-        }
-        let Event::Key(key) = event::read()? else {
-            continue;
+        let key = tokio::select! {
+            evento = eventos.next() => {
+                match evento {
+                    Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => key,
+                    _ => continue,
+                }
+            }
+            mensaje = estado.lsp.siguiente_mensaje() => {
+                if let Some(mensaje) = mensaje {
+                    estado.lsp.procesar_mensaje(mensaje, layout).await;
+                }
+                continue;
+            }
         };
-        if key.kind != KeyEventKind::Press {
-            continue;
-        }
 
         // Paleta de comandos y buscador de archivos son modales
         // mutuamente excluyentes que capturan el teclado por completo
@@ -209,6 +228,7 @@ fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.paleta_comandos.escribir(c),
                 _ => {}
             }
+            sincronizar_lsp(layout, &mut estado.lsp).await;
             continue;
         }
 
@@ -229,6 +249,7 @@ fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.buscador_archivos.escribir(c),
                 _ => {}
             }
+            sincronizar_lsp(layout, &mut estado.lsp).await;
             continue;
         }
 
@@ -260,9 +281,22 @@ fn ejecutar(
                 }
             }
         }
+
+        sincronizar_lsp(layout, &mut estado.lsp).await;
     }
 
+    estado.lsp.cerrar().await;
     Ok(())
+}
+
+/// Le avisa al `EstadoLsp` cuál es el archivo/contenido activos ahora
+/// mismo: relanza el cliente si cambió el lenguaje, y notifica
+/// `didChange` si el texto cambió desde el último envío.
+async fn sincronizar_lsp(layout: &PanelLayout, lsp: &mut lsp::EstadoLsp) {
+    let panel = layout.panel_activo();
+    let contenido = panel.editor.buffer().a_texto();
+    lsp.actualizar_para_archivo(&panel.ruta_mostrada, &contenido).await;
+    lsp.sincronizar_contenido(&contenido).await;
 }
 
 /// Punto de entrada único para ejecutar un id de comando, venga de un

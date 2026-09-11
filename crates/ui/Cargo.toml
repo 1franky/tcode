@@ -13,5 +13,6 @@ tcode-config.workspace = true
 tcode-syntax.workspace = true
 tcode-fs.workspace = true
 tcode-commands.workspace = true
+tcode-lsp.workspace = true
 ratatui.workspace = true
 anyhow.workspace = true
