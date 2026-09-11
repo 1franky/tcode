@@ -1,0 +1,89 @@
+name: Release
+
+# Se dispara al empujar un tag "v*.*.*" a main (ej. v0.1.0) — no en cada
+# push. Compila tcode para Linux, macOS (Intel + Apple Silicon) y Windows,
+# y publica los binarios como un GitHub Release (PLAN.md §10, §11 M5).
+#
+# Firma de binarios (macOS notarización, Authenticode de Windows) queda
+# pendiente: requiere certificados de pago que el proyecto no tiene
+# todavía. En macOS sin firmar, Gatekeeper bloquea la primera ejecución —
+# install/linux.sh documenta el `xattr -d com.apple.quarantine` necesario.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  compilar:
+    name: Compilar (${{ matrix.nombre }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nombre: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - nombre: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - nombre: macos-x86_64
+            # No hay runner Intel gratuito para repos públicos: se
+            # compila cruzado desde Apple Silicon (el toolchain de Xcode
+            # trae las librerías de sistema para ambas arquitecturas).
+            os: macos-latest
+            target: x86_64-apple-darwin
+          - nombre: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Compilar en modo release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Empaquetar (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf "$GITHUB_WORKSPACE/tcode-${{ matrix.nombre }}.tar.gz" tcode
+
+      - name: Empaquetar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path target/${{ matrix.target }}/release/tcode.exe -DestinationPath tcode-${{ matrix.nombre }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tcode-${{ matrix.nombre }}
+          path: tcode-${{ matrix.nombre }}.*
+          if-no-files-found: error
+
+  publicar:
+    name: Publicar release
+    needs: compilar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artefactos
+          merge-multiple: true
+
+      - name: Crear el GitHub Release con los binarios adjuntos
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" artefactos/* \
+            --repo "${{ github.repository }}" \
+            --title "tcode ${{ github.ref_name }}" \
+            --generate-notes
