@@ -12,7 +12,7 @@ mod tema;
 pub use color::analizar_color_hex;
 pub use config::{
     cargar, directorio_config, directorio_temas_usuario, guardar, recargar, ruta_config, Config,
-    ConfigEditor, ConfigInterfaz,
+    ConfigEditor, ConfigInterfaz, ConfigLenguajes,
 };
 pub use panel_admin::{
     indice_de, CampoEditor, CampoTemas, EstadoPanelAdmin, FocoPanelAdmin, OpcionExterna,

@@ -149,6 +149,17 @@ abajo, es donde más problemas aparecieron).
 - [ ] Cerrar el editor y volver a abrirlo tras personalizar algún atajo: el cambio persistió (`keymap.toml` sigue ahí con la personalización).
 - [ ] Con `keymap.toml` de usuario editado A MANO (fuera del panel) mientras `tcode` está corriendo: `Ctrl+K Ctrl+L` (o el comando "Configuración: Recargar" desde la paleta) recarga también el keymap, no solo `config.toml`/tema — un atajo nuevo agregado a mano funciona sin reiniciar.
 
+## M4 — Sección "Lenguajes / LSP" del panel de administración
+
+- [ ] Dentro del panel (`Ctrl+K A`), la sección "Lenguajes / LSP" ya NO dice "(próximamente)": muestra una fila por cada uno de los 5 lenguajes de M1 (Rust, Python, JavaScript, Go, Markdown) con: si está habilitado, el comando LSP configurado (o "(sin LSP configurado)" para los que todavía no tienen uno — todos salvo Python), si ese binario está en el `PATH`, y el estado en vivo ("Conectado"/"Iniciando…"/"Inactivo").
+- [ ] Con `pyright` instalado y un archivo `.py` abierto: la fila de "Python" muestra "pyright-langserver --stdio [en el PATH]" y el estado pasa de "Iniciando…" a "Conectado" solo, sin tocar nada — confirma que el panel refleja el estado real de la sesión LSP activa, no un valor fijo.
+- [ ] `Enter` (o `←`/`→`) sobre una fila: alterna "Habilitado: Sí"/"No" y persiste en `config.toml` (sección `[lenguajes]`, `lsp_deshabilitado`) al instante.
+- [ ] Deshabilitar Python mientras hay una sesión LSP activa para un `.py` abierto: la sesión se cierra sola (el estado pasa a "Inactivo") **sin reiniciar el editor** — confirmar también que los diagnósticos (subrayados) que hubiera desaparecen.
+- [ ] Volver a habilitarlo: si el archivo `.py` sigue siendo el activo, el LSP se relanza solo (pasa a "Iniciando…" y después "Conectado").
+- [ ] Cerrar el editor y volver a abrirlo con Python deshabilitado: el LSP no se lanza al abrir un `.py`, aunque `pyright` esté instalado.
+- [ ] La búsqueda global del panel (`Ctrl+F`) encuentra los lenguajes por su nombre (probar "python", "rust") y salta a la fila correcta de "Lenguajes / LSP".
+- [ ] Sin `pyright` instalado (o con el `PATH` alterado para que no se encuentre): la fila de Python muestra "[no encontrado en el PATH]" resaltado, y el comando LSP simplemente no se lanza (sin romper nada) al abrir un `.py`.
+
 ## Distribución / instaladores
 
 - [ ] `install/linux.sh` en una máquina Linux limpia (o `install/windows.ps1` en Windows): instala sin pedir contraseña/administrador, y `tcode` queda disponible en cualquier carpeta después de abrir una terminal nueva.

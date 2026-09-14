@@ -39,8 +39,8 @@ use tcode_config::{
 use tcode_core::{analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda};
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
-use tcode_syntax::Resaltador;
-use tcode_ui::{DireccionSplit, Layout as PanelLayout, ModoCsv, Paleta};
+use tcode_syntax::{Lenguaje, Resaltador};
+use tcode_ui::{DireccionSplit, FilaLenguajeLsp, Layout as PanelLayout, ModoCsv, Paleta};
 
 type Backend = CrosstermBackend<Stdout>;
 
@@ -234,18 +234,26 @@ async fn ejecutar(
     let mut resolvedor = Resolvedor::nuevo(keymap.clone());
     let mut eventos = EventStream::new();
 
-    // Info fija de la sección "Atajos" del panel de administración
-    // (`Ctrl+,`, PLAN.md §5): la lista de comandos no cambia durante la
-    // sesión, así que se calcula una sola vez al arrancar en vez de en
-    // cada tecla (ver doc de `EstadoPanelAdmin::fijar_opciones_externas`).
+    // Info fija de las secciones "Atajos" y "Lenguajes / LSP" del panel
+    // de administración (`Ctrl+,`, PLAN.md §5): ni la lista de comandos
+    // ni la de lenguajes cambia durante la sesión, así que se calculan
+    // una sola vez al arrancar en vez de en cada tecla (ver doc de
+    // `EstadoPanelAdmin::fijar_opciones_externas`).
     let mut panel_admin = EstadoPanelAdmin::nueva();
     let indice_atajos = tcode_config::indice_de(Seccion::Atajos);
+    let indice_lenguajes = tcode_config::indice_de(Seccion::Lenguajes);
     panel_admin.fijar_num_filas_atajos(1 + tcode_commands::comandos_disponibles().len());
+    panel_admin.fijar_num_filas_lenguajes(Lenguaje::TODOS.len());
     panel_admin.fijar_opciones_externas(
         tcode_commands::comandos_disponibles()
             .iter()
             .enumerate()
             .map(|(i, c)| tcode_config::OpcionExterna { seccion: indice_atajos, campo: i + 1, nombre: c.descripcion })
+            .chain(Lenguaje::TODOS.iter().enumerate().map(|(i, l)| tcode_config::OpcionExterna {
+                seccion: indice_lenguajes,
+                campo: i,
+                nombre: l.nombre_mostrado(),
+            }))
             .collect(),
     );
 
@@ -269,7 +277,7 @@ async fn ejecutar(
 
     // El archivo abierto al arrancar también dispara el LSP si su
     // lenguaje tiene uno configurado.
-    sincronizar_lsp(layout, &mut estado.lsp).await;
+    sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
 
     // Ver `forzar_redibujado_completo`: en Windows, si la "forma" de la
     // pantalla cambió (otro archivo activo, otro número de paneles, el
@@ -281,6 +289,12 @@ async fn ejecutar(
             forzar_redibujado_completo(terminal)?;
             necesita_redibujado = false;
         }
+
+        // Barato (5 lenguajes): se recalcula cada frame en vez de
+        // cachearlo, para que el estado en vivo del cliente LSP
+        // (conectado/iniciando) se vea siempre actualizado en la
+        // sección "Lenguajes / LSP" mientras el panel está abierto ahí.
+        let filas_lenguajes = filas_lenguajes_lsp(&estado);
 
         terminal.draw(|frame| {
             tcode_ui::dibujar(
@@ -296,6 +310,7 @@ async fn ejecutar(
                 &estado.panel_admin,
                 &estado.config,
                 &estado.keymap,
+                &filas_lenguajes,
             )
         })?;
 
@@ -375,6 +390,11 @@ async fn ejecutar(
                         KeyCode::Backspace if estado.panel_admin.seccion_actual() == Seccion::Atajos => {
                             restablecer_atajo_seleccionado(&mut estado, &mut resolvedor);
                         }
+                        KeyCode::Enter | KeyCode::Left | KeyCode::Right
+                            if estado.panel_admin.seccion_actual() == Seccion::Lenguajes =>
+                        {
+                            alternar_lsp_lenguaje_seleccionado(&mut estado);
+                        }
                         KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
                             if let Some(campo) = estado.panel_admin.campo_editor_actual() {
                                 let delta = if key.code == KeyCode::Left { -1 } else { 1 };
@@ -397,7 +417,7 @@ async fn ejecutar(
                     },
                 }
             }
-            sincronizar_lsp(layout, &mut estado.lsp).await;
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -423,7 +443,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.paleta_comandos.escribir(c),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp).await;
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -445,7 +465,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.buscador_archivos.escribir(c),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp).await;
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -484,7 +504,7 @@ async fn ejecutar(
                 }
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp).await;
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -535,7 +555,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.estado_busqueda.escribir(c, &texto),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp).await;
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -555,7 +575,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => layout.panel_activo_mut().estado_csv.escribir(c),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp).await;
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -594,7 +614,7 @@ async fn ejecutar(
             }
         }
 
-        sincronizar_lsp(layout, &mut estado.lsp).await;
+        sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
         necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
     }
 
@@ -603,12 +623,14 @@ async fn ejecutar(
 }
 
 /// Le avisa al `EstadoLsp` cuál es el archivo/contenido activos ahora
-/// mismo: relanza el cliente si cambió el lenguaje, y notifica
-/// `didChange` si el texto cambió desde el último envío.
-async fn sincronizar_lsp(layout: &PanelLayout, lsp: &mut lsp::EstadoLsp) {
+/// mismo: relanza el cliente si cambió el lenguaje (o si se
+/// habilitó/deshabilitó desde el panel de administración, sección
+/// "Lenguajes / LSP", PLAN.md §5.3 — `config` es lo que decide eso), y
+/// notifica `didChange` si el texto cambió desde el último envío.
+async fn sincronizar_lsp(layout: &PanelLayout, lsp: &mut lsp::EstadoLsp, config: &Config) {
     let panel = layout.panel_activo();
     let contenido = panel.editor.buffer().a_texto();
-    lsp.actualizar_para_archivo(&panel.ruta_mostrada, &contenido).await;
+    lsp.actualizar_para_archivo(&panel.ruta_mostrada, &contenido, config).await;
     lsp.sincronizar_contenido(&contenido).await;
 }
 
@@ -968,6 +990,62 @@ fn ejecutar_accion_temas_admin(estado: &mut EstadoApp) {
             estado.panel_admin.establecer_mensaje(mensaje);
         }
         None => {}
+    }
+}
+
+/// Construye las filas de la sección "Lenguajes / LSP" del panel de
+/// administración (PLAN.md §5.3), una por cada lenguaje de `tcode_syntax::
+/// Lenguaje::TODOS`: qué LSP tiene configurado (si alguno), si ese
+/// binario está en el `PATH`, si está habilitado, y el estado en vivo de
+/// la sesión activa si es justo el lenguaje del archivo abierto ahora.
+fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
+    let lenguaje_activo = estado.lsp.lenguaje_activo();
+    Lenguaje::TODOS
+        .iter()
+        .map(|&lenguaje| {
+            let (comando, en_path) = match tcode_lsp::comando_para(lenguaje) {
+                Some((comando, args)) => {
+                    let texto = if args.is_empty() { comando.to_string() } else { format!("{comando} {}", args.join(" ")) };
+                    (texto, ruta_en_path(comando))
+                }
+                None => (String::new(), false),
+            };
+            let estado_texto = if lenguaje_activo == Some(lenguaje) {
+                estado.lsp.estado_texto().unwrap_or("Inactivo").to_string()
+            } else {
+                "Inactivo".to_string()
+            };
+            FilaLenguajeLsp {
+                nombre: lenguaje.nombre_mostrado().to_string(),
+                comando,
+                en_path,
+                habilitado: estado.config.lenguajes.lsp_habilitado(lenguaje.id()),
+                estado: estado_texto,
+            }
+        })
+        .collect()
+}
+
+/// Búsqueda simple del ejecutable `comando` en el `PATH` — suficiente
+/// para el indicador "¿está instalado?" de PLAN.md §5.3 (`which`/`where`
+/// completo, con `PATHEXT` en Windows, queda para cuando haga falta más
+/// precisión). No confirma que el binario funcione, solo que existe un
+/// archivo con ese nombre en algún directorio del `PATH`.
+fn ruta_en_path(comando: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else { return false };
+    std::env::split_paths(&path).any(|dir| dir.join(comando).is_file())
+}
+
+/// `Enter`/`←`/`→` sobre una fila de "Lenguajes / LSP": alterna si el
+/// LSP de ese lenguaje está habilitado. A diferencia de "Editor", no
+/// hace falta un `delta` — es un toggle simple, sin valores numéricos.
+fn alternar_lsp_lenguaje_seleccionado(estado: &mut EstadoApp) {
+    if estado.panel_admin.seccion_actual() != Seccion::Lenguajes {
+        return;
+    }
+    if let Some(&lenguaje) = Lenguaje::TODOS.get(estado.panel_admin.campo()) {
+        estado.config.lenguajes.alternar_lsp(lenguaje.id());
+        let _ = tcode_config::guardar(&estado.config);
     }
 }
 

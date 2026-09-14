@@ -33,7 +33,7 @@ impl Seccion {
     /// cliente LSP (solo Python por ahora) o los lenguajes de
     /// tree-sitter.
     pub fn implementada(&self) -> bool {
-        matches!(self, Seccion::Editor | Seccion::Temas | Seccion::Atajos)
+        matches!(self, Seccion::Editor | Seccion::Temas | Seccion::Atajos | Seccion::Lenguajes)
     }
 
     /// Resumen de qué va a traer una sección todavía no implementada
@@ -41,16 +41,11 @@ impl Seccion {
     /// blanco.
     pub fn resumen_pendiente(&self) -> &'static str {
         match self {
-            Seccion::Lenguajes => {
-                "Próximamente: habilitar/deshabilitar LSPs por lenguaje, ver \
-                 estado de conexión y logs en vivo, indicador de si el \
-                 binario está en el PATH."
-            }
             Seccion::Interfaz => {
                 "Próximamente: densidad de UI, mostrar/ocultar statusbar y \
                  tabs, elegir qué se muestra en la barra de estado."
             }
-            Seccion::Editor | Seccion::Temas | Seccion::Atajos => "",
+            Seccion::Editor | Seccion::Temas | Seccion::Atajos | Seccion::Lenguajes => "",
         }
     }
 }
@@ -240,6 +235,9 @@ pub struct EstadoPanelAdmin {
     /// vez por `app` al arrancar, porque la lista de comandos es fija
     /// durante toda la sesión (ver `OpcionExterna`).
     num_filas_atajos: usize,
+    /// Igual que `num_filas_atajos`, pero para "Lenguajes / LSP" — un
+    /// lenguaje por fila (`tcode_syntax::Lenguaje::TODOS`).
+    num_filas_lenguajes: usize,
     opciones_externas: Vec<OpcionExterna>,
     /// `true` mientras el panel espera que se presione la tecla que va a
     /// convertirse en el nuevo atajo de la fila seleccionada (`Enter`
@@ -261,6 +259,7 @@ impl EstadoPanelAdmin {
             busqueda: String::new(),
             mensaje: None,
             num_filas_atajos: 0,
+            num_filas_lenguajes: 0,
             opciones_externas: Vec::new(),
             capturando: false,
         }
@@ -271,6 +270,15 @@ impl EstadoPanelAdmin {
     /// comando por fila).
     pub fn fijar_num_filas_atajos(&mut self, num: usize) {
         self.num_filas_atajos = num;
+    }
+
+    /// `app` la llama una sola vez al arrancar, con `tcode_syntax::
+    /// Lenguaje::TODOS.len()` (un lenguaje por fila, sin fila especial —
+    /// a diferencia de "Atajos", acá no hace falta un "restablecer
+    /// todos": alternar habilitado/deshabilitado no tiene un valor "por
+    /// defecto" que perder).
+    pub fn fijar_num_filas_lenguajes(&mut self, num: usize) {
+        self.num_filas_lenguajes = num;
     }
 
     /// `app` la llama una sola vez al arrancar con una fila por comando
@@ -376,6 +384,7 @@ impl EstadoPanelAdmin {
             Seccion::Editor => CampoEditor::TODOS.len(),
             Seccion::Temas => CampoTemas::TODOS.len(),
             Seccion::Atajos => self.num_filas_atajos,
+            Seccion::Lenguajes => self.num_filas_lenguajes,
             _ => 0,
         }
     }
@@ -562,9 +571,10 @@ mod tests {
     fn entrar_no_hace_nada_en_una_seccion_no_implementada() {
         let mut panel = EstadoPanelAdmin::nueva();
         panel.abrir();
-        panel.mover_seccion_abajo();
-        panel.mover_seccion_abajo();
-        assert_eq!(panel.seccion_actual(), Seccion::Lenguajes);
+        for _ in 0..4 {
+            panel.mover_seccion_abajo();
+        }
+        assert_eq!(panel.seccion_actual(), Seccion::Interfaz);
         panel.entrar();
         assert_eq!(panel.foco(), FocoPanelAdmin::Barra);
     }
@@ -608,6 +618,19 @@ mod tests {
         panel.entrar();
         assert_eq!(panel.foco(), FocoPanelAdmin::Central);
         assert_eq!(panel.num_campos(), 16);
+    }
+
+    #[test]
+    fn entrar_funciona_en_lenguajes_con_las_filas_fijadas_externamente() {
+        let mut panel = EstadoPanelAdmin::nueva();
+        panel.fijar_num_filas_lenguajes(5); // los 5 lenguajes de M1
+        panel.abrir();
+        panel.mover_seccion_abajo();
+        panel.mover_seccion_abajo();
+        assert_eq!(panel.seccion_actual(), Seccion::Lenguajes);
+        panel.entrar();
+        assert_eq!(panel.foco(), FocoPanelAdmin::Central);
+        assert_eq!(panel.num_campos(), 5);
     }
 
     #[test]
