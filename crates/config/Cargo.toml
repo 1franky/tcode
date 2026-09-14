@@ -12,3 +12,4 @@ anyhow.workspace = true
 serde.workspace = true
 toml.workspace = true
 dirs.workspace = true
+tcode-fuzzy.workspace = true

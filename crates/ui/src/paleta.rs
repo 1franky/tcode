@@ -20,6 +20,12 @@ pub struct Paleta {
     pub seleccion: Color,
     pub statusbar_fondo: Color,
     pub statusbar_texto: Color,
+    /// Colores del gutter de números de línea (`config.editor.
+    /// numeros_de_linea`, PLAN.md §5 M4) — el campo del tema existe desde
+    /// M0 pero no se había conectado a nada hasta que hubo un gutter real
+    /// que dibujar.
+    pub numero_linea: Color,
+    pub numero_linea_activo: Color,
     pub diagnostico_error: Color,
     pub diagnostico_advertencia: Color,
     pub diagnostico_info: Color,
@@ -55,6 +61,8 @@ impl Paleta {
             seleccion: rgb(tema.ui.seleccion_rgb()?),
             statusbar_fondo: rgb(tema.statusbar.background_rgb()?),
             statusbar_texto: rgb(tema.statusbar.foreground_rgb()?),
+            numero_linea: rgb(tema.ui.numero_linea_rgb()?),
+            numero_linea_activo: rgb(tema.ui.numero_linea_activa_rgb()?),
             diagnostico_error: color_diagnostico(&tema.diagnostics.error, Color::Red),
             diagnostico_advertencia: color_diagnostico(&tema.diagnostics.warning, Color::Yellow),
             diagnostico_info: color_diagnostico(&tema.diagnostics.info, Color::Cyan),
@@ -79,6 +87,8 @@ impl Paleta {
             seleccion: Color::Blue,
             statusbar_fondo: Color::DarkGray,
             statusbar_texto: Color::White,
+            numero_linea: Color::DarkGray,
+            numero_linea_activo: Color::White,
             diagnostico_error: Color::Red,
             diagnostico_advertencia: Color::Yellow,
             diagnostico_info: Color::Cyan,

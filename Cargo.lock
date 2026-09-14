@@ -857,6 +857,7 @@ dependencies = [
  "anyhow",
  "dirs",
  "serde",
+ "tcode-fuzzy",
  "toml",
 ]
 

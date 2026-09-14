@@ -2,7 +2,9 @@
 
 Checklist para probar `tcode` de punta a punta antes de liberar una nueva
 versión. Cubre todo lo implementado hasta la fecha: M0, M1, M2 y M3
-completos (ver [PLAN.md](./PLAN.md) §11 para el detalle de cada milestone).
+completos, y M4 en progreso (ver [PLAN.md](./PLAN.md) §11 para el detalle
+de cada milestone). Las secciones de M4 se van agregando pieza por pieza,
+a medida que cada una se mergea a `develop`.
 
 No hace falta correrlo entero en cada versión — como mínimo, correr la
 sección de la pieza que cambió más el bug conocido de Windows. Antes de
@@ -96,6 +98,34 @@ abajo, es donde más problemas aparecieron).
 - [ ] La barra de estado muestra "N cursores" cuando hay más de uno, y desaparece con uno solo.
 - [ ] `Esc`: colapsa todo a un solo cursor (el principal), sin selección.
 - [ ] Guardar con varios cursores activos y volver a abrir el archivo: el contenido quedó correcto.
+
+## M4 — Selector de temas con preview en vivo (`Ctrl+K Ctrl+T`)
+
+- [ ] `Ctrl+K Ctrl+T` (o "Tema: Seleccionar" desde la paleta de comandos, `Ctrl+Shift+P`/`F1`): abre el selector con los 12 temas embebidos, marcando con `●` el que está activo en ese momento.
+- [ ] `↑`/`↓`: el editor de fondo cambia de tema en vivo con cada movimiento, sin tocar `config.toml` todavía (revisar el archivo mientras el selector sigue abierto: no debería haber cambiado).
+- [ ] `Tab`: cicla el filtro `Todos` → `Oscuro` → `Claro` → `Todos`; la lista se recorta a los temas de ese tipo (los `light` son solo Solarized Light, GitHub Light y Claro).
+- [ ] `Enter` sobre un tema: cierra el selector, el tema queda aplicado, y persiste en `config.toml` — reabrir `tcode` y confirmar que arranca con ese mismo tema.
+- [ ] `Esc`: cierra el selector y vuelve exactamente al tema que estaba activo antes de abrirlo (no al primero de la lista ni al último visto en el preview), sin modificar `config.toml`.
+- [ ] Revisar de pasada que los 10 temas nuevos (Monokai, One Dark, Nord, Gruvbox Dark, Tokyo Night, Catppuccin Mocha, Solarized Dark, Solarized Light, GitHub Light) se ven con colores razonables y texto legible, no solo Dracula/oscuro/claro.
+- [ ] Como esta pieza agrega una ruta modal nueva al loop de dibujado (`crates/app/src/main.rs`): re-correr al menos la prueba básica de la sección de Windows más abajo, aunque no toque directamente el explorador.
+
+## M4 — Panel de administración (`Ctrl+,` / `Ctrl+K A`) y números de línea
+
+- [ ] `Ctrl+,` para abrir el panel: en terminales sin protocolo Kitty puede llegar como una `,` suelta insertada en el texto en vez de abrir el panel (ambigüedad conocida, igual que otras de este proyecto) — si pasa, deshacer con `Ctrl+Z` y usar `Ctrl+K A` en su lugar.
+- [ ] `Ctrl+K A` abre el panel a pantalla completa (no se ve el editor detrás): barra lateral a la izquierda con las 5 secciones, área central a la derecha, barra de contexto abajo.
+- [ ] Barra lateral: `↑`/`↓` mueve la selección entre las 5 secciones; las que todavía no tienen contenido real (Atajos, Temas, Lenguajes/LSP, Interfaz) se marcan "(próximamente)" y su área central muestra un resumen de qué van a traer, en vez de quedar vacía.
+- [ ] `Enter` o `→` sobre "Editor" (la única sección implementada por ahora): entra al área central; sobre cualquier sección "(próximamente)" no hace nada.
+- [ ] Dentro de "Editor": 4 filas (Tamaño de tabulación, Usar espacios en vez de tabs, Ajuste de línea, Números de línea). `↑`/`↓` mueve la selección entre filas.
+- [ ] Sobre una fila booleana (Usar espacios / Ajuste de línea / Números de línea): `Enter`, `←` o `→` alternan Sí/No, y el cambio se persiste en `config.toml` al instante (revisar el archivo sin cerrar el panel).
+- [ ] Sobre "Tamaño de tabulación": `←`/`→` decrementan/incrementan de 1 en 1, recortado entre 1 y 16 (no baja de 1 ni sube de 16 aunque se siga presionando).
+- [ ] `Tab` alterna entre la barra lateral y el área central; `Esc` primero vuelve del área central a la barra, y un segundo `Esc` (ya en la barra) cierra el panel entero y devuelve el foco al editor.
+- [ ] `Ctrl+F` dentro del panel (con foco en la barra o en el área central): abre la búsqueda global de opciones. Escribir una palabra sin tildes de un nombre de campo (p. ej. "tabula", "espacios", "ajuste") filtra la lista con las letras coincidentes en negrita; `Enter` salta directo a esa fila en el área central y cierra la búsqueda; `Esc` cancela sin saltar a ningún lado.
+- [ ] `Ctrl+S` dentro de la sección Editor: no debería cambiar nada visible (los cambios ya se guardan solos al alternarlos) — solo confirma que no rompe nada.
+- [ ] "Panel de administración: Abrir" y "Tema: Seleccionar" aparecen como resultados en la paleta de comandos (`Ctrl+Shift+P`/`F1`) y funcionan igual que sus atajos.
+- [ ] Con "Números de línea" en "No": cerrar el panel y confirmar que el editor NO muestra el gutter de números a la izquierda del código. Con "Sí" (el valor por defecto): el gutter aparece, alineado a la derecha, con la línea del cursor en un color distinto al resto (según el tema activo — con Dracula puede no notarse por la misma coincidencia de colores que la selección, ver nota de multi-cursor más arriba; probar con el tema "oscuro" para verlo claramente).
+- [ ] Probar en un archivo con más líneas que las que entran en la pantalla, y hacer scroll: el gutter se desplaza junto con el código y sigue mostrando el número real de cada línea (no un contador relativo al viewport).
+- [ ] Achicar la ventana de la terminal a un ancho muy angosto con el gutter activo: no debería romper el render — el código sigue siendo legible aunque el gutter se termine ocultando si no entra.
+- [ ] Como esta pieza toca el loop de dibujado y agrega una vista de pantalla completa nueva: re-correr al menos la prueba básica de la sección de Windows más abajo.
 
 ## Distribución / instaladores
 

@@ -287,6 +287,7 @@ impl Layout {
     /// Dibuja el árbol de paneles completo dentro de `area`, recursivo:
     /// cada división reparte el espacio 50/50 entre sus dos sub-árboles.
     /// Solo el panel activo recibe el cursor real de la terminal.
+    #[allow(clippy::too_many_arguments)]
     pub fn dibujar(
         &mut self,
         frame: &mut Frame,
@@ -294,10 +295,21 @@ impl Layout {
         paleta: &Paleta,
         resaltador: &mut Resaltador,
         estado_busqueda: &EstadoBusqueda,
+        mostrar_numeros: bool,
     ) {
         let activo = self.activo;
         let mut indice_actual = 0;
-        dibujar_panel(frame, area, &mut self.raiz, activo, &mut indice_actual, paleta, resaltador, estado_busqueda);
+        dibujar_panel(
+            frame,
+            area,
+            &mut self.raiz,
+            activo,
+            &mut indice_actual,
+            paleta,
+            resaltador,
+            estado_busqueda,
+            mostrar_numeros,
+        );
     }
 }
 
@@ -311,6 +323,7 @@ fn dibujar_panel(
     paleta: &Paleta,
     resaltador: &mut Resaltador,
     estado_busqueda: &EstadoBusqueda,
+    mostrar_numeros: bool,
 ) {
     match panel {
         Panel::Hoja(panel_editor) => {
@@ -365,6 +378,7 @@ fn dibujar_panel(
                         &panel_editor.diagnosticos,
                         coincidencias,
                         indice_coincidencia,
+                        mostrar_numeros,
                     );
                 }
                 ModoMarkdown::Dividido => {
@@ -384,6 +398,7 @@ fn dibujar_panel(
                         &panel_editor.diagnosticos,
                         coincidencias,
                         indice_coincidencia,
+                        mostrar_numeros,
                     );
                     vista_markdown::dibujar(
                         frame,
@@ -428,8 +443,12 @@ fn dibujar_panel(
                 .direction(direccion_ratatui)
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                 .split(area);
-            dibujar_panel(frame, partes[0], primero, activo, indice_actual, paleta, resaltador, estado_busqueda);
-            dibujar_panel(frame, partes[1], segundo, activo, indice_actual, paleta, resaltador, estado_busqueda);
+            dibujar_panel(
+                frame, partes[0], primero, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
+            );
+            dibujar_panel(
+                frame, partes[1], segundo, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
+            );
         }
     }
 }
