@@ -171,6 +171,20 @@ abajo, es donde más problemas aparecieron).
 - [ ] Probar con dos paneles divididos (`Ctrl+\`): "Mostrar barra de estado" afecta a los dos por igual (es una sola configuración global, no por panel).
 - [ ] La búsqueda global del panel (`Ctrl+F`) encuentra estas filas por nombre (probar "modo", "barra de estado") y salta a la fila correcta.
 
+## M4 — Editor visual de tema (`Ctrl+K Ctrl+P` / `Ctrl+K P`)
+
+- [ ] `Ctrl+K Ctrl+P` (o `Ctrl+K P` si esa combinación no llega en la terminal usada): abre el editor visual a pantalla completa con la lista de ~29 colores del tema activo, cada uno con un "chip" de color (`██`) que se ve del color real, la etiqueta y el valor hex.
+- [ ] Si el tema activo no tenía todavía una copia editable (`<tema>-mio.toml`): se crea sola al abrir el editor (mismo mecanismo que "Duplicar tema activo" en la sección Temas del panel admin) y pasa a ser el tema activo — confirmar en `config.toml` (`interfaz.tema`).
+- [ ] Si ya existía una copia editable de una sesión anterior: el editor la reabre tal cual, sin volver a duplicar ni perder ediciones previas.
+- [ ] `↑`/`↓` navega la lista completa (Editor: UI, Statusbar, Sintaxis, Diagnósticos, Git, Búsqueda).
+- [ ] `Enter` sobre una fila: entra en edición con el valor actual precargado (sin el `#`); escribir un código hex nuevo y `Enter` lo aplica al instante — el chip de esa fila cambia de color, **el editor real detrás cambia de verdad** (probar con "UI: Fondo" — el fondo del código cambia sin cerrar el editor visual) y queda guardado en `<tema>-mio.toml`.
+- [ ] Escribir caracteres que no sean hex (letras fuera de a-f, símbolos): se ignoran, no se insertan en el campo.
+- [ ] Confirmar con un código de largo inválido (por ejemplo, menos de 6 caracteres): aparece "Color inválido: …" y NO se aplica ni se guarda nada — la edición queda abierta para corregir.
+- [ ] `Esc` mientras se edita un color: cancela sin aplicar lo escrito, la fila conserva su valor anterior.
+- [ ] `Esc` sobre la lista (sin estar editando ningún campo): cierra el editor completo y vuelve al editor de código, con todos los cambios ya guardados hasta ese momento.
+- [ ] Cambiar un color de sintaxis (por ejemplo "Sintaxis: Palabra clave") que tenía negrita en el tema original: after el cambio, la palabra clave sigue en negrita en el código, solo cambió el color — confirmar abriendo `<tema>-mio.toml` y viendo que la fila sigue como `{ fg = "...", style = "bold" }`, no se convirtió en un string simple.
+- [ ] Cerrar el editor y volver a abrir `tcode`: el tema `<original>-mio` sigue siendo el activo, con los colores editados.
+
 ## Distribución / instaladores
 
 - [ ] `install/linux.sh` en una máquina Linux limpia (o `install/windows.ps1` en Windows): instala sin pedir contraseña/administrador, y `tcode` queda disponible en cualquier carpeta después de abrir una terminal nueva.

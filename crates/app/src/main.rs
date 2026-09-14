@@ -34,7 +34,8 @@ use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
 use tcode_config::{
-    CampoTemas, Config, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin, ResultadoDuplicarTema, Seccion,
+    CampoTemas, Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin, ResultadoDuplicarTema,
+    Seccion,
 };
 use tcode_core::{analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda};
 use tcode_fs::{BuscadorArchivos, Explorador};
@@ -207,6 +208,7 @@ struct EstadoApp {
     estado_busqueda: EstadoBusqueda,
     selector_tema: EstadoSelectorTema,
     panel_admin: EstadoPanelAdmin,
+    editor_tema: EstadoEditorTema,
     /// Keymap activo — fuente de verdad para la sección "Atajos" del
     /// panel de administración (`Ctrl+,`, PLAN.md §5). El `Resolvedor`
     /// que de verdad resuelve teclas tiene su PROPIA copia (`resolvedor`
@@ -271,6 +273,7 @@ async fn ejecutar(
         estado_busqueda: EstadoBusqueda::nueva(),
         selector_tema: EstadoSelectorTema::nueva(),
         panel_admin,
+        editor_tema: EstadoEditorTema::nueva(),
         keymap,
         lsp: lsp::EstadoLsp::nuevo(),
     };
@@ -311,6 +314,7 @@ async fn ejecutar(
                 &estado.config,
                 &estado.keymap,
                 &filas_lenguajes,
+                &estado.editor_tema,
             )
         })?;
 
@@ -330,6 +334,39 @@ async fn ejecutar(
                 continue;
             }
         };
+
+        // El editor visual de tema (`Ctrl+K Ctrl+P`, PLAN.md §7) es otra
+        // vista a pantalla completa que captura el teclado por completo:
+        // navegar la lista de colores, o — mientras se está editando uno—
+        // escribir el código hex nuevo.
+        if estado.editor_tema.activo() {
+            estado.confirmar_salida = false;
+            if estado.editor_tema.editando() {
+                match key.code {
+                    KeyCode::Esc => estado.editor_tema.cancelar_edicion(),
+                    KeyCode::Backspace => estado.editor_tema.borrar_hex(),
+                    KeyCode::Enter => {
+                        estado.editor_tema.confirmar_edicion();
+                        refrescar_preview_editor_tema(&mut estado);
+                    }
+                    KeyCode::Char(c) if sin_modificadores(key) && c.is_ascii_hexdigit() => {
+                        estado.editor_tema.escribir_hex(c);
+                    }
+                    _ => {}
+                }
+            } else {
+                match key.code {
+                    KeyCode::Esc => estado.editor_tema.cerrar(),
+                    KeyCode::Up => estado.editor_tema.mover_arriba(),
+                    KeyCode::Down => estado.editor_tema.mover_abajo(),
+                    KeyCode::Enter => estado.editor_tema.iniciar_edicion(),
+                    _ => {}
+                }
+            }
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
 
         // El panel de administración (`Ctrl+,`, PLAN.md §5) es una vista
         // aparte que también captura el teclado por completo mientras
@@ -670,6 +707,10 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             estado.selector_tema.abrir(&estado.config.interfaz.tema);
             Accion::Continuar
         }
+        "tema.editor_visual" => {
+            abrir_editor_visual_tema(estado);
+            Accion::Continuar
+        }
         "admin.abrir_panel" => {
             estado.panel_admin.abrir();
             Accion::Continuar
@@ -975,6 +1016,28 @@ fn confirmar_tema_seleccionado(estado: &mut EstadoApp, id: &str) {
     estado.config.interfaz.tema = id.to_string();
     estado.paleta = cargar_paleta(id);
     let _ = tcode_config::guardar(&estado.config);
+}
+
+/// `Ctrl+K Ctrl+P` (`tema.editor_visual`, PLAN.md §7): abre el editor
+/// visual sobre una copia editable del tema activo (duplicándolo si
+/// hace falta, ver `EstadoEditorTema::abrir`) y lo deja como tema activo
+/// de una — así el preview en vivo de cada cambio de color, y el
+/// resultado final, se ven de inmediato en el editor real detrás.
+fn abrir_editor_visual_tema(estado: &mut EstadoApp) {
+    let tema_actual = estado.config.interfaz.tema.clone();
+    if estado.editor_tema.abrir(&tema_actual).is_ok() {
+        estado.config.interfaz.tema = estado.editor_tema.id_tema().to_string();
+        estado.paleta = Paleta::desde_tema(estado.editor_tema.tema()).unwrap_or_else(|_| Paleta::basica());
+        let _ = tcode_config::guardar(&estado.config);
+    }
+}
+
+/// Tras aplicar un cambio de color en el editor visual: refresca
+/// `estado.paleta` desde la copia de trabajo (preview en vivo) — el
+/// guardado a disco ya lo hizo `EstadoEditorTema::confirmar_edicion` por
+/// su cuenta.
+fn refrescar_preview_editor_tema(estado: &mut EstadoApp) {
+    estado.paleta = Paleta::desde_tema(estado.editor_tema.tema()).unwrap_or_else(|_| Paleta::basica());
 }
 
 /// `Enter` sobre una fila de la sección "Temas" del panel de
