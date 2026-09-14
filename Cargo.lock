@@ -932,6 +932,7 @@ dependencies = [
  "tcode-config",
  "tcode-core",
  "tcode-fs",
+ "tcode-keymap",
  "tcode-lsp",
  "tcode-syntax",
 ]

@@ -33,7 +33,7 @@ impl Seccion {
     /// cliente LSP (solo Python por ahora) o los lenguajes de
     /// tree-sitter.
     pub fn implementada(&self) -> bool {
-        matches!(self, Seccion::Editor | Seccion::Temas)
+        matches!(self, Seccion::Editor | Seccion::Temas | Seccion::Atajos)
     }
 
     /// Resumen de qué va a traer una sección todavía no implementada
@@ -41,11 +41,6 @@ impl Seccion {
     /// blanco.
     pub fn resumen_pendiente(&self) -> &'static str {
         match self {
-            Seccion::Atajos => {
-                "Próximamente: lista buscable de atajos, edición en línea, \
-                 detección de conflictos en tiempo real, exportar/importar \
-                 keymap."
-            }
             Seccion::Lenguajes => {
                 "Próximamente: habilitar/deshabilitar LSPs por lenguaje, ver \
                  estado de conexión y logs en vivo, indicador de si el \
@@ -55,7 +50,7 @@ impl Seccion {
                 "Próximamente: densidad de UI, mostrar/ocultar statusbar y \
                  tabs, elegir qué se muestra en la barra de estado."
             }
-            Seccion::Editor | Seccion::Temas => "",
+            Seccion::Editor | Seccion::Temas | Seccion::Atajos => "",
         }
     }
 }
@@ -159,7 +154,10 @@ struct OpcionBuscable {
     nombre: &'static str,
 }
 
-fn indice_de(seccion: Seccion) -> usize {
+/// Índice de `seccion` dentro de [`Seccion::TODAS`] — lo necesita `app`
+/// para construir [`OpcionExterna`]s (Atajos) sin tener que reimplementar
+/// esta búsqueda.
+pub fn indice_de(seccion: Seccion) -> usize {
     Seccion::TODAS.iter().position(|s| *s == seccion).expect("la sección buscada está en TODAS")
 }
 
@@ -177,6 +175,20 @@ fn opciones_buscables() -> Vec<OpcionBuscable> {
                 .map(|(campo, c)| OpcionBuscable { seccion: indice_temas, campo, nombre: c.nombre() }),
         )
         .collect()
+}
+
+/// Una fila buscable que este crate no puede describir por sí solo,
+/// porque su contenido vive en otro crate (por ahora, "Atajos": un
+/// comando de `tcode-commands` con su combinación actual en
+/// `tcode-keymap`). `app` la construye una sola vez — la lista de
+/// comandos es fija durante toda la sesión, así que no hace falta
+/// recalcularla en cada tecla — y la registra con
+/// [`EstadoPanelAdmin::fijar_opciones_externas`].
+#[derive(Debug, Clone, Copy)]
+pub struct OpcionExterna {
+    pub seccion: usize,
+    pub campo: usize,
+    pub nombre: &'static str,
 }
 
 /// Un resultado de la búsqueda dentro del panel, con las posiciones que
@@ -202,12 +214,15 @@ pub enum FocoPanelAdmin {
 /// Estado del panel de administración (`Ctrl+,`, PLAN.md §5): sin
 /// dependencias de terminal/`ratatui` — el crate `ui` lo dibuja, `app`
 /// decide qué tecla llega aquí. Vive en `tcode-config` (no en un crate
-/// aparte) porque por ahora solo orquesta campos de `Config`; el día que
-/// la sección "Atajos" o "Lenguajes/LSP" necesiten datos de
-/// `tcode-keymap`/`tcode-lsp`, esos valores/ediciones los resuelve quien
-/// llame (mismo patrón que `CampoEditor::valor_actual`/`aplicar` ya usan
-/// con `Config`) — este struct solo rastrea QUÉ fila está seleccionada,
-/// nunca los valores en sí.
+/// aparte) porque orquesta campos de `Config` directamente (Editor); para
+/// lo que necesita datos de `tcode-keymap`/`tcode-commands` (Atajos) o
+/// mañana `tcode-lsp` (Lenguajes/LSP), este struct no los conoce — solo
+/// expone puntos de extensión genéricos (`fijar_num_filas_atajos`,
+/// `fijar_opciones_externas`) que `app` llena una vez al arrancar, y el
+/// propio render/edición de esas filas vive en `ui`/`app` con acceso
+/// directo a `Keymap`. Este struct solo rastrea QUÉ fila está
+/// seleccionada, nunca los valores en sí (salvo los de `Config`, que sí
+/// resuelve directo porque ya los tiene disponibles).
 pub struct EstadoPanelAdmin {
     activo: bool,
     seccion: usize,
@@ -220,6 +235,20 @@ pub struct EstadoPanelAdmin {
     /// Se limpia solo al navegar a otro lado, no automáticamente con el
     /// tiempo: no hay una noción de "frame" en este struct sin `ratatui`.
     mensaje: Option<String>,
+    /// Cantidad de filas de la sección "Atajos" (la fila especial
+    /// "restablecer todos" más un comando por fila) — fijada una sola
+    /// vez por `app` al arrancar, porque la lista de comandos es fija
+    /// durante toda la sesión (ver `OpcionExterna`).
+    num_filas_atajos: usize,
+    opciones_externas: Vec<OpcionExterna>,
+    /// `true` mientras el panel espera que se presione la tecla que va a
+    /// convertirse en el nuevo atajo de la fila seleccionada (`Enter`
+    /// sobre un comando en "Atajos", PLAN.md §5: "presionás la nueva
+    /// combinación y se guarda"). Es un flag genérico a propósito — este
+    /// crate no sabe qué significa "capturar una tecla nueva" más allá de
+    /// prender/apagar el modo; `app` es quien interpreta la tecla
+    /// siguiente y decide qué hacer con ella.
+    capturando: bool,
 }
 
 impl EstadoPanelAdmin {
@@ -231,7 +260,43 @@ impl EstadoPanelAdmin {
             campo: 0,
             busqueda: String::new(),
             mensaje: None,
+            num_filas_atajos: 0,
+            opciones_externas: Vec::new(),
+            capturando: false,
         }
+    }
+
+    /// `app` la llama una sola vez al arrancar, con `1 + comandos_
+    /// disponibles().len()` (la fila especial "restablecer todos" más un
+    /// comando por fila).
+    pub fn fijar_num_filas_atajos(&mut self, num: usize) {
+        self.num_filas_atajos = num;
+    }
+
+    /// `app` la llama una sola vez al arrancar con una fila por comando
+    /// de `tcode_commands::comandos_disponibles()`, para que la búsqueda
+    /// global (`Ctrl+F`) también encuentre atajos por nombre en español.
+    pub fn fijar_opciones_externas(&mut self, opciones: Vec<OpcionExterna>) {
+        self.opciones_externas = opciones;
+    }
+
+    pub fn capturando(&self) -> bool {
+        self.capturando
+    }
+
+    /// `Enter` sobre un comando en "Atajos": el panel pasa a esperar la
+    /// próxima tecla, que `app` interpreta como la nueva combinación.
+    pub fn iniciar_captura(&mut self) {
+        self.capturando = true;
+        self.mensaje = None;
+    }
+
+    /// Cualquier tecla mientras se está esperando (haya terminado en un
+    /// nuevo atajo, un error, o un `Esc` que cancela) apaga el modo de
+    /// captura — siempre se llama exactamente una vez por tecla recibida
+    /// en ese estado.
+    pub fn terminar_captura(&mut self) {
+        self.capturando = false;
     }
 
     pub fn activo(&self) -> bool {
@@ -279,6 +344,7 @@ impl EstadoPanelAdmin {
         self.campo = 0;
         self.busqueda.clear();
         self.mensaje = None;
+        self.capturando = false;
     }
 
     pub fn cerrar(&mut self) {
@@ -290,6 +356,7 @@ impl EstadoPanelAdmin {
             self.seccion += 1;
             self.campo = 0;
             self.mensaje = None;
+            self.capturando = false;
         }
     }
 
@@ -298,6 +365,7 @@ impl EstadoPanelAdmin {
             self.seccion -= 1;
             self.campo = 0;
             self.mensaje = None;
+            self.capturando = false;
         }
     }
 
@@ -307,6 +375,7 @@ impl EstadoPanelAdmin {
         match self.seccion_actual() {
             Seccion::Editor => CampoEditor::TODOS.len(),
             Seccion::Temas => CampoTemas::TODOS.len(),
+            Seccion::Atajos => self.num_filas_atajos,
             _ => 0,
         }
     }
@@ -369,6 +438,7 @@ impl EstadoPanelAdmin {
             self.foco = FocoPanelAdmin::Central;
             self.campo = 0;
             self.mensaje = None;
+            self.capturando = false;
         }
     }
 
@@ -387,6 +457,7 @@ impl EstadoPanelAdmin {
             FocoPanelAdmin::Central => {
                 self.foco = FocoPanelAdmin::Barra;
                 self.mensaje = None;
+                self.capturando = false;
                 true
             }
             FocoPanelAdmin::Barra => {
@@ -403,6 +474,7 @@ impl EstadoPanelAdmin {
         self.busqueda.clear();
         self.campo = 0;
         self.mensaje = None;
+        self.capturando = false;
     }
 
     pub fn escribir_busqueda(&mut self, c: char) {
@@ -419,8 +491,14 @@ impl EstadoPanelAdmin {
     /// primero (mismo algoritmo — y misma sensación de uso — que la
     /// paleta de comandos y el buscador de archivos, PLAN.md §4).
     pub fn resultados_busqueda(&self) -> Vec<ResultadoBusquedaAdmin> {
-        let opciones = opciones_buscables();
-        tcode_fuzzy::filtrar_y_ordenar(&self.busqueda, &opciones, |o| o.nombre)
+        let internas = opciones_buscables();
+        let externas: Vec<OpcionBuscable> = self
+            .opciones_externas
+            .iter()
+            .map(|o| OpcionBuscable { seccion: o.seccion, campo: o.campo, nombre: o.nombre })
+            .collect();
+        let todas: Vec<OpcionBuscable> = internas.into_iter().chain(externas).collect();
+        tcode_fuzzy::filtrar_y_ordenar(&self.busqueda, &todas, |o| o.nombre)
             .into_iter()
             .map(|(o, coincidencia)| ResultadoBusquedaAdmin {
                 seccion: o.seccion,
@@ -484,7 +562,9 @@ mod tests {
     fn entrar_no_hace_nada_en_una_seccion_no_implementada() {
         let mut panel = EstadoPanelAdmin::nueva();
         panel.abrir();
-        assert_eq!(panel.seccion_actual(), Seccion::Atajos);
+        panel.mover_seccion_abajo();
+        panel.mover_seccion_abajo();
+        assert_eq!(panel.seccion_actual(), Seccion::Lenguajes);
         panel.entrar();
         assert_eq!(panel.foco(), FocoPanelAdmin::Barra);
     }
@@ -517,6 +597,52 @@ mod tests {
         // Fuera de la sección Temas no hay campo de temas que devolver,
         // aunque el índice numérico coincida.
         assert_eq!(panel.campo_editor_actual(), None);
+    }
+
+    #[test]
+    fn entrar_funciona_en_atajos_con_las_filas_fijadas_externamente() {
+        let mut panel = EstadoPanelAdmin::nueva();
+        panel.fijar_num_filas_atajos(16); // "restablecer todos" + 15 comandos, por ejemplo
+        panel.abrir();
+        assert_eq!(panel.seccion_actual(), Seccion::Atajos);
+        panel.entrar();
+        assert_eq!(panel.foco(), FocoPanelAdmin::Central);
+        assert_eq!(panel.num_campos(), 16);
+    }
+
+    #[test]
+    fn capturar_atajo_se_puede_iniciar_y_cancelar() {
+        let mut panel = EstadoPanelAdmin::nueva();
+        panel.fijar_num_filas_atajos(2);
+        panel.abrir();
+        panel.entrar();
+        assert!(!panel.capturando());
+        panel.iniciar_captura();
+        assert!(panel.capturando());
+        panel.terminar_captura();
+        assert!(!panel.capturando());
+    }
+
+    #[test]
+    fn opciones_externas_aparecen_en_la_busqueda_global() {
+        let mut panel = EstadoPanelAdmin::nueva();
+        let indice_atajos = indice_de(Seccion::Atajos);
+        panel.fijar_opciones_externas(vec![OpcionExterna {
+            seccion: indice_atajos,
+            campo: 1,
+            nombre: "Archivo: Guardar",
+        }]);
+        panel.abrir();
+        panel.abrir_busqueda();
+        for c in "guardar".chars() {
+            panel.escribir_busqueda(c);
+        }
+        let resultados = panel.resultados_busqueda();
+        assert!(resultados.iter().any(|r| r.nombre == "Archivo: Guardar" && r.seccion == indice_atajos));
+
+        panel.confirmar_busqueda();
+        assert_eq!(panel.seccion_actual(), Seccion::Atajos);
+        assert_eq!(panel.campo(), 1);
     }
 
     #[test]

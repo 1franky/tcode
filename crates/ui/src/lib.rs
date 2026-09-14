@@ -24,6 +24,7 @@ use tcode_commands::EstadoPaleta;
 use tcode_config::{Config, EstadoPanelAdmin, EstadoSelectorTema};
 use tcode_core::EstadoBusqueda;
 use tcode_fs::{BuscadorArchivos, Explorador};
+use tcode_keymap::Keymap;
 use tcode_syntax::Resaltador;
 
 pub use paleta::Paleta;
@@ -66,11 +67,12 @@ pub fn dibujar(
     selector_tema: &EstadoSelectorTema,
     panel_admin_estado: &EstadoPanelAdmin,
     config: &Config,
+    keymap: &Keymap,
 ) {
     let area_total = frame.area();
 
     if panel_admin_estado.activo() {
-        panel_admin::dibujar(frame, area_total, panel_admin_estado, config, paleta);
+        panel_admin::dibujar(frame, area_total, panel_admin_estado, config, keymap, paleta);
         return;
     }
 

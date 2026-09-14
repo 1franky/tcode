@@ -14,5 +14,8 @@ pub use combinacion::{
     desde_evento, formatear_atajo, formatear_combinacion, parsear_atajo, parsear_combinacion, Combinacion,
     Direccion, Tecla,
 };
-pub use keymap::{cargar, detectar_conflictos, keymap_por_defecto, ruta_keymap_usuario, Conflicto, Keymap};
+pub use keymap::{
+    cargar, detectar_conflictos, eliminar_override_usuario, keymap_por_defecto, ruta_keymap_usuario, Conflicto,
+    Keymap,
+};
 pub use resolvedor::{Resolucion, Resolvedor};
