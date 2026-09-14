@@ -33,7 +33,7 @@ use ratatui::Terminal;
 use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
-use tcode_config::Config;
+use tcode_config::{Config, EstadoSelectorTema};
 use tcode_core::{analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda};
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
@@ -203,6 +203,7 @@ struct EstadoApp {
     paleta_comandos: EstadoPaleta,
     buscador_archivos: BuscadorArchivos,
     estado_busqueda: EstadoBusqueda,
+    selector_tema: EstadoSelectorTema,
     lsp: lsp::EstadoLsp,
 }
 
@@ -234,6 +235,7 @@ async fn ejecutar(
         paleta_comandos: EstadoPaleta::nueva(),
         buscador_archivos: BuscadorArchivos::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
         estado_busqueda: EstadoBusqueda::nueva(),
+        selector_tema: EstadoSelectorTema::nueva(),
         lsp: lsp::EstadoLsp::nuevo(),
     };
 
@@ -262,6 +264,7 @@ async fn ejecutar(
                 &estado.paleta_comandos,
                 &estado.buscador_archivos,
                 &estado.estado_busqueda,
+                &estado.selector_tema,
             )
         })?;
 
@@ -323,6 +326,45 @@ async fn ejecutar(
                     }
                 }
                 KeyCode::Char(c) if sin_modificadores(key) => estado.buscador_archivos.escribir(c),
+                _ => {}
+            }
+            sincronizar_lsp(layout, &mut estado.lsp).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
+        // El selector de temas (`Ctrl+K Ctrl+T`, PLAN.md §7) también
+        // captura el teclado por completo mientras está abierto: `↑`/`↓`
+        // recorren la lista aplicando cada tema de inmediato a `estado.
+        // paleta` (preview en vivo, sin tocar `config.toml` todavía),
+        // `Tab` cambia el filtro Todos/Oscuro/Claro, `Enter` confirma
+        // (persiste el cambio) y `Esc` cancela volviendo al tema que
+        // estaba activo antes de abrir el selector.
+        if estado.selector_tema.activa() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => {
+                    let original = estado.selector_tema.tema_original().to_string();
+                    estado.selector_tema.cerrar();
+                    estado.paleta = cargar_paleta(&original);
+                }
+                KeyCode::Up => {
+                    estado.selector_tema.mover_arriba();
+                    aplicar_preview_tema(&mut estado);
+                }
+                KeyCode::Down => {
+                    estado.selector_tema.mover_abajo();
+                    aplicar_preview_tema(&mut estado);
+                }
+                KeyCode::Tab => {
+                    estado.selector_tema.alternar_filtro();
+                    aplicar_preview_tema(&mut estado);
+                }
+                KeyCode::Enter => {
+                    if let Some(id) = estado.selector_tema.confirmar() {
+                        confirmar_tema_seleccionado(&mut estado, id);
+                    }
+                }
                 _ => {}
             }
             sincronizar_lsp(layout, &mut estado.lsp).await;
@@ -471,6 +513,10 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp) 
         }
         "buscar.archivos" => {
             estado.buscador_archivos.abrir();
+            Accion::Continuar
+        }
+        "tema.seleccionar" => {
+            estado.selector_tema.abrir(&estado.config.interfaz.tema);
             Accion::Continuar
         }
         "buscar.en_archivo" | "buscar.reemplazar" => {
@@ -745,6 +791,27 @@ fn recargar_config_y_tema(config: &mut Config, paleta: &mut Paleta) {
             *paleta = cargar_paleta(&config.interfaz.tema);
         }
     }
+}
+
+/// Aplica a `estado.paleta` el tema bajo la fila seleccionada del selector
+/// (`Ctrl+K Ctrl+T`) — el preview en vivo que se ve mientras se navega la
+/// lista con `↑`/`↓`, sin persistir nada todavía en `config.toml`. Si el
+/// filtro actual no deja ninguna fila visible, no hace nada (la paleta se
+/// queda como estaba).
+fn aplicar_preview_tema(estado: &mut EstadoApp) {
+    if let Some(id) = estado.selector_tema.tema_seleccionado() {
+        estado.paleta = cargar_paleta(id);
+    }
+}
+
+/// `Enter` sobre una fila del selector de temas: además del preview que ya
+/// se venía aplicando, persiste el cambio en `config.toml` para que
+/// sobreviva a reiniciar el editor (best-effort — si no se puede escribir
+/// a disco, el tema queda igual aplicado en memoria para esta sesión).
+fn confirmar_tema_seleccionado(estado: &mut EstadoApp, id: &str) {
+    estado.config.interfaz.tema = id.to_string();
+    estado.paleta = cargar_paleta(id);
+    let _ = tcode_config::guardar(&estado.config);
 }
 
 /// `editor.tamano_tabulacion` / `editor.usar_espacios` de `config.toml`

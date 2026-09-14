@@ -1,0 +1,44 @@
+# Tema One Dark — tema oficial del editor Atom (PLAN.md §7, #3).
+name = "One Dark"
+type = "dark"
+
+[ui]
+background         = "#282c34"
+foreground         = "#abb2bf"
+cursor             = "#528bff"
+selection          = "#3e4451"
+line_number        = "#495162"
+line_number_active = "#abb2bf"
+current_line       = "#2c313c"
+
+[statusbar]
+background     = "#21252b"
+foreground     = "#abb2bf"
+modo_insertar  = "#98c379"
+modo_seleccion = "#e5c07b"
+
+[syntax]
+keyword  = { fg = "#c678dd", style = "bold" }
+string   = "#98c379"
+number   = "#d19a66"
+comment  = { fg = "#5c6370", style = "italic" }
+function = "#61afef"
+type     = "#e5c07b"
+variable = "#abb2bf"
+constant = "#d19a66"
+operator = "#56b6c2"
+
+[diagnostics]
+error   = "#e06c75"
+warning = "#e5c07b"
+info    = "#61afef"
+hint    = "#56b6c2"
+
+[git]
+added    = "#98c379"
+modified = "#e5c07b"
+deleted  = "#e06c75"
+
+[search]
+coincidencia_actual = "#d19a66"
+otras_coincidencias  = "#3e4451"

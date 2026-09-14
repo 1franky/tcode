@@ -28,6 +28,7 @@
 # reinterpreta ahí como "celda siguiente" en vez de indentar.
 "Shift+Tab"     = "editor.desindentar"
 "Ctrl+K Ctrl+L" = "config.recargar"
+"Ctrl+K Ctrl+T" = "tema.seleccionar"
 "Ctrl+B"        = "panel.alternar_lateral"
 "Esc"           = "explorador.enfocar_editor"
 "Ctrl+Shift+P"  = "paleta.comandos"

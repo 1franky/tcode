@@ -1,0 +1,45 @@
+# Tema Tokyo Night — azules profundos con acentos violetas
+# (https://github.com/enkia/tokyo-night-vscode-theme, PLAN.md §7, #6).
+name = "Tokyo Night"
+type = "dark"
+
+[ui]
+background         = "#1a1b26"
+foreground         = "#a9b1d6"
+cursor             = "#c0caf5"
+selection          = "#33467c"
+line_number        = "#3b4261"
+line_number_active = "#a9b1d6"
+current_line       = "#292e42"
+
+[statusbar]
+background     = "#16161e"
+foreground     = "#a9b1d6"
+modo_insertar  = "#9ece6a"
+modo_seleccion = "#e0af68"
+
+[syntax]
+keyword  = { fg = "#bb9af7", style = "bold" }
+string   = "#9ece6a"
+number   = "#ff9e64"
+comment  = { fg = "#565f89", style = "italic" }
+function = "#7aa2f7"
+type     = "#2ac3de"
+variable = "#a9b1d6"
+constant = "#ff9e64"
+operator = "#89ddff"
+
+[diagnostics]
+error   = "#f7768e"
+warning = "#e0af68"
+info    = "#7aa2f7"
+hint    = "#1abc9c"
+
+[git]
+added    = "#9ece6a"
+modified = "#e0af68"
+deleted  = "#f7768e"
+
+[search]
+coincidencia_actual = "#ff9e64"
+otras_coincidencias  = "#33467c"
