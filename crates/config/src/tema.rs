@@ -216,22 +216,30 @@ pub const TEMAS_EMBEBIDOS: &[InfoTema] = &[
     InfoTema { id: "claro", nombre: "Claro", tipo: "light" },
 ];
 
-/// Carga un tema por nombre: primero busca un archivo de usuario en
-/// `~/.config/tcode/themes/<nombre>.toml` (o el directorio portable en
-/// Windows — ver M5), y si no existe recurre a los 3 temas básicos
-/// embebidos en el binario. El resto de los 10+ temas de PLAN.md §7 llega
-/// en M4.
-pub fn cargar_tema(nombre: &str) -> Result<Tema> {
+/// El TOML crudo de un tema, sin parsear: primero busca un archivo de
+/// usuario en `~/.config/tcode/themes/<nombre>.toml` (o el directorio
+/// portable en Windows — ver M5), y si no existe recurre a los temas
+/// embebidos en el binario. Separado de [`cargar_tema`] para poder
+/// reutilizar el texto tal cual (por ejemplo al duplicar un tema para
+/// editarlo, PLAN.md §7 "Compartir temas") sin tener que volver a
+/// serializar la struct `Tema` ya parseada — evita que un duplicado
+/// pierda comentarios o el formato original del archivo.
+fn tema_texto_crudo(nombre: &str) -> Result<String> {
     let ruta_usuario = directorio_temas_usuario().join(format!("{nombre}.toml"));
-    let texto = if ruta_usuario.exists() {
-        std::fs::read_to_string(&ruta_usuario)
-            .with_context(|| format!("no se pudo leer el tema '{}'", ruta_usuario.display()))?
-    } else if let Some(embebido) = tema_embebido(nombre) {
-        embebido.to_string()
-    } else {
-        anyhow::bail!("tema '{nombre}' no encontrado (ni de usuario ni embebido)");
-    };
+    if ruta_usuario.exists() {
+        return std::fs::read_to_string(&ruta_usuario)
+            .with_context(|| format!("no se pudo leer el tema '{}'", ruta_usuario.display()));
+    }
+    if let Some(embebido) = tema_embebido(nombre) {
+        return Ok(embebido.to_string());
+    }
+    anyhow::bail!("tema '{nombre}' no encontrado (ni de usuario ni embebido)")
+}
 
+/// Carga un tema por nombre, ya parseado. El resto de los 10+ temas de
+/// PLAN.md §7 llega en M4.
+pub fn cargar_tema(nombre: &str) -> Result<Tema> {
+    let texto = tema_texto_crudo(nombre)?;
     toml::from_str(&texto).with_context(|| format!("el tema '{nombre}' tiene TOML inválido"))
 }
 
@@ -239,6 +247,35 @@ pub fn cargar_tema(nombre: &str) -> Result<Tema> {
 /// validado en tests), entra en pánico — sin tema no hay UI que dibujar.
 pub fn tema_por_defecto() -> Tema {
     cargar_tema(TEMA_POR_DEFECTO).expect("el tema embebido por defecto debe ser válido")
+}
+
+/// Resultado de [`duplicar_tema_para_editar`]: si ya existía una copia de
+/// antes no se pisa (podría tener ediciones a mano del usuario) — se
+/// informa la diferencia para que quien llama pueda mostrar un mensaje
+/// distinto en cada caso.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResultadoDuplicarTema {
+    Creado(std::path::PathBuf),
+    YaExistia(std::path::PathBuf),
+}
+
+/// Duplica el tema `nombre` a `~/.config/tcode/themes/<nombre>-mio.toml`
+/// (o el directorio portable en Windows), listo para editarlo a mano sin
+/// tocar el original — mismo nombre de archivo que sugiere el ejemplo de
+/// PLAN.md §7 ("Duplicar tema base"). El archivo resultante, al ser TOML
+/// plano, también sirve como el "exportar" de esa misma sección: se
+/// puede copiar a cualquier otra instalación de `tcode` sin cambios.
+/// Nunca sobreescribe una copia que ya existía.
+pub fn duplicar_tema_para_editar(nombre: &str) -> Result<ResultadoDuplicarTema> {
+    let destino = directorio_temas_usuario().join(format!("{nombre}-mio.toml"));
+    if destino.exists() {
+        return Ok(ResultadoDuplicarTema::YaExistia(destino));
+    }
+    let texto = tema_texto_crudo(nombre)?;
+    let dir = directorio_temas_usuario();
+    std::fs::create_dir_all(&dir).with_context(|| format!("no se pudo crear '{}'", dir.display()))?;
+    std::fs::write(&destino, texto).with_context(|| format!("no se pudo escribir '{}'", destino.display()))?;
+    Ok(ResultadoDuplicarTema::Creado(destino))
 }
 
 #[cfg(test)]

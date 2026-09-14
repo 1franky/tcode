@@ -33,7 +33,9 @@ use ratatui::Terminal;
 use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
-use tcode_config::{Config, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin};
+use tcode_config::{
+    CampoTemas, Config, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin, ResultadoDuplicarTema, Seccion,
+};
 use tcode_core::{analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda};
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
@@ -329,6 +331,9 @@ async fn ejecutar(
                     // arriesgar perder cambios si alguien lo espera.
                     KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         let _ = tcode_config::guardar(&estado.config);
+                    }
+                    KeyCode::Enter if estado.panel_admin.seccion_actual() == Seccion::Temas => {
+                        ejecutar_accion_temas_admin(&mut estado);
                     }
                     KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
                         if let Some(campo) = estado.panel_admin.campo_editor_actual() {
@@ -887,6 +892,34 @@ fn confirmar_tema_seleccionado(estado: &mut EstadoApp, id: &str) {
     estado.config.interfaz.tema = id.to_string();
     estado.paleta = cargar_paleta(id);
     let _ = tcode_config::guardar(&estado.config);
+}
+
+/// `Enter` sobre una fila de la sección "Temas" del panel de
+/// administración (PLAN.md §5): a diferencia de "Editor", estas filas no
+/// alternan un valor en el sitio — disparan una acción que cruza a
+/// estado que `tcode-config` no conoce (abrir el selector de temas ya
+/// activo, o escribir un archivo).
+fn ejecutar_accion_temas_admin(estado: &mut EstadoApp) {
+    match estado.panel_admin.campo_temas_actual() {
+        Some(CampoTemas::ElegirTema) => {
+            // Cierra el panel y abre el selector de temas ya existente
+            // (`Ctrl+K Ctrl+T`) en vez de reimplementar la misma lista y
+            // el mismo preview en vivo acá adentro.
+            estado.panel_admin.cerrar();
+            estado.selector_tema.abrir(&estado.config.interfaz.tema);
+        }
+        Some(CampoTemas::DuplicarActivo) => {
+            let mensaje = match tcode_config::duplicar_tema_para_editar(&estado.config.interfaz.tema) {
+                Ok(ResultadoDuplicarTema::Creado(ruta)) => format!("Copia creada en {}", ruta.display()),
+                Ok(ResultadoDuplicarTema::YaExistia(ruta)) => {
+                    format!("Ya existía: {} (editalo directamente)", ruta.display())
+                }
+                Err(e) => format!("No se pudo duplicar: {e}"),
+            };
+            estado.panel_admin.establecer_mensaje(mensaje);
+        }
+        None => {}
+    }
 }
 
 /// `editor.tamano_tabulacion` / `editor.usar_espacios` de `config.toml`

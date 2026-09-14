@@ -127,6 +127,15 @@ abajo, es donde más problemas aparecieron).
 - [ ] Achicar la ventana de la terminal a un ancho muy angosto con el gutter activo: no debería romper el render — el código sigue siendo legible aunque el gutter se termine ocultando si no entra.
 - [ ] Como esta pieza toca el loop de dibujado y agrega una vista de pantalla completa nueva: re-correr al menos la prueba básica de la sección de Windows más abajo.
 
+## M4 — Sección "Temas" del panel de administración
+
+- [ ] Dentro del panel (`Ctrl+K A`), la sección "Temas" ya NO dice "(próximamente)" y al entrar muestra 2 filas: "Elegir tema (con preview en vivo)" y "Duplicar tema activo para editar/exportar (<Nombre del tema activo>)".
+- [ ] "Elegir tema" + `Enter`: cierra el panel de administración por completo y abre el selector de temas estándar (`Ctrl+K Ctrl+T`) — mismo comportamiento que invocarlo directo, con preview en vivo al navegar y todo.
+- [ ] "Duplicar tema activo" + `Enter` (primera vez): aparece un mensaje debajo de la lista ("Copia creada en …") y se crea `~/.config/tcode/themes/<tema-activo>-mio.toml` (o el directorio portable en Windows) con el TOML completo del tema activo, listo para editar a mano.
+- [ ] Repetir "Duplicar tema activo" con la copia ya creada: el mensaje cambia a "Ya existía: …" y el archivo NO se sobreescribe (confirmar que su contenido sigue igual si se lo edita a mano entre medio).
+- [ ] El mensaje de la última acción se mantiene visible mientras se navega entre las 2 filas de "Temas", pero desaparece al volver a la barra lateral (`Esc`/`Tab`) o cambiar de sección.
+- [ ] La búsqueda global del panel (`Ctrl+F`) también encuentra las filas de "Temas" (probar "duplicar" o "elegir") y salta bien a la sección/fila correcta.
+
 ## Distribución / instaladores
 
 - [ ] `install/linux.sh` en una máquina Linux limpia (o `install/windows.ps1` en Windows): instala sin pedir contraseña/administrador, y `tcode` queda disponible en cualquier carpeta después de abrir una terminal nueva.
