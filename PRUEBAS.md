@@ -40,7 +40,7 @@ abajo, es donde más problemas aparecieron).
 
 - [ ] `~/.config/tcode/config.toml` (o el equivalente portable en Windows) se crea solo la primera vez, con valores razonables.
 - [ ] Cambiar `tema` en `config.toml` a `"oscuro"` o `"claro"`, `Ctrl+K Ctrl+L` (recargar config): el tema cambia en caliente sin reiniciar.
-- [ ] Editar `keymap.toml` de usuario (copiarlo del embebido), cambiar un atajo, `Ctrl+K Ctrl+L`: el nuevo atajo funciona sin reiniciar.
+- [ ] Editar `keymap.toml` de usuario (copiarlo del embebido), cambiar un atajo, `Ctrl+K Ctrl+L`: el nuevo atajo funciona sin reiniciar (recién a partir de M4 pieza "editor de atajos" esto quedó realmente implementado — antes de esa pieza `Ctrl+K Ctrl+L` solo recargaba `config.toml`/tema, no el keymap, aunque este checklist ya lo daba por hecho).
 - [ ] Abrir un archivo `.rs`, `.py`, `.js`, `.go` y `.md`: resaltado de sintaxis correcto (palabras clave, strings, comentarios, números).
 - [ ] Abrir un archivo de una extensión no soportada: se ve como texto plano sin colorear, sin romperse.
 - [ ] `Ctrl+B`: abre/cierra el explorador de archivos lateral.
@@ -135,6 +135,19 @@ abajo, es donde más problemas aparecieron).
 - [ ] Repetir "Duplicar tema activo" con la copia ya creada: el mensaje cambia a "Ya existía: …" y el archivo NO se sobreescribe (confirmar que su contenido sigue igual si se lo edita a mano entre medio).
 - [ ] El mensaje de la última acción se mantiene visible mientras se navega entre las 2 filas de "Temas", pero desaparece al volver a la barra lateral (`Esc`/`Tab`) o cambiar de sección.
 - [ ] La búsqueda global del panel (`Ctrl+F`) también encuentra las filas de "Temas" (probar "duplicar" o "elegir") y salta bien a la sección/fila correcta.
+
+## M4 — Sección "Atajos" del panel de administración
+
+- [ ] Dentro del panel (`Ctrl+K A`), la sección "Atajos de teclado" ya NO dice "(próximamente)": al entrar se ve una fila especial "↺ Restablecer TODOS los atajos por defecto" seguida de una fila por cada comando de la paleta, con su combinación actual a la derecha (o varias separadas por coma, como "Panel de administración: Abrir" que tiene `Ctrl+,` y `Ctrl+K A`).
+- [ ] `Enter` sobre un comando: la fila muestra "‹ presioná la nueva combinación… ›" y la barra inferior cambia a "Presioná la nueva combinación · Esc cancela". Presionar cualquier tecla/combinación (probar una simple como `Ctrl+Alt+U`) la asigna de inmediato: la fila se actualiza, aparece el mensaje "Nuevo atajo: …", y **sin reiniciar el editor**, la tecla vieja deja de funcionar y la nueva sí.
+- [ ] Repetir lo anterior pero presionando `Esc` en vez de una combinación: cancela sin cambiar nada (ni el mensaje ni el atajo).
+- [ ] Intentar asignarle a un comando una combinación que ya usa OTRO comando distinto (p. ej. `Ctrl+S`, que ya es "Archivo: Guardar"): no se aplica el cambio, aparece "Ya usado por: Archivo: Guardar — no se cambió nada", y el atajo original de "Archivo: Guardar" sigue intacto.
+- [ ] `Backspace` sobre un comando ya personalizado: lo devuelve a su atajo por defecto (uno o varios, como "Tema: Seleccionar" con `Ctrl+K Ctrl+T`) y muestra "Restablecido a su atajo por defecto".
+- [ ] `Enter` sobre la fila 0 ("Restablecer TODOS"): todos los comandos vuelven a sus atajos por defecto de una vez, y `~/.config/tcode/keymap.toml` (o el directorio portable en Windows) se borra si existía.
+- [ ] Personalizar un atajo hasta que quede como prefijo de un chord existente (p. ej. asignarle `Ctrl+K` solo, sin nada después, a cualquier comando): esa fila se pinta en rojo (detección de conflictos en tiempo real) — confirmar que sigue en rojo mientras el conflicto exista y que se restablece a un color normal al arreglarlo.
+- [ ] La búsqueda global del panel (`Ctrl+F`) también encuentra comandos por su nombre en español (probar "guardar", "deshacer") y salta a la fila correcta de "Atajos" al confirmar.
+- [ ] Cerrar el editor y volver a abrirlo tras personalizar algún atajo: el cambio persistió (`keymap.toml` sigue ahí con la personalización).
+- [ ] Con `keymap.toml` de usuario editado A MANO (fuera del panel) mientras `tcode` está corriendo: `Ctrl+K Ctrl+L` (o el comando "Configuración: Recargar" desde la paleta) recarga también el keymap, no solo `config.toml`/tema — un atajo nuevo agregado a mano funciona sin reiniciar.
 
 ## Distribución / instaladores
 

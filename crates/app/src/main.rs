@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
     let explorador = crear_explorador(ruta_arg.as_deref());
 
     let (mut terminal, protocolo_kitty) = iniciar_terminal()?;
-    let resultado = ejecutar(&mut terminal, &mut layout, config, &keymap, explorador, ruta_arg.as_deref()).await;
+    let resultado = ejecutar(&mut terminal, &mut layout, config, keymap, explorador, ruta_arg.as_deref()).await;
     finalizar_terminal(&mut terminal, protocolo_kitty)?;
 
     resultado
@@ -207,6 +207,14 @@ struct EstadoApp {
     estado_busqueda: EstadoBusqueda,
     selector_tema: EstadoSelectorTema,
     panel_admin: EstadoPanelAdmin,
+    /// Keymap activo — fuente de verdad para la sección "Atajos" del
+    /// panel de administración (`Ctrl+,`, PLAN.md §5). El `Resolvedor`
+    /// que de verdad resuelve teclas tiene su PROPIA copia (`resolvedor`
+    /// es una variable aparte, no un campo de este struct): cada vez que
+    /// este campo cambia hay que llamar `resolvedor.reemplazar_keymap`
+    /// con un clon para que el cambio surta efecto en el editor real, no
+    /// solo en lo que se ve en el panel.
+    keymap: Keymap,
     lsp: lsp::EstadoLsp,
 }
 
@@ -218,13 +226,28 @@ async fn ejecutar(
     terminal: &mut Terminal<Backend>,
     layout: &mut PanelLayout,
     config: Config,
-    keymap: &Keymap,
+    keymap: Keymap,
     explorador: Explorador,
     ruta_arg: Option<&str>,
 ) -> Result<()> {
     let mut resaltador = Resaltador::nuevo();
-    let mut resolvedor = Resolvedor::nuevo(keymap);
+    let mut resolvedor = Resolvedor::nuevo(keymap.clone());
     let mut eventos = EventStream::new();
+
+    // Info fija de la sección "Atajos" del panel de administración
+    // (`Ctrl+,`, PLAN.md §5): la lista de comandos no cambia durante la
+    // sesión, así que se calcula una sola vez al arrancar en vez de en
+    // cada tecla (ver doc de `EstadoPanelAdmin::fijar_opciones_externas`).
+    let mut panel_admin = EstadoPanelAdmin::nueva();
+    let indice_atajos = tcode_config::indice_de(Seccion::Atajos);
+    panel_admin.fijar_num_filas_atajos(1 + tcode_commands::comandos_disponibles().len());
+    panel_admin.fijar_opciones_externas(
+        tcode_commands::comandos_disponibles()
+            .iter()
+            .enumerate()
+            .map(|(i, c)| tcode_config::OpcionExterna { seccion: indice_atajos, campo: i + 1, nombre: c.descripcion })
+            .collect(),
+    );
 
     let mut estado = EstadoApp {
         paleta: cargar_paleta(&config.interfaz.tema),
@@ -239,7 +262,8 @@ async fn ejecutar(
         buscador_archivos: BuscadorArchivos::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
         estado_busqueda: EstadoBusqueda::nueva(),
         selector_tema: EstadoSelectorTema::nueva(),
-        panel_admin: EstadoPanelAdmin::nueva(),
+        panel_admin,
+        keymap,
         lsp: lsp::EstadoLsp::nuevo(),
     };
 
@@ -271,6 +295,7 @@ async fn ejecutar(
                 &estado.selector_tema,
                 &estado.panel_admin,
                 &estado.config,
+                &estado.keymap,
             )
         })?;
 
@@ -299,62 +324,78 @@ async fn ejecutar(
         // bloque modal de acá abajo.
         if estado.panel_admin.activo() {
             estado.confirmar_salida = false;
-            match estado.panel_admin.foco() {
-                FocoPanelAdmin::Barra => match key.code {
-                    KeyCode::Esc => {
-                        estado.panel_admin.escape();
-                    }
-                    KeyCode::Up => estado.panel_admin.mover_seccion_arriba(),
-                    KeyCode::Down => estado.panel_admin.mover_seccion_abajo(),
-                    KeyCode::Enter | KeyCode::Right => estado.panel_admin.entrar(),
-                    KeyCode::Tab => estado.panel_admin.alternar_foco(),
-                    KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        estado.panel_admin.abrir_busqueda()
-                    }
-                    _ => {}
-                },
-                FocoPanelAdmin::Central => match key.code {
-                    KeyCode::Esc => {
-                        estado.panel_admin.escape();
-                    }
-                    KeyCode::Up => estado.panel_admin.mover_campo_arriba(),
-                    KeyCode::Down => estado.panel_admin.mover_campo_abajo(),
-                    KeyCode::Tab => estado.panel_admin.alternar_foco(),
-                    KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        estado.panel_admin.abrir_busqueda()
-                    }
-                    // `Ctrl+S` dentro del panel (PLAN.md §5): cada cambio
-                    // ya se aplica y persiste al instante (ver el brazo
-                    // de `Enter`/`←`/`→` de abajo) — este atajo es
-                    // redundante a propósito, para que exista igual el
-                    // gesto de "guardar" que describe el plan, sin
-                    // arriesgar perder cambios si alguien lo espera.
-                    KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        let _ = tcode_config::guardar(&estado.config);
-                    }
-                    KeyCode::Enter if estado.panel_admin.seccion_actual() == Seccion::Temas => {
-                        ejecutar_accion_temas_admin(&mut estado);
-                    }
-                    KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
-                        if let Some(campo) = estado.panel_admin.campo_editor_actual() {
-                            let delta = if key.code == KeyCode::Left { -1 } else { 1 };
-                            campo.aplicar(&mut estado.config, delta);
+            // Mientras se espera la tecla que va a convertirse en el
+            // nuevo atajo (`Enter` sobre un comando en "Atajos"), CUALQUIER
+            // tecla (salvo `Esc`, que cancela) se consume acá — ni
+            // siquiera `↑`/`↓`/`Tab` navegan mientras tanto, tiene que
+            // resolverse esta captura antes de cualquier otra cosa.
+            if estado.panel_admin.capturando() {
+                manejar_captura_atajo(&mut estado, &mut resolvedor, key);
+            } else {
+                match estado.panel_admin.foco() {
+                    FocoPanelAdmin::Barra => match key.code {
+                        KeyCode::Esc => {
+                            estado.panel_admin.escape();
+                        }
+                        KeyCode::Up => estado.panel_admin.mover_seccion_arriba(),
+                        KeyCode::Down => estado.panel_admin.mover_seccion_abajo(),
+                        KeyCode::Enter | KeyCode::Right => estado.panel_admin.entrar(),
+                        KeyCode::Tab => estado.panel_admin.alternar_foco(),
+                        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            estado.panel_admin.abrir_busqueda()
+                        }
+                        _ => {}
+                    },
+                    FocoPanelAdmin::Central => match key.code {
+                        KeyCode::Esc => {
+                            estado.panel_admin.escape();
+                        }
+                        KeyCode::Up => estado.panel_admin.mover_campo_arriba(),
+                        KeyCode::Down => estado.panel_admin.mover_campo_abajo(),
+                        KeyCode::Tab => estado.panel_admin.alternar_foco(),
+                        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            estado.panel_admin.abrir_busqueda()
+                        }
+                        // `Ctrl+S` dentro del panel (PLAN.md §5): cada
+                        // cambio ya se aplica y persiste al instante (ver
+                        // los brazos de `Enter`/`←`/`→`/`Backspace` de
+                        // abajo) — este atajo es redundante a propósito,
+                        // para que exista igual el gesto de "guardar" que
+                        // describe el plan, sin arriesgar perder cambios
+                        // si alguien lo espera.
+                        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             let _ = tcode_config::guardar(&estado.config);
                         }
-                    }
-                    _ => {}
-                },
-                FocoPanelAdmin::Busqueda => match key.code {
-                    KeyCode::Esc => {
-                        estado.panel_admin.escape();
-                    }
-                    KeyCode::Up => estado.panel_admin.mover_campo_arriba(),
-                    KeyCode::Down => estado.panel_admin.mover_campo_abajo(),
-                    KeyCode::Backspace => estado.panel_admin.borrar_busqueda(),
-                    KeyCode::Enter => estado.panel_admin.confirmar_busqueda(),
-                    KeyCode::Char(c) if sin_modificadores(key) => estado.panel_admin.escribir_busqueda(c),
-                    _ => {}
-                },
+                        KeyCode::Enter if estado.panel_admin.seccion_actual() == Seccion::Temas => {
+                            ejecutar_accion_temas_admin(&mut estado);
+                        }
+                        KeyCode::Enter if estado.panel_admin.seccion_actual() == Seccion::Atajos => {
+                            iniciar_o_restablecer_todos_los_atajos(&mut estado, &mut resolvedor);
+                        }
+                        KeyCode::Backspace if estado.panel_admin.seccion_actual() == Seccion::Atajos => {
+                            restablecer_atajo_seleccionado(&mut estado, &mut resolvedor);
+                        }
+                        KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
+                            if let Some(campo) = estado.panel_admin.campo_editor_actual() {
+                                let delta = if key.code == KeyCode::Left { -1 } else { 1 };
+                                campo.aplicar(&mut estado.config, delta);
+                                let _ = tcode_config::guardar(&estado.config);
+                            }
+                        }
+                        _ => {}
+                    },
+                    FocoPanelAdmin::Busqueda => match key.code {
+                        KeyCode::Esc => {
+                            estado.panel_admin.escape();
+                        }
+                        KeyCode::Up => estado.panel_admin.mover_campo_arriba(),
+                        KeyCode::Down => estado.panel_admin.mover_campo_abajo(),
+                        KeyCode::Backspace => estado.panel_admin.borrar_busqueda(),
+                        KeyCode::Enter => estado.panel_admin.confirmar_busqueda(),
+                        KeyCode::Char(c) if sin_modificadores(key) => estado.panel_admin.escribir_busqueda(c),
+                        _ => {}
+                    },
+                }
             }
             sincronizar_lsp(layout, &mut estado.lsp).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
@@ -374,7 +415,7 @@ async fn ejecutar(
                 KeyCode::Backspace => estado.paleta_comandos.borrar(),
                 KeyCode::Enter => {
                     if let Some(id) = estado.paleta_comandos.confirmar() {
-                        if let Accion::Salir = procesar_comando(id, layout, &mut estado) {
+                        if let Accion::Salir = procesar_comando(id, layout, &mut estado, &mut resolvedor) {
                             break;
                         }
                     }
@@ -528,7 +569,7 @@ async fn ejecutar(
 
         match resolucion {
             Resolucion::Comando(nombre) => {
-                if let Accion::Salir = procesar_comando(&nombre, layout, &mut estado) {
+                if let Accion::Salir = procesar_comando(&nombre, layout, &mut estado, &mut resolvedor) {
                     break;
                 }
             }
@@ -577,10 +618,10 @@ async fn sincronizar_lsp(layout: &PanelLayout, lsp: &mut lsp::EstadoLsp) {
 /// estado que no le corresponde a `ejecutar_comando` (la paleta de
 /// colores, los propios overlays), así que se interceptan aquí antes de
 /// delegar.
-fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp) -> Accion {
+fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, resolvedor: &mut Resolvedor) -> Accion {
     match id {
         "config.recargar" => {
-            recargar_config_y_tema(&mut estado.config, &mut estado.paleta);
+            recargar_config_tema_y_keymap(estado, resolvedor);
             Accion::Continuar
         }
         "paleta.comandos" => {
@@ -860,16 +901,24 @@ fn confirmar_edicion_celda_csv(layout: &mut PanelLayout, avanzar: bool) {
     }
 }
 
-/// `config.recargar` (`Ctrl+K Ctrl+L`): recarga `config.toml` desde disco
-/// sin reiniciar el editor (PLAN.md §4) y reconstruye la paleta de colores
-/// si el tema activo cambió.
-fn recargar_config_y_tema(config: &mut Config, paleta: &mut Paleta) {
+/// `config.recargar` (`Ctrl+K Ctrl+L`): recarga `config.toml` y
+/// `keymap.toml` desde disco sin reiniciar el editor (PLAN.md §4),
+/// reconstruye la paleta de colores si el tema activo cambió, y
+/// refresca el `Resolvedor` con el keymap recién leído — sin este último
+/// paso, un atajo editado a mano en `keymap.toml` (o restablecido desde
+/// el panel de administración en otra instancia) no tomaría efecto hasta
+/// reiniciar, aunque el panel ya mostrara el valor nuevo.
+fn recargar_config_tema_y_keymap(estado: &mut EstadoApp, resolvedor: &mut Resolvedor) {
     if let Ok(nueva) = tcode_config::cargar() {
-        let tema_cambio = nueva.interfaz.tema != config.interfaz.tema;
-        *config = nueva;
+        let tema_cambio = nueva.interfaz.tema != estado.config.interfaz.tema;
+        estado.config = nueva;
         if tema_cambio {
-            *paleta = cargar_paleta(&config.interfaz.tema);
+            estado.paleta = cargar_paleta(&estado.config.interfaz.tema);
         }
+    }
+    if let Ok(nuevo_keymap) = tcode_keymap::cargar() {
+        estado.keymap = nuevo_keymap;
+        resolvedor.reemplazar_keymap(estado.keymap.clone());
     }
 }
 
@@ -919,6 +968,79 @@ fn ejecutar_accion_temas_admin(estado: &mut EstadoApp) {
             estado.panel_admin.establecer_mensaje(mensaje);
         }
         None => {}
+    }
+}
+
+/// El comando de `tcode_commands::comandos_disponibles()` que corresponde
+/// a la fila seleccionada de la sección "Atajos" del panel de
+/// administración — `None` si la fila 0 (la acción especial "restablecer
+/// todos") está seleccionada, o si la sección actual no es "Atajos".
+fn comando_seleccionado_en_atajos(panel: &tcode_config::EstadoPanelAdmin) -> Option<&'static str> {
+    if panel.seccion_actual() != Seccion::Atajos || panel.campo() == 0 {
+        return None;
+    }
+    tcode_commands::comandos_disponibles().get(panel.campo() - 1).map(|c| c.id)
+}
+
+/// `Enter` sobre una fila de "Atajos" (PLAN.md §5): la fila 0 es la
+/// acción especial "restablecer TODOS los atajos por defecto" (borra el
+/// `keymap.toml` de usuario); cualquier otra fila entra en modo captura
+/// para reasignar ESE comando en particular.
+fn iniciar_o_restablecer_todos_los_atajos(estado: &mut EstadoApp, resolvedor: &mut Resolvedor) {
+    if estado.panel_admin.campo() == 0 {
+        let _ = tcode_keymap::eliminar_override_usuario();
+        estado.keymap = tcode_keymap::keymap_por_defecto();
+        resolvedor.reemplazar_keymap(estado.keymap.clone());
+        estado.panel_admin.establecer_mensaje("Todos los atajos vuelven a su valor por defecto".to_string());
+    } else {
+        estado.panel_admin.iniciar_captura();
+    }
+}
+
+/// `Backspace` sobre un comando de "Atajos": lo restablece a lo que ese
+/// comando tiene en el keymap por defecto (PLAN.md §5: "Botón
+/// 'Restablecer valor por defecto' por atajo"), sin tocar el resto de
+/// las personalizaciones. Sobre la fila 0 ("restablecer todos") no hace
+/// nada — ya tiene su propio gesto con `Enter`.
+fn restablecer_atajo_seleccionado(estado: &mut EstadoApp, resolvedor: &mut Resolvedor) {
+    let Some(comando) = comando_seleccionado_en_atajos(&estado.panel_admin) else { return };
+    estado.keymap = estado.keymap.restablecer_comando(comando);
+    resolvedor.reemplazar_keymap(estado.keymap.clone());
+    let _ = estado.keymap.guardar();
+    estado.panel_admin.establecer_mensaje("Restablecido a su atajo por defecto".to_string());
+}
+
+/// La tecla que llega justo después de `Enter` sobre un comando en
+/// "Atajos" (`EstadoPanelAdmin::capturando`, PLAN.md §5: "presionás la
+/// nueva combinación y se guarda"). `Esc` cancela sin cambiar nada;
+/// cualquier otra tecla —incluida una tecla sola sin modificadores,
+/// como la plantea el plan— se convierte en la nueva combinación de ese
+/// comando. Si esa combinación ya estaba en uso por otro comando
+/// distinto, no se aplica — se avisa en vez de robarle el atajo en
+/// silencio.
+fn manejar_captura_atajo(estado: &mut EstadoApp, resolvedor: &mut Resolvedor, key: KeyEvent) {
+    estado.panel_admin.terminar_captura();
+    if key.code == KeyCode::Esc {
+        return;
+    }
+    let Some(comando) = comando_seleccionado_en_atajos(&estado.panel_admin) else { return };
+    let combinacion = tcode_keymap::desde_evento(key);
+    match estado.keymap.rebindear(comando, combinacion) {
+        Ok(nuevo) => {
+            estado.keymap = nuevo;
+            resolvedor.reemplazar_keymap(estado.keymap.clone());
+            let _ = estado.keymap.guardar();
+            let texto = tcode_keymap::formatear_combinacion(&combinacion);
+            estado.panel_admin.establecer_mensaje(format!("Nuevo atajo: {texto}"));
+        }
+        Err(otro_comando) => {
+            let descripcion: String = tcode_commands::comandos_disponibles()
+                .iter()
+                .find(|c| c.id == otro_comando)
+                .map(|c| c.descripcion.to_string())
+                .unwrap_or_else(|| otro_comando.clone());
+            estado.panel_admin.establecer_mensaje(format!("Ya usado por: {descripcion} — no se cambió nada"));
+        }
     }
 }
 

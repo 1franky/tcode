@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::combinacion::{parsear_atajo, Combinacion};
+use crate::combinacion::{formatear_atajo, parsear_atajo, Combinacion};
 
 /// Directorio de configuración de tcode. Reutiliza la misma resolución que
 /// `tcode-config` (mismo `config.toml`), en vez de duplicarla.
@@ -15,7 +15,7 @@ fn directorio_config() -> PathBuf {
 /// Forma cruda del archivo `keymap.toml` (PLAN.md §4): una tabla por
 /// ámbito, cada una mapeando el texto del atajo al nombre del comando en
 /// español.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 struct KeymapCrudo {
     #[serde(default)]
     global: HashMap<String, String>,
@@ -33,6 +33,7 @@ struct KeymapCrudo {
 /// mismo decide si aplica, p. ej. `markdown.alternar_preview` no hace
 /// nada si el archivo activo no es Markdown), así que no hace falta
 /// mantenerlos separados.
+#[derive(Debug, Clone)]
 pub struct Keymap {
     atajos: HashMap<Vec<Combinacion>, String>,
 }
@@ -77,6 +78,97 @@ impl Keymap {
             .map(|(secuencia, _)| secuencia.as_slice())
             .collect()
     }
+
+    /// Todas las entradas (secuencia, comando) del keymap, en ningún
+    /// orden en particular — base de `guardar` y de `rebindear`, que
+    /// necesitan reconstruir el mapa completo aunque solo cambie una
+    /// entrada.
+    pub fn entradas(&self) -> Vec<(Vec<Combinacion>, String)> {
+        self.atajos.iter().map(|(s, c)| (s.clone(), c.clone())).collect()
+    }
+
+    /// Reconstruye un `Keymap` a partir de una lista de entradas — inverso
+    /// de `entradas`. Si dos entradas comparten la misma secuencia, gana
+    /// la última (mismo comportamiento que `HashMap::insert` repetido);
+    /// no debería pasar en la práctica porque `rebindear` y
+    /// `restablecer_comando` ya filtran duplicados antes de llamar acá.
+    fn desde_entradas(entradas: Vec<(Vec<Combinacion>, String)>) -> Self {
+        Self { atajos: entradas.into_iter().collect() }
+    }
+
+    /// Reemplaza TODAS las combinaciones de `comando` por una única
+    /// `nueva` (PLAN.md §5: "seleccionás una fila, pulsás Enter, presionás
+    /// la nueva combinación y se guarda" — un solo atajo, no un chord ni
+    /// varias alternativas a la vez; si el comando tenía más de un atajo
+    /// por defecto, como `paleta.comandos`, personalizarlo desde el panel
+    /// los colapsa a este único nuevo). Si `nueva` ya estaba asignada a
+    /// OTRO comando distinto, no se aplica el cambio — devuelve el nombre
+    /// de ese otro comando para que quien llama pueda avisar en vez de
+    /// robarle su atajo en silencio.
+    pub fn rebindear(&self, comando: &str, nueva: Combinacion) -> Result<Keymap, String> {
+        if let Some(otro) = self.atajos.get(&vec![nueva]) {
+            if otro != comando {
+                return Err(otro.clone());
+            }
+        }
+        let mut entradas: Vec<(Vec<Combinacion>, String)> =
+            self.entradas().into_iter().filter(|(_, c)| c != comando).collect();
+        entradas.push((vec![nueva], comando.to_string()));
+        Ok(Self::desde_entradas(entradas))
+    }
+
+    /// Descarta la personalización de `comando` (si tenía alguna) y le
+    /// devuelve exactamente los atajos que tiene en el keymap por defecto
+    /// (puede ser más de uno, como `paleta.comandos` con `Ctrl+Shift+P` y
+    /// `F1`) — "Restablecer valor por defecto" por atajo, PLAN.md §5.
+    pub fn restablecer_comando(&self, comando: &str) -> Keymap {
+        let mut entradas: Vec<(Vec<Combinacion>, String)> =
+            self.entradas().into_iter().filter(|(_, c)| c != comando).collect();
+        for secuencia in keymap_por_defecto().atajos_para(comando) {
+            entradas.push((secuencia.to_vec(), comando.to_string()));
+        }
+        Self::desde_entradas(entradas)
+    }
+
+    /// Serializa el keymap completo a un único bloque `[global]` de TOML
+    /// (las secciones `[editor]`/`[markdown]`/`[csv]` de
+    /// `runtime/keymaps/default.toml` son solo organización dentro del
+    /// archivo — ya se combinan en un único mapa al cargar, así que no
+    /// hace falta reconstruirlas para guardar).
+    fn a_texto_toml(&self) -> Result<String> {
+        let mut global = HashMap::new();
+        for (secuencia, comando) in self.entradas() {
+            global.insert(formatear_atajo(&secuencia), comando);
+        }
+        let crudo = KeymapCrudo { global, ..Default::default() };
+        toml::to_string_pretty(&crudo).context("no se pudo serializar el keymap")
+    }
+
+    /// Persiste el keymap completo en `~/.config/tcode/keymap.toml` (o el
+    /// directorio portable en Windows) — sobreescribe cualquier
+    /// personalización previa del usuario, porque ya la incluye (viene de
+    /// `entradas()`, que parte del keymap activo completo).
+    pub fn guardar(&self) -> Result<()> {
+        let texto = self.a_texto_toml()?;
+        let ruta = ruta_keymap_usuario();
+        if let Some(dir) = ruta.parent() {
+            std::fs::create_dir_all(dir).with_context(|| format!("no se pudo crear '{}'", dir.display()))?;
+        }
+        std::fs::write(&ruta, texto).with_context(|| format!("no se pudo escribir '{}'", ruta.display()))
+    }
+}
+
+/// "Restablecer TODOS los atajos por defecto" (PLAN.md §5): borra el
+/// `keymap.toml` de usuario si existe, para que la próxima `cargar()`
+/// vuelva a caer en el embebido. No hace falta reescribirlo con los
+/// valores por defecto — simplemente no tener archivo de usuario ya
+/// significa "usar el embebido" (ver `cargar`).
+pub fn eliminar_override_usuario() -> Result<()> {
+    let ruta = ruta_keymap_usuario();
+    if ruta.exists() {
+        std::fs::remove_file(&ruta).with_context(|| format!("no se pudo borrar '{}'", ruta.display()))?;
+    }
+    Ok(())
 }
 
 const KEYMAP_POR_DEFECTO: &str = include_str!("../../../runtime/keymaps/default.toml");
@@ -209,5 +301,66 @@ mod tests {
         .unwrap();
         let keymap = Keymap::desde_crudo(crudo).unwrap();
         assert_eq!(keymap.num_atajos(), 1);
+    }
+
+    #[test]
+    fn rebindear_reemplaza_el_atajo_de_un_comando() {
+        let keymap = keymap_por_defecto();
+        let nueva = parsear_combinacion("Ctrl+Alt+G").unwrap();
+        let actualizado = keymap.rebindear("archivo.guardar", nueva).unwrap();
+        assert_eq!(actualizado.buscar(&[nueva]), Some("archivo.guardar"));
+        // El atajo viejo (Ctrl+S) ya no apunta a nada.
+        let vieja = parsear_combinacion("Ctrl+S").unwrap();
+        assert_eq!(actualizado.buscar(&[vieja]), None);
+    }
+
+    #[test]
+    fn rebindear_no_pisa_el_atajo_de_otro_comando() {
+        let keymap = keymap_por_defecto();
+        let ocupada = parsear_combinacion("Ctrl+Q").unwrap(); // app.salir
+        let resultado = keymap.rebindear("archivo.guardar", ocupada);
+        assert_eq!(resultado.unwrap_err(), "app.salir");
+    }
+
+    #[test]
+    fn rebindear_permite_reasignar_el_mismo_atajo_al_mismo_comando() {
+        let keymap = keymap_por_defecto();
+        let misma = parsear_combinacion("Ctrl+S").unwrap();
+        // No debe fallar por "ya ocupada" cuando la ocupa el propio
+        // comando que se está reasignando.
+        assert!(keymap.rebindear("archivo.guardar", misma).is_ok());
+    }
+
+    #[test]
+    fn restablecer_comando_recupera_los_atajos_por_defecto() {
+        let keymap = keymap_por_defecto();
+        let nueva = parsear_combinacion("Ctrl+Alt+G").unwrap();
+        let personalizado = keymap.rebindear("archivo.guardar", nueva).unwrap();
+        assert_eq!(personalizado.buscar(&[parsear_combinacion("Ctrl+S").unwrap()]), None);
+
+        let restablecido = personalizado.restablecer_comando("archivo.guardar");
+        assert_eq!(restablecido.buscar(&[parsear_combinacion("Ctrl+S").unwrap()]), Some("archivo.guardar"));
+        assert_eq!(restablecido.buscar(&[nueva]), None);
+    }
+
+    #[test]
+    fn restablecer_comando_recupera_varios_atajos_por_defecto() {
+        // "paleta.comandos" tiene dos atajos por defecto (Ctrl+Shift+P y
+        // F1) — restablecerlo después de personalizarlo debe devolver
+        // los dos, no solo uno.
+        let keymap = keymap_por_defecto();
+        let nueva = parsear_combinacion("Ctrl+Alt+P").unwrap();
+        let personalizado = keymap.rebindear("paleta.comandos", nueva).unwrap();
+        let restablecido = personalizado.restablecer_comando("paleta.comandos");
+        assert_eq!(restablecido.atajos_para("paleta.comandos").len(), 2);
+    }
+
+    #[test]
+    fn a_texto_toml_produce_un_keymap_toml_valido_que_vuelve_a_parsear_igual() {
+        let keymap = keymap_por_defecto();
+        let texto = keymap.a_texto_toml().unwrap();
+        let recargado = parsear_keymap(&texto).unwrap();
+        assert_eq!(recargado.num_atajos(), keymap.num_atajos());
+        assert_eq!(recargado.buscar(&[parsear_combinacion("Ctrl+S").unwrap()]), Some("archivo.guardar"));
     }
 }

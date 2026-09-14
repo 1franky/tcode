@@ -5,6 +5,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
 use tcode_config::{CampoEditor, CampoTemas, Config, EstadoPanelAdmin, FocoPanelAdmin, Seccion};
+use tcode_keymap::{detectar_conflictos, formatear_atajo, Keymap};
 
 use crate::Paleta;
 
@@ -15,7 +16,14 @@ const ANCHO_BARRA: u16 = 30;
 /// una vista más del sistema, no un overlay flotante sobre el editor
 /// (PLAN.md §5) — quien llama (`tcode_ui::dibujar`) no dibuja nada más
 /// del editor mientras este panel está activo.
-pub fn dibujar(frame: &mut Frame, area_total: Rect, panel: &EstadoPanelAdmin, config: &Config, paleta: &Paleta) {
+pub fn dibujar(
+    frame: &mut Frame,
+    area_total: Rect,
+    panel: &EstadoPanelAdmin,
+    config: &Config,
+    keymap: &Keymap,
+    paleta: &Paleta,
+) {
     frame.render_widget(Clear, area_total);
     frame.render_widget(Paragraph::new("").style(Style::default().bg(paleta.fondo)), area_total);
 
@@ -32,7 +40,7 @@ pub fn dibujar(frame: &mut Frame, area_total: Rect, panel: &EstadoPanelAdmin, co
     dibujar_barra(frame, columnas[0], panel, paleta);
     match panel.foco() {
         FocoPanelAdmin::Busqueda => dibujar_busqueda(frame, filas_derecha[0], panel, paleta),
-        _ => dibujar_central(frame, filas_derecha[0], panel, config, paleta),
+        _ => dibujar_central(frame, filas_derecha[0], panel, config, keymap, paleta),
     }
     dibujar_mensaje(frame, filas_derecha[1], panel, paleta);
     dibujar_pie(frame, filas_derecha[2], panel, paleta);
@@ -63,7 +71,14 @@ fn dibujar_barra(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, paleta
 /// Área central: filas editables de la sección actual si ya tiene
 /// contenido real (solo "Editor" por ahora), o el aviso de qué va a
 /// traer si todavía no lo tiene.
-fn dibujar_central(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, config: &Config, paleta: &Paleta) {
+fn dibujar_central(
+    frame: &mut Frame,
+    area: Rect,
+    panel: &EstadoPanelAdmin,
+    config: &Config,
+    keymap: &Keymap,
+    paleta: &Paleta,
+) {
     let estilo_base = Style::default().bg(paleta.fondo).fg(paleta.texto);
     let seccion = panel.seccion_actual();
     let bloque = Block::default().borders(Borders::ALL).title(format!(" {} ", seccion.nombre())).style(estilo_base);
@@ -107,9 +122,73 @@ fn dibujar_central(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, conf
                 })
                 .collect()
         }
+        Seccion::Atajos => filas_atajos(panel, keymap, paleta, estilo_base),
         _ => Vec::new(),
     };
     frame.render_widget(List::new(items).block(bloque), area);
+}
+
+/// Filas de la sección "Atajos": una acción especial ("restablecer
+/// todos") seguida de una fila por comando de `tcode_commands::
+/// comandos_disponibles()`, con su combinación actual (o "(sin atajo)")
+/// resaltada en rojo si participa de un conflicto de prefijo
+/// (`tcode_keymap::detectar_conflictos`, PLAN.md §5: "detección de
+/// conflictos en tiempo real"). Si la fila seleccionada está en modo
+/// "esperando la nueva tecla" (`Enter`, ver `EstadoPanelAdmin::
+/// capturando`), el valor se reemplaza por un aviso en vez del atajo
+/// actual.
+fn filas_atajos<'a>(
+    panel: &EstadoPanelAdmin,
+    keymap: &Keymap,
+    paleta: &Paleta,
+    estilo_base: Style,
+) -> Vec<ListItem<'a>> {
+    let conflictos = detectar_conflictos(keymap);
+    let en_conflicto = |comando: &str| conflictos.iter().any(|c| c.comando_corto == comando || c.comando_bloqueado == comando);
+
+    let central_activa = panel.foco() == FocoPanelAdmin::Central;
+    let mut filas = Vec::new();
+
+    let fila_0_seleccionada = panel.campo() == 0 && central_activa;
+    let estilo_0 = if fila_0_seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
+    filas.push(
+        ListItem::new(Line::from(Span::styled("↺ Restablecer TODOS los atajos por defecto", estilo_0)))
+            .style(estilo_0),
+    );
+
+    for (idx, comando) in tcode_commands::comandos_disponibles().iter().enumerate() {
+        let fila = idx + 1;
+        let seleccionada = panel.campo() == fila && central_activa;
+        let estilo_fila = if seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
+
+        let valor = if seleccionada && panel.capturando() {
+            "‹ presioná la nueva combinación… (Esc cancela) ›".to_string()
+        } else {
+            let atajos = keymap.atajos_para(comando.id);
+            if atajos.is_empty() {
+                "(sin atajo)".to_string()
+            } else {
+                atajos.iter().map(|s| formatear_atajo(s)).collect::<Vec<_>>().join(", ")
+            }
+        };
+        let estilo_valor = if seleccionada && panel.capturando() {
+            estilo_fila
+        } else if en_conflicto(comando.id) {
+            estilo_fila.fg(paleta.diagnostico_error)
+        } else {
+            estilo_fila
+        };
+
+        let spans = vec![
+            // 47: la descripción más larga de `comandos_disponibles()`
+            // hoy mide 45 ("Selección: Seleccionar todas las
+            // ocurrencias") — deja 2 de margen antes del atajo.
+            Span::styled(format!("{:<47}", comando.descripcion), estilo_fila),
+            Span::styled(valor, estilo_valor),
+        ];
+        filas.push(ListItem::new(Line::from(spans)).style(estilo_fila));
+    }
+    filas
 }
 
 /// Mensaje transitorio de la última acción disparada en el área central
@@ -168,8 +247,12 @@ fn dibujar_busqueda(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, pal
 fn dibujar_pie(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, paleta: &Paleta) {
     let texto = match panel.foco() {
         FocoPanelAdmin::Barra => "↑↓ moverse · Enter/→ entrar a la sección · Ctrl+F buscar · Esc cerrar panel",
+        FocoPanelAdmin::Central if panel.capturando() => "Presioná la nueva combinación · Esc cancela",
         FocoPanelAdmin::Central if panel.seccion_actual() == Seccion::Temas => {
             "↑↓ moverse · Enter ejecutar · Tab volver a secciones · Ctrl+F buscar · Esc volver"
+        }
+        FocoPanelAdmin::Central if panel.seccion_actual() == Seccion::Atajos => {
+            "↑↓ moverse · Enter capturar nuevo atajo · Backspace restablecer · Tab secciones · Ctrl+F buscar · Esc volver"
         }
         FocoPanelAdmin::Central => {
             "↑↓ moverse · Enter/←→ cambiar valor · Tab volver a secciones · Ctrl+F buscar · Esc volver"
