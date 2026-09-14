@@ -29,6 +29,10 @@
 "Shift+Tab"     = "editor.desindentar"
 "Ctrl+K Ctrl+L" = "config.recargar"
 "Ctrl+K Ctrl+T" = "tema.seleccionar"
+"Ctrl+K Ctrl+P" = "tema.editor_visual"
+# Alternativa: mismo motivo que "Ctrl+K L"/"Ctrl+K T" más abajo — un
+# segundo Ctrl en el chord puede no llegar en terminales clásicos.
+"Ctrl+K P"      = "tema.editor_visual"
 "Ctrl+,"        = "admin.abrir_panel"
 # Alternativa: muchos terminales clásicos no le asignan ningún código de
 # control a Ctrl+<símbolo> salvo un puñado de casos especiales (`Ctrl+\`,

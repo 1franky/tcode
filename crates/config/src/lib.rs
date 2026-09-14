@@ -5,6 +5,7 @@
 
 mod color;
 mod config;
+mod editor_tema;
 mod panel_admin;
 mod selector;
 mod tema;
@@ -14,13 +15,14 @@ pub use config::{
     cargar, directorio_config, directorio_temas_usuario, guardar, recargar, ruta_config, Config,
     ConfigEditor, ConfigInterfaz, ConfigLenguajes,
 };
+pub use editor_tema::{campos_color, CampoColor, EstadoEditorTema};
 pub use panel_admin::{
     indice_de, CampoEditor, CampoInterfaz, CampoTemas, EstadoPanelAdmin, FocoPanelAdmin,
     OpcionExterna, ResultadoBusquedaAdmin, Seccion,
 };
 pub use selector::{EstadoSelectorTema, FiltroTipoTema};
 pub use tema::{
-    cargar_tema, duplicar_tema_para_editar, tema_por_defecto, EstiloToken, InfoTema,
+    cargar_tema, duplicar_tema_para_editar, guardar_tema, tema_por_defecto, EstiloToken, InfoTema,
     ResultadoDuplicarTema, Tema, TemaBusqueda, TemaDiagnosticos, TemaGit, TemaSintaxis,
     TemaStatusbar, TemaUi, TEMAS_EMBEBIDOS, TEMA_POR_DEFECTO,
 };

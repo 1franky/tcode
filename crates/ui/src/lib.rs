@@ -3,6 +3,7 @@
 //! activo y el resaltado de sintaxis de `tcode-syntax`; no modifica el
 //! `core` (ver PLAN.md §3).
 
+mod editor_tema;
 mod overlay;
 mod paleta;
 mod paneles;
@@ -21,7 +22,7 @@ use ratatui::layout::{Constraint, Direction, Layout as LayoutRatatui};
 use ratatui::Frame;
 
 use tcode_commands::EstadoPaleta;
-use tcode_config::{Config, EstadoPanelAdmin, EstadoSelectorTema};
+use tcode_config::{Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema};
 use tcode_core::EstadoBusqueda;
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::Keymap;
@@ -70,8 +71,14 @@ pub fn dibujar(
     config: &Config,
     keymap: &Keymap,
     filas_lenguajes: &[FilaLenguajeLsp],
+    editor_tema: &EstadoEditorTema,
 ) {
     let area_total = frame.area();
+
+    if editor_tema.activo() {
+        editor_tema::dibujar(frame, area_total, editor_tema, paleta);
+        return;
+    }
 
     if panel_admin_estado.activo() {
         panel_admin::dibujar(frame, area_total, panel_admin_estado, config, keymap, filas_lenguajes, paleta);

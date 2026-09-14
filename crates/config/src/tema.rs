@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::color::analizar_color_hex;
 use crate::config::directorio_temas_usuario;
@@ -7,8 +7,10 @@ use crate::config::directorio_temas_usuario;
 /// Un color de sintaxis puede definirse como un string simple
 /// (`string = "#a6e3a1"`) o como una tabla con estilo adicional
 /// (`keyword = { fg = "#cba6f7", style = "bold" }`), tal como describe
-/// PLAN.md §7.
-#[derive(Debug, Clone, Deserialize)]
+/// PLAN.md §7. `Serialize` (además de `Deserialize`) porque el editor
+/// visual de tema (`Ctrl+K Ctrl+P`, M4) necesita volver a escribir el
+/// `Tema` completo a disco tras cada cambio de color.
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum EstiloToken {
     Color(String),
@@ -37,7 +39,7 @@ impl EstiloToken {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TemaUi {
     pub background: String,
     pub foreground: String,
@@ -72,7 +74,7 @@ impl TemaUi {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TemaStatusbar {
     pub background: String,
     pub foreground: String,
@@ -91,7 +93,7 @@ impl TemaStatusbar {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct TemaSintaxis {
     pub keyword: Option<EstiloToken>,
     pub string: Option<EstiloToken>,
@@ -105,7 +107,7 @@ pub struct TemaSintaxis {
     pub operator: Option<EstiloToken>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct TemaDiagnosticos {
     pub error: Option<String>,
     pub warning: Option<String>,
@@ -113,7 +115,7 @@ pub struct TemaDiagnosticos {
     pub hint: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct TemaGit {
     pub added: Option<String>,
     pub modified: Option<String>,
@@ -123,7 +125,7 @@ pub struct TemaGit {
 /// Colores de la barra de búsqueda/reemplazo (`Ctrl+F`/`Ctrl+H`, PLAN.md
 /// §4): el fondo de la coincidencia sobre la que está el cursor de
 /// búsqueda, y el de las demás coincidencias visibles en el buffer.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct TemaBusqueda {
     pub coincidencia_actual: Option<String>,
     pub otras_coincidencias: Option<String>,
@@ -133,7 +135,7 @@ pub struct TemaBusqueda {
 /// (PLAN.md §7). `syntax` todavía no se usa (el resaltado con tree-sitter
 /// llega en una pieza aparte de M1); se parsea desde ya para no tener que
 /// cambiar el formato del archivo cuando se conecte.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Tema {
     pub name: String,
     #[serde(rename = "type")]
@@ -278,6 +280,21 @@ pub fn duplicar_tema_para_editar(nombre: &str) -> Result<ResultadoDuplicarTema> 
     Ok(ResultadoDuplicarTema::Creado(destino))
 }
 
+/// Persiste `tema` completo como TOML en `ruta` — usado por el editor
+/// visual de tema (`Ctrl+K Ctrl+P`, PLAN.md §7) tras cada cambio de
+/// color. A diferencia de `tema_texto_crudo`/`duplicar_tema_para_editar`
+/// (que copian el archivo tal cual, preservando formato/comentarios),
+/// esto SÍ reserializa desde la struct ya parseada — es justamente lo
+/// que hay que hacer cuando el contenido cambió en memoria y hay que
+/// bajarlo a disco.
+pub fn guardar_tema(tema: &Tema, ruta: &std::path::Path) -> Result<()> {
+    let texto = toml::to_string_pretty(tema).context("no se pudo serializar el tema")?;
+    if let Some(dir) = ruta.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("no se pudo crear '{}'", dir.display()))?;
+    }
+    std::fs::write(ruta, texto).with_context(|| format!("no se pudo escribir '{}'", ruta.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,5 +343,34 @@ mod tests {
             toml::from_str("v = { fg = \"#000000\", style = \"bold\" }").unwrap();
         assert!(con_estilo.v.negrita());
         assert_eq!(con_estilo.v.color_rgb().unwrap(), (0, 0, 0));
+    }
+
+    #[test]
+    fn todos_los_temas_embebidos_sobreviven_un_round_trip_de_serializacion() {
+        // El editor visual de tema (Ctrl+K Ctrl+P, M4) reserializa el
+        // Tema completo tras cada cambio — confirmar que ninguno de los
+        // 12 temas embebidos pierde información al ir y volver.
+        for info in TEMAS_EMBEBIDOS {
+            let original = cargar_tema(info.id).unwrap();
+            let texto = toml::to_string_pretty(&original).unwrap_or_else(|e| panic!("tema '{}': {e}", info.id));
+            let recuperado: Tema = toml::from_str(&texto).unwrap_or_else(|e| panic!("tema '{}': {e}", info.id));
+            assert_eq!(recuperado.ui.background, original.ui.background, "tema '{}'", info.id);
+            assert_eq!(recuperado.syntax.keyword.is_some(), original.syntax.keyword.is_some(), "tema '{}'", info.id);
+        }
+    }
+
+    #[test]
+    fn guardar_tema_escribe_un_archivo_que_vuelve_a_cargar_igual() {
+        let original = tema_por_defecto();
+        let dir = std::env::temp_dir().join(format!("tcode-test-guardar-tema-{}", std::process::id()));
+        let ruta = dir.join("prueba.toml");
+
+        guardar_tema(&original, &ruta).unwrap();
+        let texto = std::fs::read_to_string(&ruta).unwrap();
+        let recuperado: Tema = toml::from_str(&texto).unwrap();
+        assert_eq!(recuperado.name, original.name);
+        assert_eq!(recuperado.ui.background, original.ui.background);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
