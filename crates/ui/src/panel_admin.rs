@@ -12,16 +12,36 @@ use crate::Paleta;
 /// Ancho fijo de la barra lateral de secciones (PLAN.md §5).
 const ANCHO_BARRA: u16 = 30;
 
+/// Una fila de la sección "Lenguajes / LSP" (PLAN.md §5.3), ya resuelta a
+/// texto — `app` la construye cada frame a partir de `tcode_syntax::
+/// Lenguaje`, `tcode_lsp::comando_para` y el estado en vivo del cliente
+/// LSP activo (`EstadoLsp`, que vive en `app` y no en ningún crate que
+/// `tcode-ui` pueda conocer). Vive acá (no en `tcode-config`, que ya
+/// resuelve "Editor"/"Temas" directo) porque es puramente un DTO de
+/// render, sin ninguna lógica — no hace falta que ningún otro crate lo
+/// conozca.
+pub struct FilaLenguajeLsp {
+    pub nombre: String,
+    pub comando: String,
+    pub en_path: bool,
+    pub habilitado: bool,
+    /// "Conectado" / "Iniciando…" / "Inactivo" — ya resuelto a texto por
+    /// `app`, que es quien tiene acceso al estado real de la sesión LSP.
+    pub estado: String,
+}
+
 /// Dibuja el panel de administración (`Ctrl+,`) a pantalla completa: es
 /// una vista más del sistema, no un overlay flotante sobre el editor
 /// (PLAN.md §5) — quien llama (`tcode_ui::dibujar`) no dibuja nada más
 /// del editor mientras este panel está activo.
+#[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
     area_total: Rect,
     panel: &EstadoPanelAdmin,
     config: &Config,
     keymap: &Keymap,
+    filas_lenguajes: &[FilaLenguajeLsp],
     paleta: &Paleta,
 ) {
     frame.render_widget(Clear, area_total);
@@ -40,7 +60,7 @@ pub fn dibujar(
     dibujar_barra(frame, columnas[0], panel, paleta);
     match panel.foco() {
         FocoPanelAdmin::Busqueda => dibujar_busqueda(frame, filas_derecha[0], panel, paleta),
-        _ => dibujar_central(frame, filas_derecha[0], panel, config, keymap, paleta),
+        _ => dibujar_central(frame, filas_derecha[0], panel, config, keymap, filas_lenguajes, paleta),
     }
     dibujar_mensaje(frame, filas_derecha[1], panel, paleta);
     dibujar_pie(frame, filas_derecha[2], panel, paleta);
@@ -71,12 +91,14 @@ fn dibujar_barra(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, paleta
 /// Área central: filas editables de la sección actual si ya tiene
 /// contenido real (solo "Editor" por ahora), o el aviso de qué va a
 /// traer si todavía no lo tiene.
+#[allow(clippy::too_many_arguments)]
 fn dibujar_central(
     frame: &mut Frame,
     area: Rect,
     panel: &EstadoPanelAdmin,
     config: &Config,
     keymap: &Keymap,
+    filas_lenguajes: &[FilaLenguajeLsp],
     paleta: &Paleta,
 ) {
     let estilo_base = Style::default().bg(paleta.fondo).fg(paleta.texto);
@@ -123,6 +145,7 @@ fn dibujar_central(
                 .collect()
         }
         Seccion::Atajos => filas_atajos(panel, keymap, paleta, estilo_base),
+        Seccion::Lenguajes => filas_lenguajes_lsp(panel, filas_lenguajes, paleta, estilo_base),
         _ => Vec::new(),
     };
     frame.render_widget(List::new(items).block(bloque), area);
@@ -189,6 +212,45 @@ fn filas_atajos<'a>(
         filas.push(ListItem::new(Line::from(spans)).style(estilo_fila));
     }
     filas
+}
+
+/// Filas de la sección "Lenguajes / LSP" (PLAN.md §5.3): una fila por
+/// lenguaje, ya resuelta por `app` a texto (`FilaLenguajeLsp`) — acá solo
+/// se decide cómo pintarla (seleccionada, comando en rojo si el binario
+/// no está en el `PATH`, atenuada si está deshabilitada).
+fn filas_lenguajes_lsp<'a>(
+    panel: &EstadoPanelAdmin,
+    filas: &[FilaLenguajeLsp],
+    paleta: &Paleta,
+    estilo_base: Style,
+) -> Vec<ListItem<'a>> {
+    let central_activa = panel.foco() == FocoPanelAdmin::Central;
+    filas
+        .iter()
+        .enumerate()
+        .map(|(idx, fila)| {
+            let seleccionada = panel.campo() == idx && central_activa;
+            let estilo_fila = if seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
+            let estilo_comando = if fila.en_path { estilo_fila } else { estilo_fila.fg(paleta.diagnostico_advertencia) };
+            let habilitado = if fila.habilitado { "Sí" } else { "No" };
+            let comando = if fila.comando.is_empty() { "(sin LSP configurado)" } else { &fila.comando };
+            let en_path = if fila.comando.is_empty() {
+                String::new()
+            } else if fila.en_path {
+                " [en el PATH]".to_string()
+            } else {
+                " [no encontrado en el PATH]".to_string()
+            };
+            let spans = vec![
+                Span::styled(format!("{:<14}", fila.nombre), estilo_fila),
+                Span::styled(format!("Habilitado: {habilitado:<5}"), estilo_fila),
+                Span::styled(format!("  {comando}"), estilo_comando),
+                Span::styled(en_path, estilo_comando),
+                Span::styled(format!("  — {}", fila.estado), estilo_fila),
+            ];
+            ListItem::new(Line::from(spans)).style(estilo_fila)
+        })
+        .collect()
 }
 
 /// Mensaje transitorio de la última acción disparada en el área central

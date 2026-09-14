@@ -14,6 +14,7 @@ use crate::tema::TEMA_POR_DEFECTO;
 pub struct Config {
     pub editor: ConfigEditor,
     pub interfaz: ConfigInterfaz,
+    pub lenguajes: ConfigLenguajes,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -46,6 +47,36 @@ impl Default for ConfigInterfaz {
     fn default() -> Self {
         Self {
             tema: TEMA_POR_DEFECTO.to_string(),
+        }
+    }
+}
+
+/// Corresponde a la sección "Lenguajes / LSP" del panel de
+/// administración (PLAN.md §5.3). Por ahora solo guarda qué lenguajes
+/// tienen su LSP deshabilitado a propósito — configurar comando,
+/// argumentos y variables de entorno por lenguaje queda para una pieza
+/// aparte de M4.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Default)]
+#[serde(default)]
+pub struct ConfigLenguajes {
+    /// Ids de lenguaje (`tcode_syntax::Lenguaje::id`, ej. `"python"`)
+    /// cuyo LSP no se lanza aunque haya uno configurado, aun si el
+    /// archivo activo es de ese lenguaje.
+    pub lsp_deshabilitado: Vec<String>,
+}
+
+impl ConfigLenguajes {
+    pub fn lsp_habilitado(&self, id_lenguaje: &str) -> bool {
+        !self.lsp_deshabilitado.iter().any(|l| l == id_lenguaje)
+    }
+
+    /// Habilita el LSP de `id_lenguaje` si estaba deshabilitado, o
+    /// viceversa.
+    pub fn alternar_lsp(&mut self, id_lenguaje: &str) {
+        if let Some(pos) = self.lsp_deshabilitado.iter().position(|l| l == id_lenguaje) {
+            self.lsp_deshabilitado.remove(pos);
+        } else {
+            self.lsp_deshabilitado.push(id_lenguaje.to_string());
         }
     }
 }
@@ -125,6 +156,9 @@ mod tests {
             interfaz: ConfigInterfaz {
                 tema: "claro".into(),
             },
+            lenguajes: ConfigLenguajes {
+                lsp_deshabilitado: vec!["python".to_string()],
+            },
         };
         let texto = toml::to_string_pretty(&original).unwrap();
         let recuperado: Config = toml::from_str(&texto).unwrap();
@@ -138,5 +172,22 @@ mod tests {
         let config: Config = toml::from_str("[interfaz]\ntema = \"claro\"\n").unwrap();
         assert_eq!(config.interfaz.tema, "claro");
         assert_eq!(config.editor.tamano_tabulacion, 4);
+    }
+
+    #[test]
+    fn todos_los_lenguajes_empiezan_habilitados() {
+        let lenguajes = ConfigLenguajes::default();
+        assert!(lenguajes.lsp_habilitado("python"));
+    }
+
+    #[test]
+    fn alternar_lsp_deshabilita_y_vuelve_a_habilitar() {
+        let mut lenguajes = ConfigLenguajes::default();
+        lenguajes.alternar_lsp("python");
+        assert!(!lenguajes.lsp_habilitado("python"));
+        assert!(lenguajes.lsp_habilitado("rust")); // no afecta a otros lenguajes
+
+        lenguajes.alternar_lsp("python");
+        assert!(lenguajes.lsp_habilitado("python"));
     }
 }

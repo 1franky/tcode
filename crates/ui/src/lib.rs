@@ -29,6 +29,7 @@ use tcode_syntax::Resaltador;
 
 pub use paleta::Paleta;
 pub use paneles::{DireccionSplit, Layout, ModoCsv, ModoMarkdown, PanelEditor};
+pub use panel_admin::FilaLenguajeLsp;
 
 /// Ancho fijo (en columnas) del panel lateral del explorador cuando está
 /// visible.
@@ -68,11 +69,12 @@ pub fn dibujar(
     panel_admin_estado: &EstadoPanelAdmin,
     config: &Config,
     keymap: &Keymap,
+    filas_lenguajes: &[FilaLenguajeLsp],
 ) {
     let area_total = frame.area();
 
     if panel_admin_estado.activo() {
-        panel_admin::dibujar(frame, area_total, panel_admin_estado, config, keymap, paleta);
+        panel_admin::dibujar(frame, area_total, panel_admin_estado, config, keymap, filas_lenguajes, paleta);
         return;
     }
 
