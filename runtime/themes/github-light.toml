@@ -1,0 +1,45 @@
+# Tema GitHub Light — réplica del tema claro oficial de GitHub
+# (PLAN.md §7, #10).
+name = "GitHub Light"
+type = "light"
+
+[ui]
+background         = "#ffffff"
+foreground         = "#24292f"
+cursor             = "#24292f"
+selection          = "#b6e3ff"
+line_number        = "#8c959f"
+line_number_active = "#24292f"
+current_line       = "#f6f8fa"
+
+[statusbar]
+background     = "#f6f8fa"
+foreground     = "#24292f"
+modo_insertar  = "#1a7f37"
+modo_seleccion = "#9a6700"
+
+[syntax]
+keyword  = { fg = "#cf222e", style = "bold" }
+string   = "#0a3069"
+number   = "#0550ae"
+comment  = { fg = "#6e7781", style = "italic" }
+function = "#8250df"
+type     = "#953800"
+variable = "#24292f"
+constant = "#0550ae"
+operator = "#cf222e"
+
+[diagnostics]
+error   = "#cf222e"
+warning = "#9a6700"
+info    = "#0969da"
+hint    = "#1a7f37"
+
+[git]
+added    = "#1a7f37"
+modified = "#9a6700"
+deleted  = "#cf222e"
+
+[search]
+coincidencia_actual = "#bf8700"
+otras_coincidencias  = "#fff8c5"

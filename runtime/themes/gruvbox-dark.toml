@@ -1,0 +1,45 @@
+# Tema Gruvbox Dark — colores retro cálidos, muy popular en la comunidad
+# Vim/Neovim (PLAN.md §7, #5).
+name = "Gruvbox Dark"
+type = "dark"
+
+[ui]
+background         = "#282828"
+foreground         = "#ebdbb2"
+cursor             = "#ebdbb2"
+selection          = "#504945"
+line_number        = "#7c6f64"
+line_number_active = "#ebdbb2"
+current_line       = "#3c3836"
+
+[statusbar]
+background     = "#1d2021"
+foreground     = "#ebdbb2"
+modo_insertar  = "#b8bb26"
+modo_seleccion = "#fabd2f"
+
+[syntax]
+keyword  = { fg = "#fb4934", style = "bold" }
+string   = "#b8bb26"
+number   = "#d3869b"
+comment  = { fg = "#928374", style = "italic" }
+function = "#b8bb26"
+type     = "#fabd2f"
+variable = "#ebdbb2"
+constant = "#d3869b"
+operator = "#fe8019"
+
+[diagnostics]
+error   = "#fb4934"
+warning = "#fabd2f"
+info    = "#83a598"
+hint    = "#8ec07c"
+
+[git]
+added    = "#b8bb26"
+modified = "#fabd2f"
+deleted  = "#fb4934"
+
+[search]
+coincidencia_actual = "#fe8019"
+otras_coincidencias  = "#504945"

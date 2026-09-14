@@ -153,6 +153,15 @@ pub struct Tema {
 const TEMA_DRACULA: &str = include_str!("../../../runtime/themes/dracula.toml");
 const TEMA_OSCURO: &str = include_str!("../../../runtime/themes/oscuro.toml");
 const TEMA_CLARO: &str = include_str!("../../../runtime/themes/claro.toml");
+const TEMA_MONOKAI: &str = include_str!("../../../runtime/themes/monokai.toml");
+const TEMA_ONE_DARK: &str = include_str!("../../../runtime/themes/one-dark.toml");
+const TEMA_NORD: &str = include_str!("../../../runtime/themes/nord.toml");
+const TEMA_GRUVBOX_DARK: &str = include_str!("../../../runtime/themes/gruvbox-dark.toml");
+const TEMA_TOKYO_NIGHT: &str = include_str!("../../../runtime/themes/tokyo-night.toml");
+const TEMA_CATPPUCCIN_MOCHA: &str = include_str!("../../../runtime/themes/catppuccin-mocha.toml");
+const TEMA_SOLARIZED_DARK: &str = include_str!("../../../runtime/themes/solarized-dark.toml");
+const TEMA_SOLARIZED_LIGHT: &str = include_str!("../../../runtime/themes/solarized-light.toml");
+const TEMA_GITHUB_LIGHT: &str = include_str!("../../../runtime/themes/github-light.toml");
 
 /// Nombre del tema usado si la config no especifica uno, o si el
 /// especificado no se encuentra.
@@ -163,9 +172,49 @@ fn tema_embebido(nombre: &str) -> Option<&'static str> {
         "dracula" => Some(TEMA_DRACULA),
         "oscuro" => Some(TEMA_OSCURO),
         "claro" => Some(TEMA_CLARO),
+        "monokai" => Some(TEMA_MONOKAI),
+        "one-dark" => Some(TEMA_ONE_DARK),
+        "nord" => Some(TEMA_NORD),
+        "gruvbox-dark" => Some(TEMA_GRUVBOX_DARK),
+        "tokyo-night" => Some(TEMA_TOKYO_NIGHT),
+        "catppuccin-mocha" => Some(TEMA_CATPPUCCIN_MOCHA),
+        "solarized-dark" => Some(TEMA_SOLARIZED_DARK),
+        "solarized-light" => Some(TEMA_SOLARIZED_LIGHT),
+        "github-light" => Some(TEMA_GITHUB_LIGHT),
         _ => None,
     }
 }
+
+/// Metadatos de un tema embebido para mostrar en el selector (`Ctrl+K
+/// Ctrl+T`, PLAN.md §7) sin tener que parsear el TOML solo para listar
+/// nombres. `tipo` es `"dark"` o `"light"`, igual que el campo `type` del
+/// propio archivo — duplicado aquí a propósito para poder filtrar la lista
+/// sin cargar cada tema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InfoTema {
+    pub id: &'static str,
+    pub nombre: &'static str,
+    pub tipo: &'static str,
+}
+
+/// Los 10 temas por defecto de PLAN.md §7 (Dracula primero, orden de la
+/// tabla) más los dos temas genéricos "oscuro"/"claro" que ya existían
+/// desde M0/M1 como fallback simple. El resto de temas *bonus* del plan
+/// (Gruvbox Light, GitHub Dark, familia Ayu) queda fuera de esta pieza.
+pub const TEMAS_EMBEBIDOS: &[InfoTema] = &[
+    InfoTema { id: "dracula", nombre: "Dracula", tipo: "dark" },
+    InfoTema { id: "monokai", nombre: "Monokai", tipo: "dark" },
+    InfoTema { id: "one-dark", nombre: "One Dark", tipo: "dark" },
+    InfoTema { id: "nord", nombre: "Nord", tipo: "dark" },
+    InfoTema { id: "gruvbox-dark", nombre: "Gruvbox Dark", tipo: "dark" },
+    InfoTema { id: "tokyo-night", nombre: "Tokyo Night", tipo: "dark" },
+    InfoTema { id: "catppuccin-mocha", nombre: "Catppuccin Mocha", tipo: "dark" },
+    InfoTema { id: "solarized-dark", nombre: "Solarized Dark", tipo: "dark" },
+    InfoTema { id: "solarized-light", nombre: "Solarized Light", tipo: "light" },
+    InfoTema { id: "github-light", nombre: "GitHub Light", tipo: "light" },
+    InfoTema { id: "oscuro", nombre: "Oscuro", tipo: "dark" },
+    InfoTema { id: "claro", nombre: "Claro", tipo: "light" },
+];
 
 /// Carga un tema por nombre: primero busca un archivo de usuario en
 /// `~/.config/tcode/themes/<nombre>.toml` (o el directorio portable en
@@ -197,14 +246,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn los_tres_temas_embebidos_parsean_y_tienen_colores_validos() {
-        for nombre in ["dracula", "oscuro", "claro"] {
-            let tema = cargar_tema(nombre).unwrap_or_else(|e| panic!("tema '{nombre}': {e}"));
+    fn todos_los_temas_embebidos_parsean_y_tienen_colores_validos() {
+        for info in TEMAS_EMBEBIDOS {
+            let tema = cargar_tema(info.id).unwrap_or_else(|e| panic!("tema '{}': {e}", info.id));
             assert!(!tema.name.is_empty());
-            tema.ui.background_rgb().unwrap();
-            tema.ui.foreground_rgb().unwrap();
-            tema.statusbar.background_rgb().unwrap();
-            tema.statusbar.foreground_rgb().unwrap();
+            tema.ui.background_rgb().unwrap_or_else(|e| panic!("tema '{}': {e}", info.id));
+            tema.ui.foreground_rgb().unwrap_or_else(|e| panic!("tema '{}': {e}", info.id));
+            tema.statusbar.background_rgb().unwrap_or_else(|e| panic!("tema '{}': {e}", info.id));
+            tema.statusbar.foreground_rgb().unwrap_or_else(|e| panic!("tema '{}': {e}", info.id));
+            assert_eq!(tema.tipo, info.tipo, "tipo declarado en {}.toml no coincide con InfoTema", info.id);
+        }
+    }
+
+    #[test]
+    fn los_ids_de_temas_embebidos_son_unicos_y_coinciden_con_tema_embebido() {
+        let mut ids: Vec<&str> = TEMAS_EMBEBIDOS.iter().map(|t| t.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), TEMAS_EMBEBIDOS.len(), "hay ids repetidos en TEMAS_EMBEBIDOS");
+        for info in TEMAS_EMBEBIDOS {
+            assert!(tema_embebido(info.id).is_some(), "'{}' está en TEMAS_EMBEBIDOS pero no en tema_embebido", info.id);
         }
     }
 

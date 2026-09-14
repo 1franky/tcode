@@ -1,0 +1,45 @@
+# Tema Solarized Dark — paleta balanceada por Ethan Schoonover
+# (https://ethanschoonover.com/solarized, PLAN.md §7, #8).
+name = "Solarized Dark"
+type = "dark"
+
+[ui]
+background         = "#002b36"
+foreground         = "#839496"
+cursor             = "#93a1a1"
+selection          = "#073642"
+line_number        = "#586e75"
+line_number_active = "#93a1a1"
+current_line       = "#073642"
+
+[statusbar]
+background     = "#00212b"
+foreground     = "#839496"
+modo_insertar  = "#859900"
+modo_seleccion = "#b58900"
+
+[syntax]
+keyword  = { fg = "#859900", style = "bold" }
+string   = "#2aa198"
+number   = "#d33682"
+comment  = { fg = "#586e75", style = "italic" }
+function = "#268bd2"
+type     = "#b58900"
+variable = "#839496"
+constant = "#d33682"
+operator = "#859900"
+
+[diagnostics]
+error   = "#dc322f"
+warning = "#b58900"
+info    = "#268bd2"
+hint    = "#2aa198"
+
+[git]
+added    = "#859900"
+modified = "#b58900"
+deleted  = "#dc322f"
+
+[search]
+coincidencia_actual = "#cb4b16"
+otras_coincidencias  = "#073642"
