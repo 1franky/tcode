@@ -244,7 +244,7 @@ async fn ejecutar(
     let mut panel_admin = EstadoPanelAdmin::nueva();
     let indice_atajos = tcode_config::indice_de(Seccion::Atajos);
     let indice_lenguajes = tcode_config::indice_de(Seccion::Lenguajes);
-    panel_admin.fijar_num_filas_atajos(1 + tcode_commands::comandos_disponibles().len());
+    panel_admin.fijar_num_filas_atajos(FILAS_ESPECIALES_ATAJOS + tcode_commands::comandos_disponibles().len());
     panel_admin.fijar_num_filas_lenguajes(Lenguaje::TODOS.len());
     panel_admin.fijar_opciones_externas(
         tcode_commands::comandos_disponibles()
@@ -458,7 +458,7 @@ async fn ejecutar(
                             ejecutar_accion_temas_admin(&mut estado);
                         }
                         KeyCode::Enter if estado.panel_admin.seccion_actual() == Seccion::Atajos => {
-                            iniciar_o_restablecer_todos_los_atajos(&mut estado, &mut resolvedor);
+                            ejecutar_fila_atajos(&mut estado, &mut resolvedor);
                         }
                         KeyCode::Backspace if estado.panel_admin.seccion_actual() == Seccion::Atajos => {
                             restablecer_atajo_seleccionado(&mut estado, &mut resolvedor);
@@ -1190,33 +1190,66 @@ fn alternar_lsp_lenguaje_seleccionado(estado: &mut EstadoApp) {
 /// a la fila seleccionada de la sección "Atajos" del panel de
 /// administración — `None` si la fila 0 (la acción especial "restablecer
 /// todos") está seleccionada, o si la sección actual no es "Atajos".
+/// La sección "Atajos" tiene 3 filas especiales antes de la lista de
+/// comandos (ver `filas_atajos` en `tcode-ui`): restablecer todos,
+/// exportar, importar.
+const FILAS_ESPECIALES_ATAJOS: usize = 3;
+
 fn comando_seleccionado_en_atajos(panel: &tcode_config::EstadoPanelAdmin) -> Option<&'static str> {
-    if panel.seccion_actual() != Seccion::Atajos || panel.campo() == 0 {
+    if panel.seccion_actual() != Seccion::Atajos || panel.campo() < FILAS_ESPECIALES_ATAJOS {
         return None;
     }
-    tcode_commands::comandos_disponibles().get(panel.campo() - 1).map(|c| c.id)
+    tcode_commands::comandos_disponibles().get(panel.campo() - FILAS_ESPECIALES_ATAJOS).map(|c| c.id)
 }
 
-/// `Enter` sobre una fila de "Atajos" (PLAN.md §5): la fila 0 es la
-/// acción especial "restablecer TODOS los atajos por defecto" (borra el
-/// `keymap.toml` de usuario); cualquier otra fila entra en modo captura
-/// para reasignar ESE comando en particular.
-fn iniciar_o_restablecer_todos_los_atajos(estado: &mut EstadoApp, resolvedor: &mut Resolvedor) {
-    if estado.panel_admin.campo() == 0 {
-        let _ = tcode_keymap::eliminar_override_usuario();
-        estado.keymap = tcode_keymap::keymap_por_defecto();
-        resolvedor.reemplazar_keymap(estado.keymap.clone());
-        estado.panel_admin.establecer_mensaje("Todos los atajos vuelven a su valor por defecto".to_string());
-    } else {
-        estado.panel_admin.iniciar_captura();
+/// `Enter` sobre una de las 3 filas especiales de "Atajos" (PLAN.md
+/// §5.1) — restablecer todos, exportar, importar — o sobre cualquier
+/// otra fila, que entra en modo captura para reasignar ESE comando en
+/// particular.
+fn ejecutar_fila_atajos(estado: &mut EstadoApp, resolvedor: &mut Resolvedor) {
+    match estado.panel_admin.campo() {
+        0 => {
+            let _ = tcode_keymap::eliminar_override_usuario();
+            estado.keymap = tcode_keymap::keymap_por_defecto();
+            resolvedor.reemplazar_keymap(estado.keymap.clone());
+            estado.panel_admin.establecer_mensaje("Todos los atajos vuelven a su valor por defecto".to_string());
+        }
+        1 => match estado.keymap.exportar() {
+            Ok(ruta) => estado.panel_admin.establecer_mensaje(format!("Exportado a {}", ruta.display())),
+            Err(e) => estado.panel_admin.establecer_mensaje(format!("No se pudo exportar: {e}")),
+        },
+        2 => importar_atajos(estado, resolvedor),
+        _ => estado.panel_admin.iniciar_captura(),
     }
+}
+
+/// Fila "Importar atajos desde archivo" (PLAN.md §5.1): busca el
+/// archivo fijo de `tcode_keymap::ruta_keymap_a_importar()` — mismo
+/// espíritu que "poner un archivo en la carpeta de temas" para
+/// importar un tema (PLAN.md §7) — y, si está, lo adopta como keymap
+/// activo en caliente. Si no hay ningún archivo esperando, avisa dónde
+/// tiene que dejarse en vez de fallar en silencio.
+fn importar_atajos(estado: &mut EstadoApp, resolvedor: &mut Resolvedor) {
+    let mensaje = match tcode_keymap::importar_keymap() {
+        Ok(tcode_keymap::ResultadoImportarKeymap::Importado { ruta, keymap }) => {
+            estado.keymap = keymap;
+            resolvedor.reemplazar_keymap(estado.keymap.clone());
+            format!("Importado desde {}", ruta.display())
+        }
+        Ok(tcode_keymap::ResultadoImportarKeymap::NoHabiaArchivo(ruta)) => {
+            format!("No hay nada para importar — dejá el archivo en {}", ruta.display())
+        }
+        Err(e) => format!("No se pudo importar: {e}"),
+    };
+    estado.panel_admin.establecer_mensaje(mensaje);
 }
 
 /// `Backspace` sobre un comando de "Atajos": lo restablece a lo que ese
 /// comando tiene en el keymap por defecto (PLAN.md §5: "Botón
 /// 'Restablecer valor por defecto' por atajo"), sin tocar el resto de
-/// las personalizaciones. Sobre la fila 0 ("restablecer todos") no hace
-/// nada — ya tiene su propio gesto con `Enter`.
+/// las personalizaciones. Sobre cualquiera de las 3 filas especiales
+/// (restablecer todos / exportar / importar) no hace nada — cada una ya
+/// tiene su propio gesto con `Enter`.
 fn restablecer_atajo_seleccionado(estado: &mut EstadoApp, resolvedor: &mut Resolvedor) {
     let Some(comando) = comando_seleccionado_en_atajos(&estado.panel_admin) else { return };
     estado.keymap = estado.keymap.restablecer_comando(comando);

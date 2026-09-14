@@ -15,7 +15,7 @@ pub use combinacion::{
     Direccion, Tecla,
 };
 pub use keymap::{
-    cargar, detectar_conflictos, eliminar_override_usuario, keymap_por_defecto, ruta_keymap_usuario, Conflicto,
-    Keymap,
+    cargar, detectar_conflictos, eliminar_override_usuario, importar_keymap, keymap_por_defecto,
+    ruta_keymap_a_importar, ruta_keymap_exportado, ruta_keymap_usuario, Conflicto, Keymap, ResultadoImportarKeymap,
 };
 pub use resolvedor::{Resolucion, Resolvedor};

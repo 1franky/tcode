@@ -184,15 +184,23 @@ fn filas_atajos<'a>(
     let central_activa = panel.foco() == FocoPanelAdmin::Central;
     let mut filas = Vec::new();
 
-    let fila_0_seleccionada = panel.campo() == 0 && central_activa;
-    let estilo_0 = if fila_0_seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
-    filas.push(
-        ListItem::new(Line::from(Span::styled("↺ Restablecer TODOS los atajos por defecto", estilo_0)))
-            .style(estilo_0),
-    );
+    // 3 filas especiales antes de la lista de comandos (PLAN.md §5.1):
+    // restablecer todos los atajos, exportar el keymap activo, e
+    // importar uno desde el archivo fijo que deja `Keymap::exportar`/
+    // `importar_keymap` (ver `app/main.rs`, que interpreta estas mismas
+    // posiciones de fila).
+    for (fila, texto) in [
+        (0, "↺ Restablecer TODOS los atajos por defecto"),
+        (1, "⇩ Exportar atajos a archivo"),
+        (2, "⇧ Importar atajos desde archivo"),
+    ] {
+        let seleccionada = panel.campo() == fila && central_activa;
+        let estilo = if seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
+        filas.push(ListItem::new(Line::from(Span::styled(texto, estilo))).style(estilo));
+    }
 
     for (idx, comando) in tcode_commands::comandos_disponibles().iter().enumerate() {
-        let fila = idx + 1;
+        let fila = idx + 3;
         let seleccionada = panel.campo() == fila && central_activa;
         let estilo_fila = if seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
 
