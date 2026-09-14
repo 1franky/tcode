@@ -37,16 +37,36 @@ impl Default for ConfigEditor {
     }
 }
 
+/// Corresponde a la sección "Interfaz" del panel de administración
+/// (PLAN.md §5.5). Los `statusbar_*` son los elementos "marcar/
+/// desmarcar" que menciona el plan — salvo la rama git, que todavía no
+/// existe como feature (no tiene sentido un toggle para algo que nunca
+/// se muestra); densidad de UI y mostrar/ocultar tabs/breadcrumbs quedan
+/// para cuando esos widgets existan.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ConfigInterfaz {
     pub tema: String,
+    pub mostrar_statusbar: bool,
+    pub statusbar_posicion_cursor: bool,
+    pub statusbar_codificacion: bool,
+    pub statusbar_eol: bool,
+    pub statusbar_lenguaje: bool,
+    pub statusbar_diagnosticos: bool,
+    pub statusbar_modo: bool,
 }
 
 impl Default for ConfigInterfaz {
     fn default() -> Self {
         Self {
             tema: TEMA_POR_DEFECTO.to_string(),
+            mostrar_statusbar: true,
+            statusbar_posicion_cursor: true,
+            statusbar_codificacion: true,
+            statusbar_eol: true,
+            statusbar_lenguaje: true,
+            statusbar_diagnosticos: true,
+            statusbar_modo: true,
         }
     }
 }
@@ -155,6 +175,13 @@ mod tests {
             },
             interfaz: ConfigInterfaz {
                 tema: "claro".into(),
+                mostrar_statusbar: false,
+                statusbar_posicion_cursor: false,
+                statusbar_codificacion: true,
+                statusbar_eol: false,
+                statusbar_lenguaje: true,
+                statusbar_diagnosticos: false,
+                statusbar_modo: true,
             },
             lenguajes: ConfigLenguajes {
                 lsp_deshabilitado: vec!["python".to_string()],

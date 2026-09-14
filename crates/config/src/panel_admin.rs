@@ -33,20 +33,20 @@ impl Seccion {
     /// cliente LSP (solo Python por ahora) o los lenguajes de
     /// tree-sitter.
     pub fn implementada(&self) -> bool {
-        matches!(self, Seccion::Editor | Seccion::Temas | Seccion::Atajos | Seccion::Lenguajes)
+        // Las 5 secciones de M4 (todas menos "Extensiones", fase 2) ya
+        // tienen contenido real. Este método se queda igual (siempre
+        // `true` por ahora) para cuando se agregue una sección nueva
+        // que todavía no lo tenga.
+        true
     }
 
     /// Resumen de qué va a traer una sección todavía no implementada
     /// (PLAN.md §5), para mostrar en el área central en vez de dejarla en
-    /// blanco.
+    /// blanco. Sin uso real por ahora (las 5 secciones ya están
+    /// implementadas), pero se mantiene para la próxima sección que
+    /// llegue sin contenido todavía.
     pub fn resumen_pendiente(&self) -> &'static str {
-        match self {
-            Seccion::Interfaz => {
-                "Próximamente: densidad de UI, mostrar/ocultar statusbar y \
-                 tabs, elegir qué se muestra en la barra de estado."
-            }
-            Seccion::Editor | Seccion::Temas | Seccion::Atajos | Seccion::Lenguajes => "",
-        }
+        ""
     }
 }
 
@@ -140,6 +140,75 @@ impl CampoTemas {
     }
 }
 
+/// Un campo editable de la sección "Interfaz" (PLAN.md §5.5) —
+/// corresponde 1 a 1 con `tcode_config::ConfigInterfaz`, salvo `tema`
+/// (que tiene su propia sección "Temas") y lo que todavía no existe
+/// como feature (densidad de UI, tabs, breadcrumbs, rama git en la
+/// statusbar).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CampoInterfaz {
+    MostrarStatusbar,
+    StatusbarPosicionCursor,
+    StatusbarCodificacion,
+    StatusbarEol,
+    StatusbarLenguaje,
+    StatusbarDiagnosticos,
+    StatusbarModo,
+}
+
+impl CampoInterfaz {
+    pub const TODOS: [CampoInterfaz; 7] = [
+        CampoInterfaz::MostrarStatusbar,
+        CampoInterfaz::StatusbarPosicionCursor,
+        CampoInterfaz::StatusbarCodificacion,
+        CampoInterfaz::StatusbarEol,
+        CampoInterfaz::StatusbarLenguaje,
+        CampoInterfaz::StatusbarDiagnosticos,
+        CampoInterfaz::StatusbarModo,
+    ];
+
+    pub fn nombre(&self) -> &'static str {
+        match self {
+            CampoInterfaz::MostrarStatusbar => "Mostrar barra de estado",
+            CampoInterfaz::StatusbarPosicionCursor => "Statusbar: posición del cursor",
+            CampoInterfaz::StatusbarCodificacion => "Statusbar: codificación",
+            CampoInterfaz::StatusbarEol => "Statusbar: fin de línea (EOL)",
+            CampoInterfaz::StatusbarLenguaje => "Statusbar: lenguaje detectado",
+            CampoInterfaz::StatusbarDiagnosticos => "Statusbar: resumen de diagnósticos LSP",
+            CampoInterfaz::StatusbarModo => "Statusbar: modo",
+        }
+    }
+
+    pub fn valor_actual(&self, config: &Config) -> String {
+        let activo = match self {
+            CampoInterfaz::MostrarStatusbar => config.interfaz.mostrar_statusbar,
+            CampoInterfaz::StatusbarPosicionCursor => config.interfaz.statusbar_posicion_cursor,
+            CampoInterfaz::StatusbarCodificacion => config.interfaz.statusbar_codificacion,
+            CampoInterfaz::StatusbarEol => config.interfaz.statusbar_eol,
+            CampoInterfaz::StatusbarLenguaje => config.interfaz.statusbar_lenguaje,
+            CampoInterfaz::StatusbarDiagnosticos => config.interfaz.statusbar_diagnosticos,
+            CampoInterfaz::StatusbarModo => config.interfaz.statusbar_modo,
+        };
+        etiqueta_bool(activo)
+    }
+
+    /// `Enter`/`←`/`→` sobre esta fila: todas las de "Interfaz" son
+    /// booleanas, así que solo alternan — a diferencia de `CampoEditor`,
+    /// no hace falta un `delta`.
+    pub fn aplicar(&self, config: &mut Config) {
+        let campo = match self {
+            CampoInterfaz::MostrarStatusbar => &mut config.interfaz.mostrar_statusbar,
+            CampoInterfaz::StatusbarPosicionCursor => &mut config.interfaz.statusbar_posicion_cursor,
+            CampoInterfaz::StatusbarCodificacion => &mut config.interfaz.statusbar_codificacion,
+            CampoInterfaz::StatusbarEol => &mut config.interfaz.statusbar_eol,
+            CampoInterfaz::StatusbarLenguaje => &mut config.interfaz.statusbar_lenguaje,
+            CampoInterfaz::StatusbarDiagnosticos => &mut config.interfaz.statusbar_diagnosticos,
+            CampoInterfaz::StatusbarModo => &mut config.interfaz.statusbar_modo,
+        };
+        *campo = !*campo;
+    }
+}
+
 /// Una fila que la búsqueda global del panel (`Ctrl+F`, PLAN.md §5) puede
 /// encontrar. Solo hay filas de las secciones "Editor" y "Temas" por
 /// ahora — las demás secciones todavía no tienen campos que buscar.
@@ -159,6 +228,7 @@ pub fn indice_de(seccion: Seccion) -> usize {
 fn opciones_buscables() -> Vec<OpcionBuscable> {
     let indice_editor = indice_de(Seccion::Editor);
     let indice_temas = indice_de(Seccion::Temas);
+    let indice_interfaz = indice_de(Seccion::Interfaz);
     CampoEditor::TODOS
         .iter()
         .enumerate()
@@ -168,6 +238,12 @@ fn opciones_buscables() -> Vec<OpcionBuscable> {
                 .iter()
                 .enumerate()
                 .map(|(campo, c)| OpcionBuscable { seccion: indice_temas, campo, nombre: c.nombre() }),
+        )
+        .chain(
+            CampoInterfaz::TODOS
+                .iter()
+                .enumerate()
+                .map(|(campo, c)| OpcionBuscable { seccion: indice_interfaz, campo, nombre: c.nombre() }),
         )
         .collect()
 }
@@ -385,7 +461,7 @@ impl EstadoPanelAdmin {
             Seccion::Temas => CampoTemas::TODOS.len(),
             Seccion::Atajos => self.num_filas_atajos,
             Seccion::Lenguajes => self.num_filas_lenguajes,
-            _ => 0,
+            Seccion::Interfaz => CampoInterfaz::TODOS.len(),
         }
     }
 
@@ -424,6 +500,14 @@ impl EstadoPanelAdmin {
     pub fn campo_temas_actual(&self) -> Option<CampoTemas> {
         if self.seccion_actual() == Seccion::Temas {
             CampoTemas::TODOS.get(self.campo).copied()
+        } else {
+            None
+        }
+    }
+
+    pub fn campo_interfaz_actual(&self) -> Option<CampoInterfaz> {
+        if self.seccion_actual() == Seccion::Interfaz {
+            CampoInterfaz::TODOS.get(self.campo).copied()
         } else {
             None
         }
@@ -568,7 +652,7 @@ mod tests {
     }
 
     #[test]
-    fn entrar_no_hace_nada_en_una_seccion_no_implementada() {
+    fn entrar_funciona_en_la_seccion_interfaz() {
         let mut panel = EstadoPanelAdmin::nueva();
         panel.abrir();
         for _ in 0..4 {
@@ -576,7 +660,19 @@ mod tests {
         }
         assert_eq!(panel.seccion_actual(), Seccion::Interfaz);
         panel.entrar();
-        assert_eq!(panel.foco(), FocoPanelAdmin::Barra);
+        assert_eq!(panel.foco(), FocoPanelAdmin::Central);
+        assert_eq!(panel.num_campos(), CampoInterfaz::TODOS.len());
+        assert_eq!(panel.campo_interfaz_actual(), Some(CampoInterfaz::MostrarStatusbar));
+    }
+
+    #[test]
+    fn campo_interfaz_alterna_booleano() {
+        let mut config = Config::default();
+        assert!(config.interfaz.mostrar_statusbar);
+        CampoInterfaz::MostrarStatusbar.aplicar(&mut config);
+        assert!(!config.interfaz.mostrar_statusbar);
+        CampoInterfaz::MostrarStatusbar.aplicar(&mut config);
+        assert!(config.interfaz.mostrar_statusbar);
     }
 
     #[test]
@@ -796,9 +892,10 @@ mod tests {
         panel.abrir();
         panel.abrir_busqueda();
         // Consulta vacía: coincide con todas las opciones buscables
-        // (Editor + Temas, únicas secciones con campos registrados).
+        // internas (Editor + Temas + Interfaz — las únicas secciones
+        // que este crate resuelve directo, sin opciones externas).
         let total = panel.resultados_busqueda().len();
-        assert_eq!(total, CampoEditor::TODOS.len() + CampoTemas::TODOS.len());
+        assert_eq!(total, CampoEditor::TODOS.len() + CampoTemas::TODOS.len() + CampoInterfaz::TODOS.len());
 
         for _ in 0..(total + 5) {
             panel.mover_campo_abajo();

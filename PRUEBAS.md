@@ -160,6 +160,17 @@ abajo, es donde más problemas aparecieron).
 - [ ] La búsqueda global del panel (`Ctrl+F`) encuentra los lenguajes por su nombre (probar "python", "rust") y salta a la fila correcta de "Lenguajes / LSP".
 - [ ] Sin `pyright` instalado (o con el `PATH` alterado para que no se encuentre): la fila de Python muestra "[no encontrado en el PATH]" resaltado, y el comando LSP simplemente no se lanza (sin romper nada) al abrir un `.py`.
 
+## M4 — Sección "Interfaz" del panel de administración
+
+- [ ] Dentro del panel (`Ctrl+K A`), la sección "Interfaz" ya NO dice "(próximamente)": lista 7 filas — "Mostrar barra de estado" y 6 elementos de la statusbar (posición del cursor, codificación, fin de línea, lenguaje detectado, resumen de diagnósticos LSP, modo), todas en "Sí" por defecto.
+- [ ] Desactivar (`Enter`/`←`/`→`) cualquiera de los 6 elementos de la statusbar: esa parte desaparece de la barra de estado real al cerrar el panel (probar "posición del cursor" — debe desaparecer "Ln X, Col Y" pero seguir viéndose el resto).
+- [ ] Desactivar "Mostrar barra de estado": la barra entera desaparece y el editor/tabla ocupa esa fila también (no queda una franja vacía) — confirmar en un archivo con más líneas que la pantalla que el scroll sigue funcionando bien con el área más alta.
+- [ ] Reactivar ambas cosas: la barra de estado vuelve a verse completa, con el elemento reactivado de nuevo presente.
+- [ ] Todos los cambios persisten en `config.toml` (sección `[interfaz]`) al instante, sin reiniciar.
+- [ ] Con un `.py` abierto y diagnósticos LSP activos (errores subrayados): desactivar "Statusbar: resumen de diagnósticos LSP" oculta el conteo de errores/avisos de la barra sin afectar el subrayado en el código.
+- [ ] Probar con dos paneles divididos (`Ctrl+\`): "Mostrar barra de estado" afecta a los dos por igual (es una sola configuración global, no por panel).
+- [ ] La búsqueda global del panel (`Ctrl+F`) encuentra estas filas por nombre (probar "modo", "barra de estado") y salta a la fila correcta.
+
 ## Distribución / instaladores
 
 - [ ] `install/linux.sh` en una máquina Linux limpia (o `install/windows.ps1` en Windows): instala sin pedir contraseña/administrador, y `tcode` queda disponible en cualquier carpeta después de abrir una terminal nueva.

@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
-use tcode_config::{CampoEditor, CampoTemas, Config, EstadoPanelAdmin, FocoPanelAdmin, Seccion};
+use tcode_config::{CampoEditor, CampoInterfaz, CampoTemas, Config, EstadoPanelAdmin, FocoPanelAdmin, Seccion};
 use tcode_keymap::{detectar_conflictos, formatear_atajo, Keymap};
 
 use crate::Paleta;
@@ -146,7 +146,19 @@ fn dibujar_central(
         }
         Seccion::Atajos => filas_atajos(panel, keymap, paleta, estilo_base),
         Seccion::Lenguajes => filas_lenguajes_lsp(panel, filas_lenguajes, paleta, estilo_base),
-        _ => Vec::new(),
+        Seccion::Interfaz => CampoInterfaz::TODOS
+            .iter()
+            .enumerate()
+            .map(|(idx, campo)| {
+                let seleccionado = idx == panel.campo() && panel.foco() == FocoPanelAdmin::Central;
+                let estilo = if seleccionado { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
+                // 41: el nombre más largo de CampoInterfaz mide 38
+                // ("Statusbar: resumen de diagnósticos LSP") — deja 3
+                // de margen antes del valor.
+                let texto = format!("{:<41}{}", campo.nombre(), campo.valor_actual(config));
+                ListItem::new(Line::from(Span::styled(texto, estilo))).style(estilo)
+            })
+            .collect(),
     };
     frame.render_widget(List::new(items).block(bloque), area);
 }

@@ -89,7 +89,15 @@ pub fn dibujar(
         area_total
     };
 
-    layout.dibujar(frame, area_principal, paleta, resaltador, estado_busqueda, config.editor.numeros_de_linea);
+    layout.dibujar(
+        frame,
+        area_principal,
+        paleta,
+        resaltador,
+        estado_busqueda,
+        config.editor.numeros_de_linea,
+        &config.interfaz,
+    );
     panel_busqueda::dibujar(frame, area_principal, estado_busqueda, paleta);
 
     if paleta_comandos.activa() {
