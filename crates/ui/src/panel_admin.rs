@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
-use tcode_config::{CampoEditor, Config, EstadoPanelAdmin, FocoPanelAdmin, Seccion};
+use tcode_config::{CampoEditor, CampoTemas, Config, EstadoPanelAdmin, FocoPanelAdmin, Seccion};
 
 use crate::Paleta;
 
@@ -26,7 +26,7 @@ pub fn dibujar(frame: &mut Frame, area_total: Rect, panel: &EstadoPanelAdmin, co
 
     let filas_derecha = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)])
         .split(columnas[1]);
 
     dibujar_barra(frame, columnas[0], panel, paleta);
@@ -34,7 +34,8 @@ pub fn dibujar(frame: &mut Frame, area_total: Rect, panel: &EstadoPanelAdmin, co
         FocoPanelAdmin::Busqueda => dibujar_busqueda(frame, filas_derecha[0], panel, paleta),
         _ => dibujar_central(frame, filas_derecha[0], panel, config, paleta),
     }
-    dibujar_pie(frame, filas_derecha[1], panel, paleta);
+    dibujar_mensaje(frame, filas_derecha[1], panel, paleta);
+    dibujar_pie(frame, filas_derecha[2], panel, paleta);
 }
 
 /// Barra lateral con las 5 secciones de PLAN.md §5 (todas visibles desde
@@ -74,20 +75,51 @@ fn dibujar_central(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, conf
         return;
     }
 
-    let items: Vec<ListItem> = CampoEditor::TODOS
-        .iter()
-        .enumerate()
-        .map(|(idx, campo)| {
-            let seleccionado = idx == panel.campo() && panel.foco() == FocoPanelAdmin::Central;
-            let estilo = if seleccionado { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
-            let mut texto = format!("{:<34}{}", campo.nombre(), campo.valor_actual(config));
-            if let Some(nota) = campo.nota() {
-                texto.push_str(&format!("   ({nota})"));
-            }
-            ListItem::new(Line::from(Span::styled(texto, estilo))).style(estilo)
-        })
-        .collect();
+    let items: Vec<ListItem> = match seccion {
+        Seccion::Editor => CampoEditor::TODOS
+            .iter()
+            .enumerate()
+            .map(|(idx, campo)| {
+                let seleccionado = idx == panel.campo() && panel.foco() == FocoPanelAdmin::Central;
+                let estilo = if seleccionado { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
+                let mut texto = format!("{:<34}{}", campo.nombre(), campo.valor_actual(config));
+                if let Some(nota) = campo.nota() {
+                    texto.push_str(&format!("   ({nota})"));
+                }
+                ListItem::new(Line::from(Span::styled(texto, estilo))).style(estilo)
+            })
+            .collect(),
+        Seccion::Temas => {
+            let activo = tcode_config::TEMAS_EMBEBIDOS.iter().find(|t| t.id == config.interfaz.tema);
+            CampoTemas::TODOS
+                .iter()
+                .enumerate()
+                .map(|(idx, campo)| {
+                    let seleccionado = idx == panel.campo() && panel.foco() == FocoPanelAdmin::Central;
+                    let estilo = if seleccionado { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
+                    let mut texto = campo.nombre().to_string();
+                    if *campo == CampoTemas::DuplicarActivo {
+                        if let Some(tema) = activo {
+                            texto = format!("{texto} ({})", tema.nombre);
+                        }
+                    }
+                    ListItem::new(Line::from(Span::styled(texto, estilo))).style(estilo)
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    };
     frame.render_widget(List::new(items).block(bloque), area);
+}
+
+/// Mensaje transitorio de la última acción disparada en el área central
+/// (por ahora, solo "Temas: Duplicar tema activo" lo deja) — una línea
+/// fija entre el área central y el pie, vacía cuando no hay nada que
+/// mostrar.
+fn dibujar_mensaje(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, paleta: &Paleta) {
+    let estilo = Style::default().bg(paleta.fondo).fg(paleta.diagnostico_info);
+    let texto = panel.mensaje().unwrap_or("");
+    frame.render_widget(Paragraph::new(format!(" {texto}")).style(estilo), area);
 }
 
 /// Búsqueda global de opciones (`Ctrl+F` dentro del panel, PLAN.md §5):
@@ -136,6 +168,9 @@ fn dibujar_busqueda(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, pal
 fn dibujar_pie(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, paleta: &Paleta) {
     let texto = match panel.foco() {
         FocoPanelAdmin::Barra => "↑↓ moverse · Enter/→ entrar a la sección · Ctrl+F buscar · Esc cerrar panel",
+        FocoPanelAdmin::Central if panel.seccion_actual() == Seccion::Temas => {
+            "↑↓ moverse · Enter ejecutar · Tab volver a secciones · Ctrl+F buscar · Esc volver"
+        }
         FocoPanelAdmin::Central => {
             "↑↓ moverse · Enter/←→ cambiar valor · Tab volver a secciones · Ctrl+F buscar · Esc volver"
         }

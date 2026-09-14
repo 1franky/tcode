@@ -33,7 +33,7 @@ impl Seccion {
     /// cliente LSP (solo Python por ahora) o los lenguajes de
     /// tree-sitter.
     pub fn implementada(&self) -> bool {
-        matches!(self, Seccion::Editor)
+        matches!(self, Seccion::Editor | Seccion::Temas)
     }
 
     /// Resumen de qué va a traer una sección todavía no implementada
@@ -46,11 +46,6 @@ impl Seccion {
                  detección de conflictos en tiempo real, exportar/importar \
                  keymap."
             }
-            Seccion::Temas => {
-                "Próximamente: editor visual de tema por token, duplicar un \
-                 tema base y editarlo como propio, importar/exportar. \
-                 Mientras tanto, elegir tema ya funciona con Ctrl+K Ctrl+T."
-            }
             Seccion::Lenguajes => {
                 "Próximamente: habilitar/deshabilitar LSPs por lenguaje, ver \
                  estado de conexión y logs en vivo, indicador de si el \
@@ -60,7 +55,7 @@ impl Seccion {
                 "Próximamente: densidad de UI, mostrar/ocultar statusbar y \
                  tabs, elegir qué se muestra en la barra de estado."
             }
-            Seccion::Editor => "",
+            Seccion::Editor | Seccion::Temas => "",
         }
     }
 }
@@ -134,21 +129,53 @@ fn etiqueta_bool(valor: bool) -> String {
     if valor { "Sí".to_string() } else { "No".to_string() }
 }
 
+/// Una fila de la sección "Temas": a diferencia de `CampoEditor`, no
+/// alterna un valor en el sitio — dispara una acción (`app` decide qué
+/// hacer, porque cruza a estado que este crate no conoce: abrir el
+/// selector de temas ya activo, o escribir un archivo en disco).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CampoTemas {
+    ElegirTema,
+    DuplicarActivo,
+}
+
+impl CampoTemas {
+    pub const TODOS: [CampoTemas; 2] = [CampoTemas::ElegirTema, CampoTemas::DuplicarActivo];
+
+    pub fn nombre(&self) -> &'static str {
+        match self {
+            CampoTemas::ElegirTema => "Elegir tema (con preview en vivo)",
+            CampoTemas::DuplicarActivo => "Duplicar tema activo para editar/exportar",
+        }
+    }
+}
+
 /// Una fila que la búsqueda global del panel (`Ctrl+F`, PLAN.md §5) puede
-/// encontrar. Solo hay filas de la sección "Editor" por ahora — las demás
-/// secciones todavía no tienen campos que buscar.
+/// encontrar. Solo hay filas de las secciones "Editor" y "Temas" por
+/// ahora — las demás secciones todavía no tienen campos que buscar.
 struct OpcionBuscable {
     seccion: usize,
     campo: usize,
     nombre: &'static str,
 }
 
+fn indice_de(seccion: Seccion) -> usize {
+    Seccion::TODAS.iter().position(|s| *s == seccion).expect("la sección buscada está en TODAS")
+}
+
 fn opciones_buscables() -> Vec<OpcionBuscable> {
-    let indice_editor = Seccion::TODAS.iter().position(|s| *s == Seccion::Editor).expect("Editor está en TODAS");
+    let indice_editor = indice_de(Seccion::Editor);
+    let indice_temas = indice_de(Seccion::Temas);
     CampoEditor::TODOS
         .iter()
         .enumerate()
         .map(|(campo, c)| OpcionBuscable { seccion: indice_editor, campo, nombre: c.nombre() })
+        .chain(
+            CampoTemas::TODOS
+                .iter()
+                .enumerate()
+                .map(|(campo, c)| OpcionBuscable { seccion: indice_temas, campo, nombre: c.nombre() }),
+        )
         .collect()
 }
 
@@ -187,11 +214,24 @@ pub struct EstadoPanelAdmin {
     foco: FocoPanelAdmin,
     campo: usize,
     busqueda: String,
+    /// Mensaje transitorio de la última acción disparada en el área
+    /// central (por ahora, solo "Temas: Duplicar tema activo" lo usa,
+    /// para confirmar dónde quedó el archivo — ver `establecer_mensaje`).
+    /// Se limpia solo al navegar a otro lado, no automáticamente con el
+    /// tiempo: no hay una noción de "frame" en este struct sin `ratatui`.
+    mensaje: Option<String>,
 }
 
 impl EstadoPanelAdmin {
     pub fn nueva() -> Self {
-        Self { activo: false, seccion: 0, foco: FocoPanelAdmin::Barra, campo: 0, busqueda: String::new() }
+        Self {
+            activo: false,
+            seccion: 0,
+            foco: FocoPanelAdmin::Barra,
+            campo: 0,
+            busqueda: String::new(),
+            mensaje: None,
+        }
     }
 
     pub fn activo(&self) -> bool {
@@ -208,6 +248,17 @@ impl EstadoPanelAdmin {
 
     pub fn busqueda(&self) -> &str {
         &self.busqueda
+    }
+
+    pub fn mensaje(&self) -> Option<&str> {
+        self.mensaje.as_deref()
+    }
+
+    /// `app` la llama tras ejecutar una acción de una fila (por ahora,
+    /// solo `CampoTemas::DuplicarActivo`) para dejar constancia de qué
+    /// pasó — dónde quedó el archivo, o el error si falló.
+    pub fn establecer_mensaje(&mut self, mensaje: String) {
+        self.mensaje = Some(mensaje);
     }
 
     pub fn seccion_actual(&self) -> Seccion {
@@ -227,6 +278,7 @@ impl EstadoPanelAdmin {
         self.foco = FocoPanelAdmin::Barra;
         self.campo = 0;
         self.busqueda.clear();
+        self.mensaje = None;
     }
 
     pub fn cerrar(&mut self) {
@@ -237,6 +289,7 @@ impl EstadoPanelAdmin {
         if self.seccion + 1 < Seccion::TODAS.len() {
             self.seccion += 1;
             self.campo = 0;
+            self.mensaje = None;
         }
     }
 
@@ -244,6 +297,7 @@ impl EstadoPanelAdmin {
         if self.seccion > 0 {
             self.seccion -= 1;
             self.campo = 0;
+            self.mensaje = None;
         }
     }
 
@@ -252,6 +306,7 @@ impl EstadoPanelAdmin {
     pub fn num_campos(&self) -> usize {
         match self.seccion_actual() {
             Seccion::Editor => CampoEditor::TODOS.len(),
+            Seccion::Temas => CampoTemas::TODOS.len(),
             _ => 0,
         }
     }
@@ -288,6 +343,14 @@ impl EstadoPanelAdmin {
         }
     }
 
+    pub fn campo_temas_actual(&self) -> Option<CampoTemas> {
+        if self.seccion_actual() == Seccion::Temas {
+            CampoTemas::TODOS.get(self.campo).copied()
+        } else {
+            None
+        }
+    }
+
     /// `Tab`: alterna entre la barra lateral y el área central. Desde la
     /// barra solo entra si la sección tiene contenido (ver `entrar`);
     /// desde la búsqueda no hace nada (cerrarla es cosa de `Esc`/`Enter`).
@@ -305,6 +368,7 @@ impl EstadoPanelAdmin {
         if self.foco == FocoPanelAdmin::Barra && self.seccion_actual().implementada() {
             self.foco = FocoPanelAdmin::Central;
             self.campo = 0;
+            self.mensaje = None;
         }
     }
 
@@ -322,6 +386,7 @@ impl EstadoPanelAdmin {
             }
             FocoPanelAdmin::Central => {
                 self.foco = FocoPanelAdmin::Barra;
+                self.mensaje = None;
                 true
             }
             FocoPanelAdmin::Barra => {
@@ -337,6 +402,7 @@ impl EstadoPanelAdmin {
         self.foco = FocoPanelAdmin::Busqueda;
         self.busqueda.clear();
         self.campo = 0;
+        self.mensaje = None;
     }
 
     pub fn escribir_busqueda(&mut self, c: char) {
@@ -434,6 +500,41 @@ mod tests {
         panel.entrar();
         assert_eq!(panel.foco(), FocoPanelAdmin::Central);
         assert_eq!(panel.campo(), 0);
+    }
+
+    #[test]
+    fn entrar_funciona_en_la_seccion_temas() {
+        let mut panel = EstadoPanelAdmin::nueva();
+        panel.abrir();
+        panel.mover_seccion_abajo();
+        assert_eq!(panel.seccion_actual(), Seccion::Temas);
+        panel.entrar();
+        assert_eq!(panel.foco(), FocoPanelAdmin::Central);
+        assert_eq!(panel.num_campos(), CampoTemas::TODOS.len());
+        assert_eq!(panel.campo_temas_actual(), Some(CampoTemas::ElegirTema));
+        panel.mover_campo_abajo();
+        assert_eq!(panel.campo_temas_actual(), Some(CampoTemas::DuplicarActivo));
+        // Fuera de la sección Temas no hay campo de temas que devolver,
+        // aunque el índice numérico coincida.
+        assert_eq!(panel.campo_editor_actual(), None);
+    }
+
+    #[test]
+    fn establecer_mensaje_se_limpia_al_navegar() {
+        let mut panel = EstadoPanelAdmin::nueva();
+        panel.abrir();
+        panel.mover_seccion_abajo();
+        panel.entrar();
+        panel.establecer_mensaje("Copia creada".to_string());
+        assert_eq!(panel.mensaje(), Some("Copia creada"));
+
+        panel.mover_campo_abajo();
+        // Moverse de fila no descarta el mensaje: sigue siendo relevante
+        // hasta que se cambie de sección o se vuelva a la barra.
+        assert_eq!(panel.mensaje(), Some("Copia creada"));
+
+        panel.escape();
+        assert_eq!(panel.mensaje(), None);
     }
 
     #[test]
@@ -545,10 +646,10 @@ mod tests {
         let mut panel = EstadoPanelAdmin::nueva();
         panel.abrir();
         panel.abrir_busqueda();
-        // Consulta vacía: coincide con las 4 opciones de Editor (único
-        // registro buscable por ahora).
+        // Consulta vacía: coincide con todas las opciones buscables
+        // (Editor + Temas, únicas secciones con campos registrados).
         let total = panel.resultados_busqueda().len();
-        assert_eq!(total, CampoEditor::TODOS.len());
+        assert_eq!(total, CampoEditor::TODOS.len() + CampoTemas::TODOS.len());
 
         for _ in 0..(total + 5) {
             panel.mover_campo_abajo();

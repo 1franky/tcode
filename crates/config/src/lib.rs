@@ -14,9 +14,10 @@ pub use config::{
     cargar, directorio_config, directorio_temas_usuario, guardar, recargar, ruta_config, Config,
     ConfigEditor, ConfigInterfaz,
 };
-pub use panel_admin::{CampoEditor, EstadoPanelAdmin, FocoPanelAdmin, ResultadoBusquedaAdmin, Seccion};
+pub use panel_admin::{CampoEditor, CampoTemas, EstadoPanelAdmin, FocoPanelAdmin, ResultadoBusquedaAdmin, Seccion};
 pub use selector::{EstadoSelectorTema, FiltroTipoTema};
 pub use tema::{
-    cargar_tema, tema_por_defecto, EstiloToken, InfoTema, Tema, TemaBusqueda, TemaDiagnosticos,
-    TemaGit, TemaSintaxis, TemaStatusbar, TemaUi, TEMAS_EMBEBIDOS, TEMA_POR_DEFECTO,
+    cargar_tema, duplicar_tema_para_editar, tema_por_defecto, EstiloToken, InfoTema,
+    ResultadoDuplicarTema, Tema, TemaBusqueda, TemaDiagnosticos, TemaGit, TemaSintaxis,
+    TemaStatusbar, TemaUi, TEMAS_EMBEBIDOS, TEMA_POR_DEFECTO,
 };
