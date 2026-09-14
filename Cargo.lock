@@ -857,6 +857,7 @@ dependencies = [
  "anyhow",
  "dirs",
  "serde",
+ "tcode-fuzzy",
  "toml",
 ]
 
@@ -931,6 +932,7 @@ dependencies = [
  "tcode-config",
  "tcode-core",
  "tcode-fs",
+ "tcode-keymap",
  "tcode-lsp",
  "tcode-syntax",
 ]

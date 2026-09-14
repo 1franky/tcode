@@ -1,0 +1,45 @@
+# Tema Catppuccin Mocha — pastel suave, variante más oscura de las cuatro
+# de Catppuccin (https://catppuccin.com, PLAN.md §7, #7).
+name = "Catppuccin Mocha"
+type = "dark"
+
+[ui]
+background         = "#1e1e2e"
+foreground         = "#cdd6f4"
+cursor             = "#f5e0dc"
+selection          = "#585b70"
+line_number        = "#6c7086"
+line_number_active = "#cdd6f4"
+current_line       = "#313244"
+
+[statusbar]
+background     = "#181825"
+foreground     = "#cdd6f4"
+modo_insertar  = "#a6e3a1"
+modo_seleccion = "#f9e2af"
+
+[syntax]
+keyword  = { fg = "#cba6f7", style = "bold" }
+string   = "#a6e3a1"
+number   = "#fab387"
+comment  = { fg = "#6c7086", style = "italic" }
+function = "#89b4fa"
+type     = "#f9e2af"
+variable = "#cdd6f4"
+constant = "#fab387"
+operator = "#94e2d5"
+
+[diagnostics]
+error   = "#f38ba8"
+warning = "#f9e2af"
+info    = "#89dceb"
+hint    = "#94e2d5"
+
+[git]
+added    = "#a6e3a1"
+modified = "#f9e2af"
+deleted  = "#f38ba8"
+
+[search]
+coincidencia_actual = "#fab387"
+otras_coincidencias  = "#585b70"

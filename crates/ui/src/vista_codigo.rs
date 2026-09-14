@@ -1,4 +1,4 @@
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -20,7 +20,10 @@ use crate::{EstadoUi, Paleta};
 /// carácter en video invertido, porque solo puede haber un cursor REAL de
 /// la terminal a la vez. `mostrar_cursor` posiciona ese cursor real en el
 /// principal — solo debe ser `true` para el panel activo cuando hay
-/// varios (`Ctrl+\`, PLAN.md §4).
+/// varios (`Ctrl+\`, PLAN.md §4). `mostrar_numeros` es
+/// `config.editor.numeros_de_linea` (panel de administración, PLAN.md §5
+/// M4): reserva un gutter angosto a la izquierda con el número de cada
+/// línea visible, la actual resaltada con un color distinto.
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -34,14 +37,17 @@ pub fn dibujar(
     diagnosticos: &[DiagnosticoSimple],
     coincidencias_busqueda: &[Coincidencia],
     indice_coincidencia_actual: Option<usize>,
+    mostrar_numeros: bool,
 ) {
+    let lineas = editor.buffer().lineas_texto();
+    let (area_gutter, area) = dividir_gutter(area, lineas.len(), mostrar_numeros);
+
     let alto_visible = area.height as usize;
     let ancho_visible = area.width as usize;
     let cursor = editor.cursor();
     let cursores = editor.cursores();
     ajustar_scroll(estado, cursor.linea, alto_visible);
 
-    let lineas = editor.buffer().lineas_texto();
     let tokens = calcular_tokens(editor, resaltador, ruta);
     let lineas_con_cursor: Vec<usize> = cursores.iter().map(|c| c.cursor.linea).collect();
 
@@ -138,6 +144,10 @@ pub fn dibujar(
         area,
     );
 
+    if let Some(area_gutter) = area_gutter {
+        dibujar_gutter(frame, area_gutter, estado.scroll_vertical, alto_visible, lineas.len(), cursor.linea, paleta);
+    }
+
     if mostrar_cursor {
         let columna = area.x + cursor.columna as u16;
         let fila = area.y + (cursor.linea - estado.scroll_vertical) as u16;
@@ -167,6 +177,58 @@ fn color_severidad(paleta: &Paleta, severidad: Severidad) -> ratatui::style::Col
         Severidad::Informacion => paleta.diagnostico_info,
         Severidad::Sugerencia => paleta.diagnostico_sugerencia,
     }
+}
+
+/// Reparte `area` entre el gutter de números de línea (ancho fijo, según
+/// la cantidad de dígitos de la última línea del archivo) y el área de
+/// código en sí. Si `mostrar_numeros` es `false`, o la ventana es
+/// demasiado angosta para reservarle aunque sea 3 columnas al gutter (2
+/// dígitos + 1 espacio de separación), no hay gutter: se devuelve `(None,
+/// area)` sin recortar nada, priorizando el código sobre los números.
+fn dividir_gutter(area: Rect, total_lineas: usize, mostrar_numeros: bool) -> (Option<Rect>, Rect) {
+    if !mostrar_numeros {
+        return (None, area);
+    }
+    let ancho_numero = total_lineas.max(1).to_string().len().max(2) as u16;
+    let ancho_gutter = ancho_numero + 1;
+    if area.width <= ancho_gutter {
+        return (None, area);
+    }
+    let partes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(ancho_gutter), Constraint::Min(1)])
+        .split(area);
+    (Some(partes[0]), partes[1])
+}
+
+/// Dibuja los números de las líneas visibles (mismo rango de scroll que
+/// el código, `scroll_vertical..scroll_vertical + alto_visible`),
+/// alineados a la derecha con un espacio de separación antes del código;
+/// las filas que quedan más allá del final del archivo (ventana más alta
+/// que el archivo) se dejan en blanco en vez de mostrar números
+/// inexistentes.
+#[allow(clippy::too_many_arguments)]
+fn dibujar_gutter(
+    frame: &mut Frame,
+    area: Rect,
+    scroll_vertical: usize,
+    alto_visible: usize,
+    total_lineas: usize,
+    linea_cursor: usize,
+    paleta: &Paleta,
+) {
+    let ancho_numero = area.width.saturating_sub(1) as usize;
+    let filas: Vec<Line> = (scroll_vertical..scroll_vertical + alto_visible)
+        .map(|idx| {
+            if idx >= total_lineas {
+                return Line::from(Span::styled(" ".repeat(area.width as usize), Style::default().bg(paleta.fondo)));
+            }
+            let color = if idx == linea_cursor { paleta.numero_linea_activo } else { paleta.numero_linea };
+            let texto = format!("{:>ancho$} ", idx + 1, ancho = ancho_numero);
+            Line::from(Span::styled(texto, Style::default().fg(color).bg(paleta.fondo)))
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(filas), area);
 }
 
 /// Resalta el archivo completo si su extensión corresponde a uno de los 5

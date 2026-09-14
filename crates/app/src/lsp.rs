@@ -16,6 +16,7 @@ use lsp_types::{
     ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, InitializedParams,
     TextDocumentContentChangeEvent, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
 };
+use tcode_config::Config;
 use tcode_lsp::{Cliente, MensajeEntrante};
 use tcode_syntax::Lenguaje;
 use tcode_ui::Layout as PanelLayout;
@@ -49,16 +50,21 @@ impl EstadoLsp {
         Self::default()
     }
 
-    /// Al cambiar de archivo activo (abrir uno nuevo, cambiar de panel):
-    /// si el lenguaje detectado tiene un LSP configurado y es distinto
-    /// del que ya está corriendo, cierra la sesión vieja y arranca una
-    /// nueva. Si el nuevo archivo no tiene lenguaje con LSP, o el server
-    /// configurado no se pudo lanzar (no está instalado), simplemente no
-    /// queda sesión activa — el editor sigue funcionando igual, sin LSP.
-    pub async fn actualizar_para_archivo(&mut self, ruta: &str, contenido: &str) {
+    /// Al cambiar de archivo activo (abrir uno nuevo, cambiar de panel) O
+    /// al habilitar/deshabilitar el LSP de un lenguaje desde el panel de
+    /// administración (sección "Lenguajes / LSP", PLAN.md §5.3, sin
+    /// cambiar de archivo): si el lenguaje EFECTIVO (`None` si está
+    /// deshabilitado en `config`, aunque el archivo sí tenga ese
+    /// lenguaje) es distinto del que ya está corriendo, cierra la sesión
+    /// vieja y arranca una nueva. Si el nuevo archivo no tiene lenguaje
+    /// con LSP (o está deshabilitado, o el server configurado no se pudo
+    /// lanzar — no está instalado), simplemente no queda sesión activa —
+    /// el editor sigue funcionando igual, sin LSP.
+    pub async fn actualizar_para_archivo(&mut self, ruta: &str, contenido: &str, config: &Config) {
         let lenguaje = Lenguaje::detectar_por_extension(ruta);
+        let lenguaje_efectivo = lenguaje.filter(|l| config.lenguajes.lsp_habilitado(l.id()));
 
-        let necesita_relanzar = match (&self.sesion, lenguaje) {
+        let necesita_relanzar = match (&self.sesion, lenguaje_efectivo) {
             (Some(sesion), Some(l)) => sesion.lenguaje != l,
             (Some(_), None) | (None, Some(_)) => true,
             (None, None) => false,
@@ -71,7 +77,7 @@ impl EstadoLsp {
             sesion.cliente.cerrar().await;
         }
 
-        let Some(lenguaje) = lenguaje else { return };
+        let Some(lenguaje) = lenguaje_efectivo else { return };
         let Some((comando, args)) = tcode_lsp::comando_para(lenguaje) else { return };
         let Ok(uri) = uri_de_archivo(Path::new(ruta)) else { return };
         let Ok(mut cliente) = Cliente::lanzar(comando, args).await else { return };
@@ -121,7 +127,7 @@ impl EstadoLsp {
                                 DidOpenTextDocumentParams {
                                     text_document: TextDocumentItem {
                                         uri: sesion.uri.clone(),
-                                        language_id: id_lenguaje_lsp(sesion.lenguaje).to_string(),
+                                        language_id: sesion.lenguaje.id().to_string(),
                                         version: 1,
                                         text: sesion.ultimo_texto_enviado.clone(),
                                     },
@@ -169,6 +175,25 @@ impl EstadoLsp {
         }
     }
 
+    /// El lenguaje de la sesión LSP activa, si hay una — usado por la
+    /// sección "Lenguajes / LSP" del panel de administración para saber
+    /// a cuál de sus filas corresponde el estado en vivo (PLAN.md §5.3:
+    /// "ver estado conectado/error").
+    pub fn lenguaje_activo(&self) -> Option<Lenguaje> {
+        self.sesion.as_ref().map(|s| s.lenguaje)
+    }
+
+    /// Texto legible en español del estado de la sesión activa —
+    /// `None` si no hay ninguna (el panel muestra "Inactivo" en ese
+    /// caso, decidido ahí en vez de acá para no acoplar este módulo a
+    /// cómo se ve la fila).
+    pub fn estado_texto(&self) -> Option<&'static str> {
+        self.sesion.as_ref().map(|s| match s.fase {
+            Fase::Iniciando { .. } => "Iniciando…",
+            Fase::Listo { .. } => "Conectado",
+        })
+    }
+
     /// Cierra la sesión LSP activa, si hay una (al salir de tcode).
     pub async fn cerrar(self) {
         if let Some(sesion) = self.sesion {
@@ -187,15 +212,3 @@ fn uri_de_archivo(ruta: &Path) -> Result<Uri> {
     format!("file://{texto}").parse::<Uri>().map_err(|e| anyhow::anyhow!("ruta no convertible a URI: {e}"))
 }
 
-/// `languageId` que exige LSP en `TextDocumentItem` — identifica el
-/// lenguaje ante el servidor, distinto del nombre que muestra la
-/// statusbar.
-fn id_lenguaje_lsp(lenguaje: Lenguaje) -> &'static str {
-    match lenguaje {
-        Lenguaje::Python => "python",
-        Lenguaje::Rust => "rust",
-        Lenguaje::JavaScript => "javascript",
-        Lenguaje::Go => "go",
-        Lenguaje::Markdown => "markdown",
-    }
-}

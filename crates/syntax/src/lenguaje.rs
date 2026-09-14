@@ -12,6 +12,28 @@ pub enum Lenguaje {
 }
 
 impl Lenguaje {
+    /// Los 5 lenguajes de M1, en el mismo orden que PLAN.md §11 — usado
+    /// por la sección "Lenguajes / LSP" del panel de administración
+    /// (PLAN.md §5.3) para listarlos todos sin tener que enumerarlos de
+    /// nuevo a mano en `app`.
+    pub const TODOS: [Lenguaje; 5] =
+        [Lenguaje::Rust, Lenguaje::Python, Lenguaje::JavaScript, Lenguaje::Go, Lenguaje::Markdown];
+
+    /// Identificador estable en minúsculas, para usar como clave de
+    /// almacenamiento (`config.toml`, sección "Lenguajes / LSP") en vez
+    /// de depender del nombre mostrado (`nombre_mostrado`), que es texto
+    /// para humanos y podría cambiar de redacción sin que eso deba
+    /// invalidar una configuración ya guardada.
+    pub fn id(&self) -> &'static str {
+        match self {
+            Lenguaje::Rust => "rust",
+            Lenguaje::Python => "python",
+            Lenguaje::JavaScript => "javascript",
+            Lenguaje::Go => "go",
+            Lenguaje::Markdown => "markdown",
+        }
+    }
+
     /// Detecta el lenguaje por la extensión del archivo. `None` si no es
     /// uno de los 5 lenguajes con resaltado en M1 (el texto sigue
     /// mostrándose normalmente, solo que sin colorear).
@@ -66,6 +88,14 @@ mod tests {
         assert_eq!(Lenguaje::detectar_por_extension("componente.jsx"), Some(Lenguaje::JavaScript));
         assert_eq!(Lenguaje::detectar_por_extension("main.go"), Some(Lenguaje::Go));
         assert_eq!(Lenguaje::detectar_por_extension("README.md"), Some(Lenguaje::Markdown));
+    }
+
+    #[test]
+    fn todos_tiene_un_id_unico_por_lenguaje() {
+        let mut ids: Vec<&str> = Lenguaje::TODOS.iter().map(|l| l.id()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), Lenguaje::TODOS.len());
     }
 
     #[test]

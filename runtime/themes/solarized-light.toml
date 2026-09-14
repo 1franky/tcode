@@ -1,0 +1,45 @@
+# Tema Solarized Light — versión clara de Solarized, ideal para entornos
+# muy iluminados (https://ethanschoonover.com/solarized, PLAN.md §7, #9).
+name = "Solarized Light"
+type = "light"
+
+[ui]
+background         = "#fdf6e3"
+foreground         = "#657b83"
+cursor             = "#586e75"
+selection          = "#eee8d5"
+line_number        = "#93a1a1"
+line_number_active = "#586e75"
+current_line       = "#eee8d5"
+
+[statusbar]
+background     = "#eee8d5"
+foreground     = "#657b83"
+modo_insertar  = "#859900"
+modo_seleccion = "#b58900"
+
+[syntax]
+keyword  = { fg = "#859900", style = "bold" }
+string   = "#2aa198"
+number   = "#d33682"
+comment  = { fg = "#93a1a1", style = "italic" }
+function = "#268bd2"
+type     = "#b58900"
+variable = "#657b83"
+constant = "#d33682"
+operator = "#859900"
+
+[diagnostics]
+error   = "#dc322f"
+warning = "#b58900"
+info    = "#268bd2"
+hint    = "#2aa198"
+
+[git]
+added    = "#859900"
+modified = "#b58900"
+deleted  = "#dc322f"
+
+[search]
+coincidencia_actual = "#cb4b16"
+otras_coincidencias  = "#eee8d5"

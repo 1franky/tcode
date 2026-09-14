@@ -1,6 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Rect};
 use ratatui::Frame;
 
+use tcode_config::ConfigInterfaz;
 use tcode_core::{delimitador_por_extension, Editor, EstadoBusqueda, EstadoCsv};
 use tcode_lsp::DiagnosticoSimple;
 use tcode_syntax::{Lenguaje, Resaltador};
@@ -287,6 +288,7 @@ impl Layout {
     /// Dibuja el árbol de paneles completo dentro de `area`, recursivo:
     /// cada división reparte el espacio 50/50 entre sus dos sub-árboles.
     /// Solo el panel activo recibe el cursor real de la terminal.
+    #[allow(clippy::too_many_arguments)]
     pub fn dibujar(
         &mut self,
         frame: &mut Frame,
@@ -294,10 +296,23 @@ impl Layout {
         paleta: &Paleta,
         resaltador: &mut Resaltador,
         estado_busqueda: &EstadoBusqueda,
+        mostrar_numeros: bool,
+        interfaz: &ConfigInterfaz,
     ) {
         let activo = self.activo;
         let mut indice_actual = 0;
-        dibujar_panel(frame, area, &mut self.raiz, activo, &mut indice_actual, paleta, resaltador, estado_busqueda);
+        dibujar_panel(
+            frame,
+            area,
+            &mut self.raiz,
+            activo,
+            &mut indice_actual,
+            paleta,
+            resaltador,
+            estado_busqueda,
+            mostrar_numeros,
+            interfaz,
+        );
     }
 }
 
@@ -311,16 +326,28 @@ fn dibujar_panel(
     paleta: &Paleta,
     resaltador: &mut Resaltador,
     estado_busqueda: &EstadoBusqueda,
+    mostrar_numeros: bool,
+    interfaz: &ConfigInterfaz,
 ) {
     match panel {
         Panel::Hoja(panel_editor) => {
             let es_activo = *indice_actual == activo;
             *indice_actual += 1;
 
-            let partes = ratatui::layout::Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(1)])
-                .split(area);
+            // "Mostrar barra de estado" (PLAN.md §5.5, M4): si está
+            // apagado, el panel de código/tabla usa el área completa —
+            // no se reserva ninguna fila para la statusbar ni se la
+            // dibuja.
+            let (area_contenido, area_statusbar) = if interfaz.mostrar_statusbar {
+                let partes = ratatui::layout::Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(1), Constraint::Length(1)])
+                    .split(area);
+                (partes[0], Some(partes[1]))
+            } else {
+                (area, None)
+            };
+            let partes = [area_contenido];
 
             // La búsqueda opera solo sobre el buffer del panel activo: los
             // demás paneles no reciben coincidencias que resaltar.
@@ -338,14 +365,17 @@ fn dibujar_panel(
             if panel_editor.es_csv() && panel_editor.modo_csv == ModoCsv::Tabla {
                 let tabla = panel_editor.tabla_csv();
                 vista_csv::dibujar(frame, partes[0], &tabla, &panel_editor.estado_csv, paleta, mostrar_cursor);
-                statusbar::dibujar(
-                    frame,
-                    partes[1],
-                    &panel_editor.editor,
-                    &panel_editor.ruta_mostrada,
-                    paleta,
-                    &panel_editor.diagnosticos,
-                );
+                if let Some(area_statusbar) = area_statusbar {
+                    statusbar::dibujar(
+                        frame,
+                        area_statusbar,
+                        &panel_editor.editor,
+                        &panel_editor.ruta_mostrada,
+                        paleta,
+                        &panel_editor.diagnosticos,
+                        interfaz,
+                    );
+                }
                 return;
             }
 
@@ -365,6 +395,7 @@ fn dibujar_panel(
                         &panel_editor.diagnosticos,
                         coincidencias,
                         indice_coincidencia,
+                        mostrar_numeros,
                     );
                 }
                 ModoMarkdown::Dividido => {
@@ -384,6 +415,7 @@ fn dibujar_panel(
                         &panel_editor.diagnosticos,
                         coincidencias,
                         indice_coincidencia,
+                        mostrar_numeros,
                     );
                     vista_markdown::dibujar(
                         frame,
@@ -407,14 +439,17 @@ fn dibujar_panel(
                     );
                 }
             }
-            statusbar::dibujar(
-                frame,
-                partes[1],
-                &panel_editor.editor,
-                &panel_editor.ruta_mostrada,
-                paleta,
-                &panel_editor.diagnosticos,
-            );
+            if let Some(area_statusbar) = area_statusbar {
+                statusbar::dibujar(
+                    frame,
+                    area_statusbar,
+                    &panel_editor.editor,
+                    &panel_editor.ruta_mostrada,
+                    paleta,
+                    &panel_editor.diagnosticos,
+                    interfaz,
+                );
+            }
         }
         Panel::Division { direccion, primero, segundo } => {
             // Ojo: un split "vertical" (PLAN.md §4) reparte el ANCHO —
@@ -428,8 +463,14 @@ fn dibujar_panel(
                 .direction(direccion_ratatui)
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                 .split(area);
-            dibujar_panel(frame, partes[0], primero, activo, indice_actual, paleta, resaltador, estado_busqueda);
-            dibujar_panel(frame, partes[1], segundo, activo, indice_actual, paleta, resaltador, estado_busqueda);
+            dibujar_panel(
+                frame, partes[0], primero, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
+                interfaz,
+            );
+            dibujar_panel(
+                frame, partes[1], segundo, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
+                interfaz,
+            );
         }
     }
 }

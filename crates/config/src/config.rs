@@ -14,6 +14,7 @@ use crate::tema::TEMA_POR_DEFECTO;
 pub struct Config {
     pub editor: ConfigEditor,
     pub interfaz: ConfigInterfaz,
+    pub lenguajes: ConfigLenguajes,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -36,16 +37,66 @@ impl Default for ConfigEditor {
     }
 }
 
+/// Corresponde a la sección "Interfaz" del panel de administración
+/// (PLAN.md §5.5). Los `statusbar_*` son los elementos "marcar/
+/// desmarcar" que menciona el plan — salvo la rama git, que todavía no
+/// existe como feature (no tiene sentido un toggle para algo que nunca
+/// se muestra); densidad de UI y mostrar/ocultar tabs/breadcrumbs quedan
+/// para cuando esos widgets existan.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ConfigInterfaz {
     pub tema: String,
+    pub mostrar_statusbar: bool,
+    pub statusbar_posicion_cursor: bool,
+    pub statusbar_codificacion: bool,
+    pub statusbar_eol: bool,
+    pub statusbar_lenguaje: bool,
+    pub statusbar_diagnosticos: bool,
+    pub statusbar_modo: bool,
 }
 
 impl Default for ConfigInterfaz {
     fn default() -> Self {
         Self {
             tema: TEMA_POR_DEFECTO.to_string(),
+            mostrar_statusbar: true,
+            statusbar_posicion_cursor: true,
+            statusbar_codificacion: true,
+            statusbar_eol: true,
+            statusbar_lenguaje: true,
+            statusbar_diagnosticos: true,
+            statusbar_modo: true,
+        }
+    }
+}
+
+/// Corresponde a la sección "Lenguajes / LSP" del panel de
+/// administración (PLAN.md §5.3). Por ahora solo guarda qué lenguajes
+/// tienen su LSP deshabilitado a propósito — configurar comando,
+/// argumentos y variables de entorno por lenguaje queda para una pieza
+/// aparte de M4.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Default)]
+#[serde(default)]
+pub struct ConfigLenguajes {
+    /// Ids de lenguaje (`tcode_syntax::Lenguaje::id`, ej. `"python"`)
+    /// cuyo LSP no se lanza aunque haya uno configurado, aun si el
+    /// archivo activo es de ese lenguaje.
+    pub lsp_deshabilitado: Vec<String>,
+}
+
+impl ConfigLenguajes {
+    pub fn lsp_habilitado(&self, id_lenguaje: &str) -> bool {
+        !self.lsp_deshabilitado.iter().any(|l| l == id_lenguaje)
+    }
+
+    /// Habilita el LSP de `id_lenguaje` si estaba deshabilitado, o
+    /// viceversa.
+    pub fn alternar_lsp(&mut self, id_lenguaje: &str) {
+        if let Some(pos) = self.lsp_deshabilitado.iter().position(|l| l == id_lenguaje) {
+            self.lsp_deshabilitado.remove(pos);
+        } else {
+            self.lsp_deshabilitado.push(id_lenguaje.to_string());
         }
     }
 }
@@ -124,6 +175,16 @@ mod tests {
             },
             interfaz: ConfigInterfaz {
                 tema: "claro".into(),
+                mostrar_statusbar: false,
+                statusbar_posicion_cursor: false,
+                statusbar_codificacion: true,
+                statusbar_eol: false,
+                statusbar_lenguaje: true,
+                statusbar_diagnosticos: false,
+                statusbar_modo: true,
+            },
+            lenguajes: ConfigLenguajes {
+                lsp_deshabilitado: vec!["python".to_string()],
             },
         };
         let texto = toml::to_string_pretty(&original).unwrap();
@@ -138,5 +199,22 @@ mod tests {
         let config: Config = toml::from_str("[interfaz]\ntema = \"claro\"\n").unwrap();
         assert_eq!(config.interfaz.tema, "claro");
         assert_eq!(config.editor.tamano_tabulacion, 4);
+    }
+
+    #[test]
+    fn todos_los_lenguajes_empiezan_habilitados() {
+        let lenguajes = ConfigLenguajes::default();
+        assert!(lenguajes.lsp_habilitado("python"));
+    }
+
+    #[test]
+    fn alternar_lsp_deshabilita_y_vuelve_a_habilitar() {
+        let mut lenguajes = ConfigLenguajes::default();
+        lenguajes.alternar_lsp("python");
+        assert!(!lenguajes.lsp_habilitado("python"));
+        assert!(lenguajes.lsp_habilitado("rust")); // no afecta a otros lenguajes
+
+        lenguajes.alternar_lsp("python");
+        assert!(lenguajes.lsp_habilitado("python"));
     }
 }
