@@ -29,6 +29,13 @@
 "Shift+Tab"     = "editor.desindentar"
 "Ctrl+K Ctrl+L" = "config.recargar"
 "Ctrl+K Ctrl+T" = "tema.seleccionar"
+"Ctrl+,"        = "admin.abrir_panel"
+# Alternativa: muchos terminales clásicos no le asignan ningún código de
+# control a Ctrl+<símbolo> salvo un puñado de casos especiales (`Ctrl+\`,
+# `Ctrl+[`, etc. — ver los comentarios de esos atajos más abajo); la coma
+# no es uno de ellos, así que `Ctrl+,` puede llegar igual que una `,`
+# suelta, sin modificador. `Ctrl+K A` ("Admin") no depende de eso.
+"Ctrl+K A"      = "admin.abrir_panel"
 "Ctrl+B"        = "panel.alternar_lateral"
 "Esc"           = "explorador.enfocar_editor"
 "Ctrl+Shift+P"  = "paleta.comandos"

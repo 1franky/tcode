@@ -33,7 +33,7 @@ use ratatui::Terminal;
 use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
-use tcode_config::{Config, EstadoSelectorTema};
+use tcode_config::{Config, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin};
 use tcode_core::{analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda};
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
@@ -204,6 +204,7 @@ struct EstadoApp {
     buscador_archivos: BuscadorArchivos,
     estado_busqueda: EstadoBusqueda,
     selector_tema: EstadoSelectorTema,
+    panel_admin: EstadoPanelAdmin,
     lsp: lsp::EstadoLsp,
 }
 
@@ -236,6 +237,7 @@ async fn ejecutar(
         buscador_archivos: BuscadorArchivos::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
         estado_busqueda: EstadoBusqueda::nueva(),
         selector_tema: EstadoSelectorTema::nueva(),
+        panel_admin: EstadoPanelAdmin::nueva(),
         lsp: lsp::EstadoLsp::nuevo(),
     };
 
@@ -265,6 +267,8 @@ async fn ejecutar(
                 &estado.buscador_archivos,
                 &estado.estado_busqueda,
                 &estado.selector_tema,
+                &estado.panel_admin,
+                &estado.config,
             )
         })?;
 
@@ -284,6 +288,73 @@ async fn ejecutar(
                 continue;
             }
         };
+
+        // El panel de administración (`Ctrl+,`, PLAN.md §5) es una vista
+        // aparte que también captura el teclado por completo mientras
+        // está abierta, con su propia navegación de tres niveles (barra
+        // lateral de secciones, área central de la sección actual,
+        // búsqueda global de opciones) en vez de encajar en ningún otro
+        // bloque modal de acá abajo.
+        if estado.panel_admin.activo() {
+            estado.confirmar_salida = false;
+            match estado.panel_admin.foco() {
+                FocoPanelAdmin::Barra => match key.code {
+                    KeyCode::Esc => {
+                        estado.panel_admin.escape();
+                    }
+                    KeyCode::Up => estado.panel_admin.mover_seccion_arriba(),
+                    KeyCode::Down => estado.panel_admin.mover_seccion_abajo(),
+                    KeyCode::Enter | KeyCode::Right => estado.panel_admin.entrar(),
+                    KeyCode::Tab => estado.panel_admin.alternar_foco(),
+                    KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        estado.panel_admin.abrir_busqueda()
+                    }
+                    _ => {}
+                },
+                FocoPanelAdmin::Central => match key.code {
+                    KeyCode::Esc => {
+                        estado.panel_admin.escape();
+                    }
+                    KeyCode::Up => estado.panel_admin.mover_campo_arriba(),
+                    KeyCode::Down => estado.panel_admin.mover_campo_abajo(),
+                    KeyCode::Tab => estado.panel_admin.alternar_foco(),
+                    KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        estado.panel_admin.abrir_busqueda()
+                    }
+                    // `Ctrl+S` dentro del panel (PLAN.md §5): cada cambio
+                    // ya se aplica y persiste al instante (ver el brazo
+                    // de `Enter`/`←`/`→` de abajo) — este atajo es
+                    // redundante a propósito, para que exista igual el
+                    // gesto de "guardar" que describe el plan, sin
+                    // arriesgar perder cambios si alguien lo espera.
+                    KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        let _ = tcode_config::guardar(&estado.config);
+                    }
+                    KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
+                        if let Some(campo) = estado.panel_admin.campo_editor_actual() {
+                            let delta = if key.code == KeyCode::Left { -1 } else { 1 };
+                            campo.aplicar(&mut estado.config, delta);
+                            let _ = tcode_config::guardar(&estado.config);
+                        }
+                    }
+                    _ => {}
+                },
+                FocoPanelAdmin::Busqueda => match key.code {
+                    KeyCode::Esc => {
+                        estado.panel_admin.escape();
+                    }
+                    KeyCode::Up => estado.panel_admin.mover_campo_arriba(),
+                    KeyCode::Down => estado.panel_admin.mover_campo_abajo(),
+                    KeyCode::Backspace => estado.panel_admin.borrar_busqueda(),
+                    KeyCode::Enter => estado.panel_admin.confirmar_busqueda(),
+                    KeyCode::Char(c) if sin_modificadores(key) => estado.panel_admin.escribir_busqueda(c),
+                    _ => {}
+                },
+            }
+            sincronizar_lsp(layout, &mut estado.lsp).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
 
         // Paleta de comandos y buscador de archivos son modales
         // mutuamente excluyentes que capturan el teclado por completo
@@ -517,6 +588,10 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp) 
         }
         "tema.seleccionar" => {
             estado.selector_tema.abrir(&estado.config.interfaz.tema);
+            Accion::Continuar
+        }
+        "admin.abrir_panel" => {
+            estado.panel_admin.abrir();
             Accion::Continuar
         }
         "buscar.en_archivo" | "buscar.reemplazar" => {
