@@ -185,6 +185,16 @@ abajo, es donde más problemas aparecieron).
 - [ ] Cambiar un color de sintaxis (por ejemplo "Sintaxis: Palabra clave") que tenía negrita en el tema original: after el cambio, la palabra clave sigue en negrita en el código, solo cambió el color — confirmar abriendo `<tema>-mio.toml` y viendo que la fila sigue como `{ fg = "...", style = "bold" }`, no se convirtió en un string simple.
 - [ ] Cerrar el editor y volver a abrir `tcode`: el tema `<original>-mio` sigue siendo el activo, con los colores editados.
 
+### Paleta predefinida y ajuste HSL (los otros dos métodos de entrada)
+
+- [ ] Con la lista de campos en foco (sin editar nada): la tecla `p` (sin `Ctrl`) abre "Elegir de la paleta predefinida" — 20 colores con nombre y chip de color real; `h` abre "Ajustar HSL con flechas" sobre el campo seleccionado.
+- [ ] Paleta: `↑`/`↓` navega los 20 colores (se recorta en los extremos, no da la vuelta); `Enter` aplica el color elegido al campo, lo guarda en `<tema>-mio.toml` y **el editor real cambia de verdad** (mismo criterio que la edición por hex); `Esc` cancela sin aplicar nada.
+- [ ] HSL: al entrar se ve un swatch grande con "Color resultante: #rrggbb" y tres filas (Matiz en grados, Saturación y Luminosidad en porcentaje) arrancando desde el color actual del campo, no desde cero.
+- [ ] HSL: `←`/`→` cambia cuál de las tres filas está enfocada (resaltada); `↑`/`↓` sube/baja el valor de la fila enfocada — el matiz da la vuelta de 360 a 0 (y viceversa), saturación/luminosidad se recortan en 0 y 100.
+- [ ] HSL: cada flecha de ajuste se ve reflejada **al instante** tanto en el swatch de esta pantalla como en el color real del campo en la lista (probar cerrando el ajuste sin confirmar — con `Esc` — para el siguiente punto).
+- [ ] HSL: `Esc` a mitad de un ajuste revierte el campo exactamente al color que tenía antes de entrar a HSL (confirmar que `<tema>-mio.toml` no cambió). `Enter` en cambio persiste el color ya aplicado y muestra "Guardado".
+- [ ] Un color de sintaxis con `bold`/`italic`: aplicar un color nuevo por paleta o por HSL también conserva el estilo (mismo comportamiento ya confirmado con hex).
+
 ## Distribución / instaladores
 
 - [ ] `install/linux.sh` en una máquina Linux limpia (o `install/windows.ps1` en Windows): instala sin pedir contraseña/administrador, y `tcode` queda disponible en cualquier carpeta después de abrir una terminal nueva.

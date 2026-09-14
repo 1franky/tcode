@@ -34,8 +34,8 @@ use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
 use tcode_config::{
-    CampoTemas, Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin, ResultadoDuplicarTema,
-    Seccion,
+    CampoTemas, Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin, ModoEdicion,
+    ResultadoDuplicarTema, Seccion,
 };
 use tcode_core::{analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda};
 use tcode_fs::{BuscadorArchivos, Explorador};
@@ -341,27 +341,63 @@ async fn ejecutar(
         // escribir el código hex nuevo.
         if estado.editor_tema.activo() {
             estado.confirmar_salida = false;
-            if estado.editor_tema.editando() {
-                match key.code {
+            match categoria_modo_editor_tema(&estado.editor_tema) {
+                CategoriaModoEditorTema::Ninguno => match key.code {
+                    KeyCode::Esc => estado.editor_tema.cerrar(),
+                    KeyCode::Up => estado.editor_tema.mover_arriba(),
+                    KeyCode::Down => estado.editor_tema.mover_abajo(),
+                    KeyCode::Enter => estado.editor_tema.iniciar_edicion_hex(),
+                    // Sin `Ctrl`: son mnemónicos de una sola tecla (como
+                    // en un menú fijo), no hay texto que se pueda estar
+                    // escribiendo en esta vista mientras la lista tiene
+                    // el foco.
+                    KeyCode::Char('p') if sin_modificadores(key) => estado.editor_tema.iniciar_paleta(),
+                    KeyCode::Char('h') if sin_modificadores(key) => estado.editor_tema.iniciar_hsl(),
+                    _ => {}
+                },
+                CategoriaModoEditorTema::Hex => match key.code {
                     KeyCode::Esc => estado.editor_tema.cancelar_edicion(),
                     KeyCode::Backspace => estado.editor_tema.borrar_hex(),
                     KeyCode::Enter => {
-                        estado.editor_tema.confirmar_edicion();
+                        estado.editor_tema.confirmar_hex();
                         refrescar_preview_editor_tema(&mut estado);
                     }
                     KeyCode::Char(c) if sin_modificadores(key) && c.is_ascii_hexdigit() => {
                         estado.editor_tema.escribir_hex(c);
                     }
                     _ => {}
-                }
-            } else {
-                match key.code {
-                    KeyCode::Esc => estado.editor_tema.cerrar(),
-                    KeyCode::Up => estado.editor_tema.mover_arriba(),
-                    KeyCode::Down => estado.editor_tema.mover_abajo(),
-                    KeyCode::Enter => estado.editor_tema.iniciar_edicion(),
+                },
+                CategoriaModoEditorTema::Paleta => match key.code {
+                    KeyCode::Esc => estado.editor_tema.cancelar_edicion(),
+                    KeyCode::Up => estado.editor_tema.mover_paleta_arriba(),
+                    KeyCode::Down => estado.editor_tema.mover_paleta_abajo(),
+                    KeyCode::Enter => {
+                        estado.editor_tema.confirmar_paleta();
+                        refrescar_preview_editor_tema(&mut estado);
+                    }
                     _ => {}
-                }
+                },
+                CategoriaModoEditorTema::Hsl => match key.code {
+                    KeyCode::Esc => {
+                        estado.editor_tema.cancelar_edicion();
+                        refrescar_preview_editor_tema(&mut estado);
+                    }
+                    KeyCode::Left => estado.editor_tema.mover_foco_hsl(false),
+                    KeyCode::Right => estado.editor_tema.mover_foco_hsl(true),
+                    KeyCode::Up => {
+                        estado.editor_tema.ajustar_hsl(1);
+                        refrescar_preview_editor_tema(&mut estado);
+                    }
+                    KeyCode::Down => {
+                        estado.editor_tema.ajustar_hsl(-1);
+                        refrescar_preview_editor_tema(&mut estado);
+                    }
+                    KeyCode::Enter => {
+                        estado.editor_tema.confirmar_hsl();
+                        refrescar_preview_editor_tema(&mut estado);
+                    }
+                    _ => {}
+                },
             }
             sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
@@ -1018,6 +1054,29 @@ fn confirmar_tema_seleccionado(estado: &mut EstadoApp, id: &str) {
     let _ = tcode_config::guardar(&estado.config);
 }
 
+/// Qué bloque del `match` de más arriba corresponde al modo de edición
+/// actual del editor visual de tema — separado de `ModoEdicion` porque
+/// ese enum lleva los VALORES en curso (buffer de hex, HSL parcial...) y
+/// acá solo hace falta saber a cuál de los cuatro casos ir; extraerlo a
+/// una variable de esta forma, sin quedarse con el préstamo de
+/// `estado.editor_tema.modo()`, es lo que permite llamar métodos que la
+/// mutan (`&mut estado.editor_tema...`) en el cuerpo de cada rama.
+enum CategoriaModoEditorTema {
+    Ninguno,
+    Hex,
+    Paleta,
+    Hsl,
+}
+
+fn categoria_modo_editor_tema(editor_tema: &EstadoEditorTema) -> CategoriaModoEditorTema {
+    match editor_tema.modo() {
+        ModoEdicion::Ninguno => CategoriaModoEditorTema::Ninguno,
+        ModoEdicion::Hex(_) => CategoriaModoEditorTema::Hex,
+        ModoEdicion::Paleta(_) => CategoriaModoEditorTema::Paleta,
+        ModoEdicion::Hsl { .. } => CategoriaModoEditorTema::Hsl,
+    }
+}
+
 /// `Ctrl+K Ctrl+P` (`tema.editor_visual`, PLAN.md §7): abre el editor
 /// visual sobre una copia editable del tema activo (duplicándolo si
 /// hace falta, ver `EstadoEditorTema::abrir`) y lo deja como tema activo
@@ -1032,10 +1091,13 @@ fn abrir_editor_visual_tema(estado: &mut EstadoApp) {
     }
 }
 
-/// Tras aplicar un cambio de color en el editor visual: refresca
-/// `estado.paleta` desde la copia de trabajo (preview en vivo) — el
-/// guardado a disco ya lo hizo `EstadoEditorTema::confirmar_edicion` por
-/// su cuenta.
+/// Tras aplicar un cambio de color en el editor visual (por cualquiera
+/// de los tres métodos — `confirmar_hex`/`confirmar_paleta`/
+/// `ajustar_hsl`/`confirmar_hsl`, o `cancelar_edicion` revirtiendo un
+/// ajuste HSL a mitad de camino): refresca `estado.paleta` desde la
+/// copia de trabajo para que el preview en vivo se vea de inmediato — el
+/// guardado a disco, si corresponde, ya lo hizo el método de
+/// `EstadoEditorTema` por su cuenta.
 fn refrescar_preview_editor_tema(estado: &mut EstadoApp) {
     estado.paleta = Paleta::desde_tema(estado.editor_tema.tema()).unwrap_or_else(|_| Paleta::basica());
 }
