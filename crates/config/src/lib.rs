@@ -15,8 +15,8 @@ pub use config::{
     ConfigEditor, ConfigInterfaz, ConfigLenguajes,
 };
 pub use panel_admin::{
-    indice_de, CampoEditor, CampoTemas, EstadoPanelAdmin, FocoPanelAdmin, OpcionExterna,
-    ResultadoBusquedaAdmin, Seccion,
+    indice_de, CampoEditor, CampoInterfaz, CampoTemas, EstadoPanelAdmin, FocoPanelAdmin,
+    OpcionExterna, ResultadoBusquedaAdmin, Seccion,
 };
 pub use selector::{EstadoSelectorTema, FiltroTipoTema};
 pub use tema::{

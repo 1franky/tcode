@@ -395,6 +395,18 @@ async fn ejecutar(
                         {
                             alternar_lsp_lenguaje_seleccionado(&mut estado);
                         }
+                        KeyCode::Enter | KeyCode::Left | KeyCode::Right
+                            if estado.panel_admin.seccion_actual() == Seccion::Interfaz =>
+                        {
+                            // Todas las filas de "Interfaz" son
+                            // booleanas (PLAN.md §5.5) — a diferencia de
+                            // "Editor" no hace falta un delta, cualquiera
+                            // de las tres teclas simplemente alterna.
+                            if let Some(campo) = estado.panel_admin.campo_interfaz_actual() {
+                                campo.aplicar(&mut estado.config);
+                                let _ = tcode_config::guardar(&estado.config);
+                            }
+                        }
                         KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
                             if let Some(campo) = estado.panel_admin.campo_editor_actual() {
                                 let delta = if key.code == KeyCode::Left { -1 } else { 1 };
