@@ -156,6 +156,21 @@ impl Keymap {
         }
         std::fs::write(&ruta, texto).with_context(|| format!("no se pudo escribir '{}'", ruta.display()))
     }
+
+    /// "Exportar keymap" (PLAN.md §5.1): escribe el keymap completo en
+    /// una ruta fija y predecible (mismo directorio que `keymap.toml`,
+    /// nombre distinto) — no hay selector de ruta en esta TUI, así que
+    /// en vez de eso se documenta dónde queda el archivo para que se
+    /// pueda mover/compartir a mano. Devuelve la ruta donde quedó.
+    pub fn exportar(&self) -> Result<PathBuf> {
+        let texto = self.a_texto_toml()?;
+        let ruta = ruta_keymap_exportado();
+        if let Some(dir) = ruta.parent() {
+            std::fs::create_dir_all(dir).with_context(|| format!("no se pudo crear '{}'", dir.display()))?;
+        }
+        std::fs::write(&ruta, &texto).with_context(|| format!("no se pudo escribir '{}'", ruta.display()))?;
+        Ok(ruta)
+    }
 }
 
 /// "Restablecer TODOS los atajos por defecto" (PLAN.md §5): borra el
@@ -187,6 +202,20 @@ pub fn ruta_keymap_usuario() -> PathBuf {
     directorio_config().join("keymap.toml")
 }
 
+/// Ruta fija de "Exportar keymap" (`Keymap::exportar`, PLAN.md §5.1).
+pub fn ruta_keymap_exportado() -> PathBuf {
+    directorio_config().join("keymap-exportado.toml")
+}
+
+/// Ruta fija de "Importar keymap" (`importar_keymap`, PLAN.md §5.1):
+/// mismo espíritu que importar un tema (PLAN.md §7 — dejar el archivo
+/// en una carpeta conocida en vez de necesitar un selector de ruta),
+/// pero con un nombre de archivo distinto al de exportar para no
+/// confundir "el que yo generé" con "el que me compartieron".
+pub fn ruta_keymap_a_importar() -> PathBuf {
+    directorio_config().join("keymap-importar.toml")
+}
+
 /// Carga el keymap activo: el de usuario (`~/.config/tcode/keymap.toml` o
 /// equivalente) si existe, si no el embebido por defecto. Es lo que hace
 /// posible editar atajos sin recompilar — el editor visual del panel de
@@ -199,6 +228,35 @@ pub fn cargar() -> Result<Keymap> {
     let texto = std::fs::read_to_string(&ruta)
         .with_context(|| format!("no se pudo leer '{}'", ruta.display()))?;
     parsear_keymap(&texto).with_context(|| format!("'{}' tiene TOML inválido", ruta.display()))
+}
+
+/// Resultado de `importar_keymap`: si no hay ningún archivo esperando en
+/// `ruta_keymap_a_importar()`, no es un error — es el caso normal
+/// mientras nadie dejó nada ahí para importar.
+pub enum ResultadoImportarKeymap {
+    Importado { ruta: PathBuf, keymap: Keymap },
+    NoHabiaArchivo(PathBuf),
+}
+
+/// "Importar keymap" (PLAN.md §5.1): si hay un archivo en
+/// `ruta_keymap_a_importar()`, lo parsea y lo adopta como el keymap
+/// activo (`Keymap::guardar`, sobreescribiendo cualquier
+/// personalización previa del usuario — mismo criterio que "Restablecer
+/// TODOS": importar es una decisión deliberada, no algo para lo que
+/// tenga sentido mezclar con lo que ya había). Quien llama es
+/// responsable de refrescar el `Resolvedor` con el `Keymap` devuelto
+/// para que tome efecto en caliente, igual que tras personalizar un
+/// atajo desde el panel.
+pub fn importar_keymap() -> Result<ResultadoImportarKeymap> {
+    let ruta = ruta_keymap_a_importar();
+    if !ruta.exists() {
+        return Ok(ResultadoImportarKeymap::NoHabiaArchivo(ruta));
+    }
+    let texto = std::fs::read_to_string(&ruta).with_context(|| format!("no se pudo leer '{}'", ruta.display()))?;
+    let keymap =
+        parsear_keymap(&texto).with_context(|| format!("'{}' tiene TOML inválido", ruta.display()))?;
+    keymap.guardar()?;
+    Ok(ResultadoImportarKeymap::Importado { ruta, keymap })
 }
 
 /// Un atajo es conflictivo si su secuencia exacta es también el prefijo de
