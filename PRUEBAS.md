@@ -180,6 +180,16 @@ abajo, es donde más problemas aparecieron).
 - [ ] Con un `.py` abierto y el LSP ya "Conectado" con el comando por defecto: editar el comando personalizado de Python en vivo (agregar/quitar un argumento) y confirmar con `Enter` — la sesión vieja se cierra y se relanza sola con el comando nuevo (pasa por "Iniciando…" y vuelve a "Conectado"), sin reiniciar el editor.
 - [ ] Cerrar tcode y volver a abrirlo con un `.py` activo: el override de Python persiste (sigue mostrando "(personalizado)" y el LSP se conecta con el comando guardado, no con el de por defecto).
 
+### Primera tanda de lenguajes nuevos: TypeScript, Java, C, C++
+
+- [ ] Abrir un archivo `.ts` y otro `.tsx`: resaltado de sintaxis correcto (palabras clave como `interface`/`function`/`return`, tipos, strings — incluidos los template strings con `${...}` interpolado, comentarios); la statusbar muestra "TypeScript" para ambas extensiones.
+- [ ] Abrir un archivo `.java`: resaltado correcto (palabras clave, tipos como `String`/`int`/`void`, nombres de método en verde, números, strings, comentarios); la statusbar muestra "Java".
+- [ ] Abrir un archivo `.c`: resaltado correcto (`#include`, tipos, `return`, números, strings, comentarios); la statusbar muestra "C". Abrir un `.h`: también se detecta como C.
+- [ ] Abrir un archivo `.cpp` (y opcionalmente `.hpp`): resaltado correcto, igual que C más lo propio de C++; la statusbar muestra "C++".
+- [ ] Dentro del panel (`Ctrl+K A` → "Lenguajes / LSP"): ahora hay 9 filas en vez de 5 — las nuevas son TypeScript ("typescript-language-server --stdio"), Java ("(sin LSP configurado)" — sin comando por defecto, se configura a mano con `c` si se quiere), C y C++ (ambas con "clangd", compartido entre las dos).
+- [ ] Con `clangd` instalado y un `.c` o `.cpp` abierto: el estado pasa de "Iniciando…" a "Conectado" solo.
+- [ ] Un bloque de código Markdown con etiqueta ` ```typescript `, ` ```java `, ` ```c ` o ` ```cpp ` (alias `ts`/`c++`/`cxx` también) se resalta con la vista de preview (`Ctrl+K V`).
+
 ## M4 — Sección "Interfaz" del panel de administración
 
 - [ ] Dentro del panel (`Ctrl+K A`), la sección "Interfaz" ya NO dice "(próximamente)": lista 7 filas — "Mostrar barra de estado" y 6 elementos de la statusbar (posición del cursor, codificación, fin de línea, lenguaje detectado, resumen de diagnósticos LSP, modo), todas en "Sí" por defecto.

@@ -109,10 +109,21 @@ async fn leer_en_bucle(mut reader: BufReader<ChildStdout>, tx: mpsc::UnboundedSe
 /// Comando y argumentos para lanzar el LSP server de un lenguaje, si
 /// `tcode` conoce uno (PLAN.md §6). `None` si no hay soporte configurado
 /// todavía — el resto de los 13 lenguajes objetivo se suman
-/// incrementalmente; el editor sigue funcionando igual sin LSP para esos.
+/// incrementalmente; el editor sigue funcionando igual sin LSP para esos
+/// (y el usuario puede fijar el suyo a mano desde el panel de
+/// administración, sección "Lenguajes / LSP", aunque no haya uno acá).
 pub fn comando_para(lenguaje: tcode_syntax::Lenguaje) -> Option<(&'static str, &'static [&'static str])> {
     match lenguaje {
         tcode_syntax::Lenguaje::Python => Some(("pyright-langserver", &["--stdio"])),
+        tcode_syntax::Lenguaje::TypeScript => Some(("typescript-language-server", &["--stdio"])),
+        // clangd sirve tanto a C como a C++ (PLAN.md §6, fila "C/C++") y
+        // habla por stdio sin argumentos adicionales.
+        tcode_syntax::Lenguaje::C | tcode_syntax::Lenguaje::Cpp => Some(("clangd", &[])),
+        // `jdtls` (Java) necesita un directorio de datos de workspace
+        // como argumento (`-data <dir>`) para funcionar bien — no hay un
+        // valor razonable que fijar acá sin saber el proyecto del
+        // usuario, así que queda sin comando por defecto (configurable a
+        // mano, como cualquier lenguaje sin uno).
         _ => None,
     }
 }
@@ -131,6 +142,24 @@ mod tests {
     #[test]
     fn comando_para_rust_todavia_no_existe() {
         assert!(comando_para(tcode_syntax::Lenguaje::Rust).is_none());
+    }
+
+    #[test]
+    fn comando_para_typescript_es_typescript_language_server() {
+        let (comando, args) = comando_para(tcode_syntax::Lenguaje::TypeScript).unwrap();
+        assert_eq!(comando, "typescript-language-server");
+        assert_eq!(args, &["--stdio"]);
+    }
+
+    #[test]
+    fn comando_para_c_y_cpp_es_clangd() {
+        assert_eq!(comando_para(tcode_syntax::Lenguaje::C).unwrap().0, "clangd");
+        assert_eq!(comando_para(tcode_syntax::Lenguaje::Cpp).unwrap().0, "clangd");
+    }
+
+    #[test]
+    fn comando_para_java_todavia_no_tiene_default() {
+        assert!(comando_para(tcode_syntax::Lenguaje::Java).is_none());
     }
 
     /// Verifica el ciclo de vida completo contra un proceso real y
