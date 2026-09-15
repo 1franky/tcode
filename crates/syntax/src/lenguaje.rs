@@ -1,9 +1,9 @@
 /// Lenguajes con resaltado de sintaxis vía tree-sitter. Los 5 primeros son
 /// los de M1 (PLAN.md §11: "5 lenguajes iniciales"); TypeScript, Java, C y
-/// C++ son la primera tanda de los 13 lenguajes objetivo de PLAN.md §6 que
-/// se suma en M4 — el resto (Kotlin, C#, Ruby, PHP, HTML/CSS, SQL) queda
-/// para tandas siguientes. Añadir uno nuevo es agregar una variante aquí y
-/// un caso en `Resaltador::config_para`.
+/// C++ fueron la primera tanda de los 13 lenguajes objetivo de PLAN.md §6
+/// sumada en M4; Kotlin, C#, Ruby y PHP son la segunda — el resto
+/// (HTML/CSS, SQL) queda para una tanda siguiente. Añadir uno nuevo es
+/// agregar una variante aquí y un caso en `Resaltador::config_para`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Lenguaje {
     Rust,
@@ -15,13 +15,17 @@ pub enum Lenguaje {
     Java,
     C,
     Cpp,
+    Kotlin,
+    CSharp,
+    Ruby,
+    Php,
 }
 
 impl Lenguaje {
     /// Todos los lenguajes con resaltado — usado por la sección
     /// "Lenguajes / LSP" del panel de administración (PLAN.md §5.3) para
     /// listarlos todos sin tener que enumerarlos de nuevo a mano en `app`.
-    pub const TODOS: [Lenguaje; 9] = [
+    pub const TODOS: [Lenguaje; 13] = [
         Lenguaje::Rust,
         Lenguaje::Python,
         Lenguaje::JavaScript,
@@ -31,6 +35,10 @@ impl Lenguaje {
         Lenguaje::Java,
         Lenguaje::C,
         Lenguaje::Cpp,
+        Lenguaje::Kotlin,
+        Lenguaje::CSharp,
+        Lenguaje::Ruby,
+        Lenguaje::Php,
     ];
 
     /// Identificador estable en minúsculas, para usar como clave de
@@ -49,6 +57,10 @@ impl Lenguaje {
             Lenguaje::Java => "java",
             Lenguaje::C => "c",
             Lenguaje::Cpp => "cpp",
+            Lenguaje::Kotlin => "kotlin",
+            Lenguaje::CSharp => "csharp",
+            Lenguaje::Ruby => "ruby",
+            Lenguaje::Php => "php",
         }
     }
 
@@ -76,6 +88,10 @@ impl Lenguaje {
             // ambiguos y van directo a C++.
             "c" | "h" => Some(Lenguaje::C),
             "cpp" | "cc" | "cxx" | "c++" | "hpp" | "hh" | "hxx" => Some(Lenguaje::Cpp),
+            "kt" | "kts" => Some(Lenguaje::Kotlin),
+            "cs" => Some(Lenguaje::CSharp),
+            "rb" => Some(Lenguaje::Ruby),
+            "php" | "phtml" => Some(Lenguaje::Php),
             _ => None,
         }
     }
@@ -96,6 +112,10 @@ impl Lenguaje {
             "java" => Some(Lenguaje::Java),
             "c" => Some(Lenguaje::C),
             "cpp" | "c++" | "cxx" => Some(Lenguaje::Cpp),
+            "kotlin" | "kt" => Some(Lenguaje::Kotlin),
+            "csharp" | "cs" | "c#" => Some(Lenguaje::CSharp),
+            "ruby" | "rb" => Some(Lenguaje::Ruby),
+            "php" => Some(Lenguaje::Php),
             _ => None,
         }
     }
@@ -111,6 +131,10 @@ impl Lenguaje {
             Lenguaje::Java => "Java",
             Lenguaje::C => "C",
             Lenguaje::Cpp => "C++",
+            Lenguaje::Kotlin => "Kotlin",
+            Lenguaje::CSharp => "C#",
+            Lenguaje::Ruby => "Ruby",
+            Lenguaje::Php => "PHP",
         }
     }
 }
@@ -138,6 +162,15 @@ mod tests {
         assert_eq!(Lenguaje::detectar_por_extension("cabecera.h"), Some(Lenguaje::C));
         assert_eq!(Lenguaje::detectar_por_extension("main.cpp"), Some(Lenguaje::Cpp));
         assert_eq!(Lenguaje::detectar_por_extension("cabecera.hpp"), Some(Lenguaje::Cpp));
+    }
+
+    #[test]
+    fn detecta_la_segunda_tanda_de_lenguajes_agregados_en_m4() {
+        assert_eq!(Lenguaje::detectar_por_extension("Principal.kt"), Some(Lenguaje::Kotlin));
+        assert_eq!(Lenguaje::detectar_por_extension("build.kts"), Some(Lenguaje::Kotlin));
+        assert_eq!(Lenguaje::detectar_por_extension("Programa.cs"), Some(Lenguaje::CSharp));
+        assert_eq!(Lenguaje::detectar_por_extension("script.rb"), Some(Lenguaje::Ruby));
+        assert_eq!(Lenguaje::detectar_por_extension("index.php"), Some(Lenguaje::Php));
     }
 
     #[test]

@@ -127,6 +127,24 @@ impl Resaltador {
                 "cpp",
                 format!("{}\n{}", tree_sitter_c::HIGHLIGHT_QUERY, tree_sitter_cpp::HIGHLIGHT_QUERY).into(),
             ),
+            // `tree-sitter-kotlin-sg` (mantenida por ast-grep) en vez de la
+            // original de fwcd/tree-sitter-kotlin: esa última fija
+            // `tree-sitter` <0.23, incompatible con la 0.27 que usa el
+            // resto del crate (conflicto de la librería nativa "links").
+            // Su query es autocontenida (basada en la de nvim-treesitter).
+            Lenguaje::Kotlin => {
+                (tree_sitter_kotlin_sg::LANGUAGE.into(), "kotlin", tree_sitter_kotlin_sg::HIGHLIGHTS_QUERY.into())
+            }
+            Lenguaje::CSharp => {
+                (tree_sitter_c_sharp::LANGUAGE.into(), "c_sharp", tree_sitter_c_sharp::HIGHLIGHTS_QUERY.into())
+            }
+            Lenguaje::Ruby => (tree_sitter_ruby::LANGUAGE.into(), "ruby", tree_sitter_ruby::HIGHLIGHTS_QUERY.into()),
+            // La gramática "PHP" completa (a diferencia de "PHP_ONLY")
+            // reconoce el archivo típico que arranca con `<?php` sin
+            // necesitar tratarlo como HTML con PHP incrustado.
+            Lenguaje::Php => {
+                (tree_sitter_php::LANGUAGE_PHP.into(), "php", tree_sitter_php::HIGHLIGHTS_QUERY.into())
+            }
         };
 
         let mut config = HighlightConfiguration::new(language, nombre, &highlights_query, "", "")?;
@@ -259,6 +277,31 @@ mod tests {
         let cpp = "#include <string>\nint main() { return 0; }\n";
         let tokens_cpp = resaltador.resaltar(Lenguaje::Cpp, cpp).unwrap();
         assert!(nombres_en(&tokens_cpp, cpp).iter().any(|(n, texto)| *n == "keyword" && texto == "return"));
+    }
+
+    #[test]
+    fn resalta_la_segunda_tanda_de_lenguajes_agregados_en_m4() {
+        let mut resaltador = Resaltador::nuevo();
+
+        let kotlin = "// comentario\nfun saludar(): String = \"hola\"\n";
+        let tokens_kt = resaltador.resaltar(Lenguaje::Kotlin, kotlin).unwrap();
+        assert!(nombres_en(&tokens_kt, kotlin).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_kt, kotlin).iter().any(|(n, _)| *n == "string"));
+
+        let csharp = "class Principal {\n    // comentario\n    static void Main() { int x = 42; }\n}\n";
+        let tokens_cs = resaltador.resaltar(Lenguaje::CSharp, csharp).unwrap();
+        assert!(nombres_en(&tokens_cs, csharp).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_cs, csharp).iter().any(|(n, texto)| *n == "number" && texto == "42"));
+
+        let ruby = "# comentario\ndef saludar\n  \"hola\"\nend\n";
+        let tokens_rb = resaltador.resaltar(Lenguaje::Ruby, ruby).unwrap();
+        assert!(nombres_en(&tokens_rb, ruby).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_rb, ruby).iter().any(|(n, _)| *n == "string"));
+
+        let php = "<?php\n// comentario\n$x = 42;\necho \"hola\";\n";
+        let tokens_php = resaltador.resaltar(Lenguaje::Php, php).unwrap();
+        assert!(nombres_en(&tokens_php, php).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_php, php).iter().any(|(n, texto)| *n == "number" && texto == "42"));
     }
 
     #[test]
