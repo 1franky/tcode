@@ -25,6 +25,10 @@ pub struct FilaLenguajeLsp {
     pub comando: String,
     pub en_path: bool,
     pub habilitado: bool,
+    /// `true` si `comando` viene de un override guardado a mano (PLAN.md
+    /// §5.3: "Configurar comando, argumentos...") en vez del que trae
+    /// `tcode_lsp::comando_para` por defecto.
+    pub personalizado: bool,
     /// "Conectado" / "Iniciando…" / "Inactivo" — ya resuelto a texto por
     /// `app`, que es quien tiene acceso al estado real de la sesión LSP.
     pub estado: String,
@@ -184,15 +188,23 @@ fn filas_atajos<'a>(
     let central_activa = panel.foco() == FocoPanelAdmin::Central;
     let mut filas = Vec::new();
 
-    let fila_0_seleccionada = panel.campo() == 0 && central_activa;
-    let estilo_0 = if fila_0_seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
-    filas.push(
-        ListItem::new(Line::from(Span::styled("↺ Restablecer TODOS los atajos por defecto", estilo_0)))
-            .style(estilo_0),
-    );
+    // 3 filas especiales antes de la lista de comandos (PLAN.md §5.1):
+    // restablecer todos los atajos, exportar el keymap activo, e
+    // importar uno desde el archivo fijo que deja `Keymap::exportar`/
+    // `importar_keymap` (ver `app/main.rs`, que interpreta estas mismas
+    // posiciones de fila).
+    for (fila, texto) in [
+        (0, "↺ Restablecer TODOS los atajos por defecto"),
+        (1, "⇩ Exportar atajos a archivo"),
+        (2, "⇧ Importar atajos desde archivo"),
+    ] {
+        let seleccionada = panel.campo() == fila && central_activa;
+        let estilo = if seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
+        filas.push(ListItem::new(Line::from(Span::styled(texto, estilo))).style(estilo));
+    }
 
     for (idx, comando) in tcode_commands::comandos_disponibles().iter().enumerate() {
-        let fila = idx + 1;
+        let fila = idx + 3;
         let seleccionada = panel.campo() == fila && central_activa;
         let estilo_fila = if seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
 
@@ -229,7 +241,9 @@ fn filas_atajos<'a>(
 /// Filas de la sección "Lenguajes / LSP" (PLAN.md §5.3): una fila por
 /// lenguaje, ya resuelta por `app` a texto (`FilaLenguajeLsp`) — acá solo
 /// se decide cómo pintarla (seleccionada, comando en rojo si el binario
-/// no está en el `PATH`, atenuada si está deshabilitada).
+/// no está en el `PATH`, atenuada si está deshabilitada, o el buffer de
+/// edición en vivo si esta es la fila cuyo comando se está editando —
+/// `c`, ver `EstadoPanelAdmin::editando_comando_lsp`).
 fn filas_lenguajes_lsp<'a>(
     panel: &EstadoPanelAdmin,
     filas: &[FilaLenguajeLsp],
@@ -243,9 +257,22 @@ fn filas_lenguajes_lsp<'a>(
         .map(|(idx, fila)| {
             let seleccionada = panel.campo() == idx && central_activa;
             let estilo_fila = if seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
-            let estilo_comando = if fila.en_path { estilo_fila } else { estilo_fila.fg(paleta.diagnostico_advertencia) };
             let habilitado = if fila.habilitado { "Sí" } else { "No" };
+
+            if let (true, Some(buffer)) = (seleccionada, panel.editando_comando_lsp()) {
+                let spans = vec![
+                    Span::styled(format!("{:<14}", fila.nombre), estilo_fila),
+                    Span::styled(format!("Habilitado: {habilitado:<5}"), estilo_fila),
+                    Span::styled("  ", estilo_fila),
+                    Span::styled(format!("{buffer}▏"), estilo_fila),
+                    Span::styled(" (Enter guarda · Esc cancela)", estilo_fila),
+                ];
+                return ListItem::new(Line::from(spans)).style(estilo_fila);
+            }
+
+            let estilo_comando = if fila.en_path { estilo_fila } else { estilo_fila.fg(paleta.diagnostico_advertencia) };
             let comando = if fila.comando.is_empty() { "(sin LSP configurado)" } else { &fila.comando };
+            let personalizado = if fila.personalizado { " (personalizado)" } else { "" };
             let en_path = if fila.comando.is_empty() {
                 String::new()
             } else if fila.en_path {
@@ -257,6 +284,7 @@ fn filas_lenguajes_lsp<'a>(
                 Span::styled(format!("{:<14}", fila.nombre), estilo_fila),
                 Span::styled(format!("Habilitado: {habilitado:<5}"), estilo_fila),
                 Span::styled(format!("  {comando}"), estilo_comando),
+                Span::styled(personalizado, estilo_comando),
                 Span::styled(en_path, estilo_comando),
                 Span::styled(format!("  — {}", fila.estado), estilo_fila),
             ];
@@ -322,11 +350,17 @@ fn dibujar_pie(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, paleta: 
     let texto = match panel.foco() {
         FocoPanelAdmin::Barra => "↑↓ moverse · Enter/→ entrar a la sección · Ctrl+F buscar · Esc cerrar panel",
         FocoPanelAdmin::Central if panel.capturando() => "Presioná la nueva combinación · Esc cancela",
+        FocoPanelAdmin::Central if panel.editando_comando_lsp().is_some() => {
+            "Escribí el comando y sus argumentos · Enter guarda · Esc cancela"
+        }
         FocoPanelAdmin::Central if panel.seccion_actual() == Seccion::Temas => {
             "↑↓ moverse · Enter ejecutar · Tab volver a secciones · Ctrl+F buscar · Esc volver"
         }
         FocoPanelAdmin::Central if panel.seccion_actual() == Seccion::Atajos => {
             "↑↓ moverse · Enter capturar nuevo atajo · Backspace restablecer · Tab secciones · Ctrl+F buscar · Esc volver"
+        }
+        FocoPanelAdmin::Central if panel.seccion_actual() == Seccion::Lenguajes => {
+            "↑↓ moverse · Enter/←→ habilitar · c editar comando · Backspace quitar override · Tab secciones · Esc volver"
         }
         FocoPanelAdmin::Central => {
             "↑↓ moverse · Enter/←→ cambiar valor · Tab volver a secciones · Ctrl+F buscar · Esc volver"

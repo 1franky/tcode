@@ -138,7 +138,7 @@ abajo, es donde más problemas aparecieron).
 
 ## M4 — Sección "Atajos" del panel de administración
 
-- [ ] Dentro del panel (`Ctrl+K A`), la sección "Atajos de teclado" ya NO dice "(próximamente)": al entrar se ve una fila especial "↺ Restablecer TODOS los atajos por defecto" seguida de una fila por cada comando de la paleta, con su combinación actual a la derecha (o varias separadas por coma, como "Panel de administración: Abrir" que tiene `Ctrl+,` y `Ctrl+K A`).
+- [ ] Dentro del panel (`Ctrl+K A`), la sección "Atajos de teclado" ya NO dice "(próximamente)": al entrar se ven 3 filas especiales — "↺ Restablecer TODOS los atajos por defecto", "⇩ Exportar atajos a archivo", "⇧ Importar atajos desde archivo" — seguidas de una fila por cada comando de la paleta, con su combinación actual a la derecha (o varias separadas por coma, como "Panel de administración: Abrir" que tiene `Ctrl+,` y `Ctrl+K A`).
 - [ ] `Enter` sobre un comando: la fila muestra "‹ presioná la nueva combinación… ›" y la barra inferior cambia a "Presioná la nueva combinación · Esc cancela". Presionar cualquier tecla/combinación (probar una simple como `Ctrl+Alt+U`) la asigna de inmediato: la fila se actualiza, aparece el mensaje "Nuevo atajo: …", y **sin reiniciar el editor**, la tecla vieja deja de funcionar y la nueva sí.
 - [ ] Repetir lo anterior pero presionando `Esc` en vez de una combinación: cancela sin cambiar nada (ni el mensaje ni el atajo).
 - [ ] Intentar asignarle a un comando una combinación que ya usa OTRO comando distinto (p. ej. `Ctrl+S`, que ya es "Archivo: Guardar"): no se aplica el cambio, aparece "Ya usado por: Archivo: Guardar — no se cambió nada", y el atajo original de "Archivo: Guardar" sigue intacto.
@@ -148,6 +148,15 @@ abajo, es donde más problemas aparecieron).
 - [ ] La búsqueda global del panel (`Ctrl+F`) también encuentra comandos por su nombre en español (probar "guardar", "deshacer") y salta a la fila correcta de "Atajos" al confirmar.
 - [ ] Cerrar el editor y volver a abrirlo tras personalizar algún atajo: el cambio persistió (`keymap.toml` sigue ahí con la personalización).
 - [ ] Con `keymap.toml` de usuario editado A MANO (fuera del panel) mientras `tcode` está corriendo: `Ctrl+K Ctrl+L` (o el comando "Configuración: Recargar" desde la paleta) recarga también el keymap, no solo `config.toml`/tema — un atajo nuevo agregado a mano funciona sin reiniciar.
+- [ ] `Backspace` sobre cualquiera de las 3 filas especiales: no hace nada (ese gesto es solo para comandos personalizados).
+
+### Exportar/importar keymap desde archivo
+
+- [ ] `Enter` sobre "⇩ Exportar atajos a archivo": crea `keymap-exportado.toml` en el mismo directorio que `keymap.toml` (o el portable en Windows) con el keymap completo activo, y muestra "Exportado a …" con la ruta exacta.
+- [ ] `Enter` sobre "⇧ Importar atajos desde archivo" SIN haber dejado ningún archivo antes: muestra "No hay nada para importar — dejá el archivo en …", sin romper nada.
+- [ ] Copiar el `keymap-exportado.toml` a `keymap-importar.toml` (mismo directorio), editar a mano un atajo dentro (por ejemplo, cambiar `"Ctrl+S" = "archivo.guardar"` a otra combinación), y volver a `Enter` sobre "Importar": muestra "Importado desde …" y **el cambio se aplica en caliente sin reiniciar** — probar que la combinación vieja deja de funcionar y la nueva del archivo importado sí.
+- [ ] El keymap importado también queda persistido como el `keymap.toml` activo: cerrar y volver a abrir `tcode` mantiene los atajos importados.
+- [ ] Un `keymap-importar.toml` con TOML inválido (por ejemplo, una línea rota a mano): el mensaje muestra el error de parseo en vez de romper el editor o dejarlo con un keymap a medio aplicar.
 
 ## M4 — Sección "Lenguajes / LSP" del panel de administración
 
@@ -159,6 +168,46 @@ abajo, es donde más problemas aparecieron).
 - [ ] Cerrar el editor y volver a abrirlo con Python deshabilitado: el LSP no se lanza al abrir un `.py`, aunque `pyright` esté instalado.
 - [ ] La búsqueda global del panel (`Ctrl+F`) encuentra los lenguajes por su nombre (probar "python", "rust") y salta a la fila correcta de "Lenguajes / LSP".
 - [ ] Sin `pyright` instalado (o con el `PATH` alterado para que no se encuentre): la fila de Python muestra "[no encontrado en el PATH]" resaltado, y el comando LSP simplemente no se lanza (sin romper nada) al abrir un `.py`.
+
+### Comando LSP personalizado por lenguaje (`c` / `Backspace` en "Lenguajes / LSP")
+
+- [ ] Sobre cualquier fila de "Lenguajes / LSP" (foco en el área central), `c` abre un campo de texto en el lugar del comando, con el cursor (`▏`) al final y el pie cambia a "Escribí el comando y sus argumentos · Enter guarda · Esc cancela". Si el lenguaje ya tiene un comando (propio o por defecto, como Python), el campo arranca precargado con ese valor completo, listo para ajustarlo en vez de reescribirlo entero.
+- [ ] Escribir "rust-analyzer --stdio" sobre la fila de Rust (que no tiene LSP por defecto) y `Enter`: la fila pasa a mostrar "rust-analyzer --stdio (personalizado) [en el PATH]" (o "[no encontrado en el PATH]" si no está instalado) y el estado pasa a "Iniciando…"/"Conectado" si el archivo activo es de ese lenguaje — confirma en `config.toml` que quedó guardado en `[lenguajes.lsp_comando.rust]` con `comando`/`argumentos` separados.
+- [ ] Sobre Python (que sí tiene comando por defecto), editar el precargado agregando un argumento (p. ej. `--verbose`) y `Enter`: la fila muestra "(personalizado)" junto al comando, y si hay un `.py` abierto el proceso se relanza usando el comando nuevo — confirmar con `ps aux | grep pyright` que el proceso real corre con el argumento agregado.
+- [ ] `Esc` en vez de `Enter` mientras se edita: descarta el buffer, la fila vuelve a mostrar el valor de antes y no se persiste nada en `config.toml`.
+- [ ] Escribir una línea vacía (o solo espacios) y `Enter`: no guarda nada (no tiene sentido un comando en blanco) — la fila queda igual que antes de entrar a editar.
+- [ ] `Backspace` sobre una fila (sin estar editando) que tiene un comando personalizado: lo quita y vuelve a usar el de `tcode_lsp::comando_para` por defecto (o "(sin LSP configurado)" si no hay ninguno, como en Rust) — si había una sesión activa con ese lenguaje, se relanza con el comando por defecto (o se cierra, si no queda ninguno).
+- [ ] Con un `.py` abierto y el LSP ya "Conectado" con el comando por defecto: editar el comando personalizado de Python en vivo (agregar/quitar un argumento) y confirmar con `Enter` — la sesión vieja se cierra y se relanza sola con el comando nuevo (pasa por "Iniciando…" y vuelve a "Conectado"), sin reiniciar el editor.
+- [ ] Cerrar tcode y volver a abrirlo con un `.py` activo: el override de Python persiste (sigue mostrando "(personalizado)" y el LSP se conecta con el comando guardado, no con el de por defecto).
+
+### Primera tanda de lenguajes nuevos: TypeScript, Java, C, C++
+
+- [ ] Abrir un archivo `.ts` y otro `.tsx`: resaltado de sintaxis correcto (palabras clave como `interface`/`function`/`return`, tipos, strings — incluidos los template strings con `${...}` interpolado, comentarios); la statusbar muestra "TypeScript" para ambas extensiones.
+- [ ] Abrir un archivo `.java`: resaltado correcto (palabras clave, tipos como `String`/`int`/`void`, nombres de método en verde, números, strings, comentarios); la statusbar muestra "Java".
+- [ ] Abrir un archivo `.c`: resaltado correcto (`#include`, tipos, `return`, números, strings, comentarios); la statusbar muestra "C". Abrir un `.h`: también se detecta como C.
+- [ ] Abrir un archivo `.cpp` (y opcionalmente `.hpp`): resaltado correcto, igual que C más lo propio de C++; la statusbar muestra "C++".
+- [ ] Dentro del panel (`Ctrl+K A` → "Lenguajes / LSP"): ahora hay 9 filas en vez de 5 — las nuevas son TypeScript ("typescript-language-server --stdio"), Java ("(sin LSP configurado)" — sin comando por defecto, se configura a mano con `c` si se quiere), C y C++ (ambas con "clangd", compartido entre las dos).
+- [ ] Con `clangd` instalado y un `.c` o `.cpp` abierto: el estado pasa de "Iniciando…" a "Conectado" solo.
+- [ ] Un bloque de código Markdown con etiqueta ` ```typescript `, ` ```java `, ` ```c ` o ` ```cpp ` (alias `ts`/`c++`/`cxx` también) se resalta con la vista de preview (`Ctrl+K V`).
+
+### Segunda tanda de lenguajes nuevos: Kotlin, C#, Ruby, PHP
+
+- [ ] Abrir un archivo `.kt` (y opcionalmente `.kts`): resaltado correcto (`fun`/`val`/`return`, tipos como `String`, nombres de función en verde, strings con interpolación `$variable`, comentarios); la statusbar muestra "Kotlin".
+- [ ] Abrir un archivo `.cs`: resaltado correcto (`class`/`static`/`void`, tipos, nombres de método, números, strings, comentarios); la statusbar muestra "C#".
+- [ ] Abrir un archivo `.rb`: resaltado correcto (`def`/`end`, strings con interpolación `#{...}`, comentarios con `#`); la statusbar muestra "Ruby".
+- [ ] Abrir un archivo `.php` que arranca con `<?php`: resaltado correcto (`echo`, variables `$x`, strings, números, comentarios `//`); la statusbar muestra "PHP".
+- [ ] Dentro del panel (`Ctrl+K A` → "Lenguajes / LSP"): ahora hay 13 filas (9 de los 13 lenguajes objetivo de PLAN.md §6 — faltan HTML/CSS y SQL, ver la tanda siguiente) — las nuevas son Kotlin ("kotlin-language-server"), C# ("(sin LSP configurado)" — `omnisharp` necesita el directorio del proyecto, se configura a mano con `c` si se quiere), Ruby ("solargraph stdio") y PHP ("intelephense --stdio").
+- [ ] Con `solargraph` o `intelephense` instalado y un `.rb`/`.php` abierto respectivamente: el estado pasa de "Iniciando…" a "Conectado" solo.
+- [ ] Un bloque de código Markdown con etiqueta ` ```kotlin `, ` ```csharp `, ` ```ruby ` o ` ```php ` (alias `kt`/`cs`/`rb` también) se resalta con la vista de preview (`Ctrl+K V`).
+
+### Tercera tanda de lenguajes nuevos: HTML, CSS, SQL — completa los 13 objetivo
+
+- [ ] Abrir un archivo `.html` (o `.htm`): resaltado correcto (nombres de etiqueta en negrita como color de palabra clave, nombres de atributo de un color distinto, valores de atributo entre comillas como string, comentarios `<!-- -->`); la statusbar muestra "HTML". No hay resaltado de CSS/JS incrustado en `<style>`/`<script>` (mismo criterio que Markdown: solo la gramática de bloque, sin gramáticas inyectadas).
+- [ ] Abrir un archivo `.css`: resaltado correcto (selectores de etiqueta/clase, nombres de propiedad como `color`/`background`, valores, comentarios `/* */`); la statusbar muestra "CSS". Con el tema Dracula activo, los nombres de propiedad se ven del mismo color que el texto normal — es a propósito, así resalta CSS el tema Dracula real (no es que falten resaltar).
+- [ ] Abrir un archivo `.sql`: resaltado correcto (`SELECT`/`FROM`/`WHERE` en negrita, nombres de tabla, comentarios `-- `); la statusbar muestra "SQL". Los literales numéricos (`42`) se ven con el color de los strings en vez de uno propio — limitación conocida de la query de resaltado que trae la gramática (usa un patrón de Lua que el motor de regex de Rust no entiende), cosmética nomás.
+- [ ] Dentro del panel (`Ctrl+K A` → "Lenguajes / LSP"): ahora hay 16 filas — los 13 lenguajes objetivo de PLAN.md §6 completos (HTML y CSS cuentan como 2 filas separadas aunque el plan las liste en una sola). Las nuevas son HTML ("vscode-html-language-server --stdio"), CSS ("vscode-css-language-server --stdio") y SQL ("sqls").
+- [ ] Con `vscode-langservers-extracted` instalado (trae los binarios de HTML y CSS) y un `.html`/`.css` abierto: el estado pasa de "Iniciando…" a "Conectado" solo.
+- [ ] Un bloque de código Markdown con etiqueta ` ```html `, ` ```css ` o ` ```sql ` se resalta con la vista de preview (`Ctrl+K V`).
 
 ## M4 — Sección "Interfaz" del panel de administración
 
@@ -185,10 +234,21 @@ abajo, es donde más problemas aparecieron).
 - [ ] Cambiar un color de sintaxis (por ejemplo "Sintaxis: Palabra clave") que tenía negrita en el tema original: after el cambio, la palabra clave sigue en negrita en el código, solo cambió el color — confirmar abriendo `<tema>-mio.toml` y viendo que la fila sigue como `{ fg = "...", style = "bold" }`, no se convirtió en un string simple.
 - [ ] Cerrar el editor y volver a abrir `tcode`: el tema `<original>-mio` sigue siendo el activo, con los colores editados.
 
+### Paleta predefinida y ajuste HSL (los otros dos métodos de entrada)
+
+- [ ] Con la lista de campos en foco (sin editar nada): la tecla `p` (sin `Ctrl`) abre "Elegir de la paleta predefinida" — 20 colores con nombre y chip de color real; `h` abre "Ajustar HSL con flechas" sobre el campo seleccionado.
+- [ ] Paleta: `↑`/`↓` navega los 20 colores (se recorta en los extremos, no da la vuelta); `Enter` aplica el color elegido al campo, lo guarda en `<tema>-mio.toml` y **el editor real cambia de verdad** (mismo criterio que la edición por hex); `Esc` cancela sin aplicar nada.
+- [ ] HSL: al entrar se ve un swatch grande con "Color resultante: #rrggbb" y tres filas (Matiz en grados, Saturación y Luminosidad en porcentaje) arrancando desde el color actual del campo, no desde cero.
+- [ ] HSL: `←`/`→` cambia cuál de las tres filas está enfocada (resaltada); `↑`/`↓` sube/baja el valor de la fila enfocada — el matiz da la vuelta de 360 a 0 (y viceversa), saturación/luminosidad se recortan en 0 y 100.
+- [ ] HSL: cada flecha de ajuste se ve reflejada **al instante** tanto en el swatch de esta pantalla como en el color real del campo en la lista (probar cerrando el ajuste sin confirmar — con `Esc` — para el siguiente punto).
+- [ ] HSL: `Esc` a mitad de un ajuste revierte el campo exactamente al color que tenía antes de entrar a HSL (confirmar que `<tema>-mio.toml` no cambió). `Enter` en cambio persiste el color ya aplicado y muestra "Guardado".
+- [ ] Un color de sintaxis con `bold`/`italic`: aplicar un color nuevo por paleta o por HSL también conserva el estilo (mismo comportamiento ya confirmado con hex).
+
 ## Distribución / instaladores
 
 - [ ] `install/linux.sh` en una máquina Linux limpia (o `install/windows.ps1` en Windows): instala sin pedir contraseña/administrador, y `tcode` queda disponible en cualquier carpeta después de abrir una terminal nueva.
-- [ ] La release en GitHub del tag correspondiente tiene los 4 binarios: `tcode-linux-x86_64.tar.gz`, `tcode-macos-arm64.tar.gz`, `tcode-macos-x86_64.tar.gz`, `tcode-windows-x86_64.zip`.
+- [ ] La release en GitHub del tag correspondiente tiene los 5 binarios: `tcode-linux-x86_64.tar.gz`, `tcode-linux-arm64.tar.gz`, `tcode-macos-arm64.tar.gz`, `tcode-macos-x86_64.tar.gz`, `tcode-windows-x86_64.zip`.
+- [ ] `install/linux.sh` en una VPS/máquina Linux ARM64 real (`uname -m` da `aarch64` — AWS Graviton, Oracle Ampere, Raspberry Pi de 64 bits): detecta la plataforma como `linux-arm64`, descarga ese binario (no el de x86_64) y funciona igual que en x86_64 — confirmar que el binario corre (`tcode --help` o abrir un archivo) sin error de "exec format error".
 
 ## ⚠️ Bug conocido en Windows — todavía sin resolver
 

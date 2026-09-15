@@ -1,7 +1,9 @@
-/// Lenguajes con resaltado de sintaxis vía tree-sitter en M1 (PLAN.md §11:
-/// "5 lenguajes iniciales"). El resto de los 13 lenguajes objetivo de
-/// PLAN.md §6 se van sumando en fases posteriores — añadir uno nuevo es
-/// agregar una variante aquí y un caso en `Resaltador::config_para`.
+/// Lenguajes con resaltado de sintaxis vía tree-sitter. Los 5 primeros son
+/// los de M1 (PLAN.md §11: "5 lenguajes iniciales"); TypeScript, Java, C y
+/// C++ fueron la primera tanda de los 13 lenguajes objetivo de PLAN.md §6
+/// sumada en M4; Kotlin, C#, Ruby y PHP la segunda; HTML, CSS y SQL
+/// completan la tabla en esta tercera tanda. Añadir uno nuevo es agregar
+/// una variante aquí y un caso en `Resaltador::config_para`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Lenguaje {
     Rust,
@@ -9,15 +11,41 @@ pub enum Lenguaje {
     JavaScript,
     Go,
     Markdown,
+    TypeScript,
+    Java,
+    C,
+    Cpp,
+    Kotlin,
+    CSharp,
+    Ruby,
+    Php,
+    Html,
+    Css,
+    Sql,
 }
 
 impl Lenguaje {
-    /// Los 5 lenguajes de M1, en el mismo orden que PLAN.md §11 — usado
-    /// por la sección "Lenguajes / LSP" del panel de administración
-    /// (PLAN.md §5.3) para listarlos todos sin tener que enumerarlos de
-    /// nuevo a mano en `app`.
-    pub const TODOS: [Lenguaje; 5] =
-        [Lenguaje::Rust, Lenguaje::Python, Lenguaje::JavaScript, Lenguaje::Go, Lenguaje::Markdown];
+    /// Todos los lenguajes con resaltado — usado por la sección
+    /// "Lenguajes / LSP" del panel de administración (PLAN.md §5.3) para
+    /// listarlos todos sin tener que enumerarlos de nuevo a mano en `app`.
+    pub const TODOS: [Lenguaje; 16] = [
+        Lenguaje::Rust,
+        Lenguaje::Python,
+        Lenguaje::JavaScript,
+        Lenguaje::Go,
+        Lenguaje::Markdown,
+        Lenguaje::TypeScript,
+        Lenguaje::Java,
+        Lenguaje::C,
+        Lenguaje::Cpp,
+        Lenguaje::Kotlin,
+        Lenguaje::CSharp,
+        Lenguaje::Ruby,
+        Lenguaje::Php,
+        Lenguaje::Html,
+        Lenguaje::Css,
+        Lenguaje::Sql,
+    ];
 
     /// Identificador estable en minúsculas, para usar como clave de
     /// almacenamiento (`config.toml`, sección "Lenguajes / LSP") en vez
@@ -31,11 +59,22 @@ impl Lenguaje {
             Lenguaje::JavaScript => "javascript",
             Lenguaje::Go => "go",
             Lenguaje::Markdown => "markdown",
+            Lenguaje::TypeScript => "typescript",
+            Lenguaje::Java => "java",
+            Lenguaje::C => "c",
+            Lenguaje::Cpp => "cpp",
+            Lenguaje::Kotlin => "kotlin",
+            Lenguaje::CSharp => "csharp",
+            Lenguaje::Ruby => "ruby",
+            Lenguaje::Php => "php",
+            Lenguaje::Html => "html",
+            Lenguaje::Css => "css",
+            Lenguaje::Sql => "sql",
         }
     }
 
     /// Detecta el lenguaje por la extensión del archivo. `None` si no es
-    /// uno de los 5 lenguajes con resaltado en M1 (el texto sigue
+    /// ninguno de los lenguajes con resaltado (el texto sigue
     /// mostrándose normalmente, solo que sin colorear).
     pub fn detectar_por_extension(ruta: &str) -> Option<Lenguaje> {
         let extension = ruta.rsplit('.').next().unwrap_or("");
@@ -45,6 +84,26 @@ impl Lenguaje {
             "js" | "jsx" | "mjs" | "cjs" => Some(Lenguaje::JavaScript),
             "go" => Some(Lenguaje::Go),
             "md" | "markdown" => Some(Lenguaje::Markdown),
+            // Una sola variante para .ts/.tsx: la gramática TSX es un
+            // superset de TypeScript (acepta JSX además de lo que ya
+            // acepta .ts), así que sirve para resaltar ambas extensiones
+            // sin necesitar una variante separada — mismo criterio que
+            // JavaScript con .jsx más arriba.
+            "ts" | "tsx" | "mts" | "cts" => Some(Lenguaje::TypeScript),
+            "java" => Some(Lenguaje::Java),
+            // ".h" es ambiguo entre C y C++ (headers de C++ lo usan
+            // seguido) — se resuelve a C por default, más simple que
+            // adivinar por contenido; ".hpp"/".hh"/".hxx" no son
+            // ambiguos y van directo a C++.
+            "c" | "h" => Some(Lenguaje::C),
+            "cpp" | "cc" | "cxx" | "c++" | "hpp" | "hh" | "hxx" => Some(Lenguaje::Cpp),
+            "kt" | "kts" => Some(Lenguaje::Kotlin),
+            "cs" => Some(Lenguaje::CSharp),
+            "rb" => Some(Lenguaje::Ruby),
+            "php" | "phtml" => Some(Lenguaje::Php),
+            "html" | "htm" => Some(Lenguaje::Html),
+            "css" => Some(Lenguaje::Css),
+            "sql" => Some(Lenguaje::Sql),
             _ => None,
         }
     }
@@ -61,6 +120,17 @@ impl Lenguaje {
             "javascript" | "js" | "jsx" => Some(Lenguaje::JavaScript),
             "go" | "golang" => Some(Lenguaje::Go),
             "markdown" | "md" => Some(Lenguaje::Markdown),
+            "typescript" | "ts" | "tsx" => Some(Lenguaje::TypeScript),
+            "java" => Some(Lenguaje::Java),
+            "c" => Some(Lenguaje::C),
+            "cpp" | "c++" | "cxx" => Some(Lenguaje::Cpp),
+            "kotlin" | "kt" => Some(Lenguaje::Kotlin),
+            "csharp" | "cs" | "c#" => Some(Lenguaje::CSharp),
+            "ruby" | "rb" => Some(Lenguaje::Ruby),
+            "php" => Some(Lenguaje::Php),
+            "html" => Some(Lenguaje::Html),
+            "css" => Some(Lenguaje::Css),
+            "sql" => Some(Lenguaje::Sql),
             _ => None,
         }
     }
@@ -72,6 +142,17 @@ impl Lenguaje {
             Lenguaje::JavaScript => "JavaScript",
             Lenguaje::Go => "Go",
             Lenguaje::Markdown => "Markdown",
+            Lenguaje::TypeScript => "TypeScript",
+            Lenguaje::Java => "Java",
+            Lenguaje::C => "C",
+            Lenguaje::Cpp => "C++",
+            Lenguaje::Kotlin => "Kotlin",
+            Lenguaje::CSharp => "C#",
+            Lenguaje::Ruby => "Ruby",
+            Lenguaje::Php => "PHP",
+            Lenguaje::Html => "HTML",
+            Lenguaje::Css => "CSS",
+            Lenguaje::Sql => "SQL",
         }
     }
 }
@@ -88,6 +169,34 @@ mod tests {
         assert_eq!(Lenguaje::detectar_por_extension("componente.jsx"), Some(Lenguaje::JavaScript));
         assert_eq!(Lenguaje::detectar_por_extension("main.go"), Some(Lenguaje::Go));
         assert_eq!(Lenguaje::detectar_por_extension("README.md"), Some(Lenguaje::Markdown));
+    }
+
+    #[test]
+    fn detecta_la_primera_tanda_de_lenguajes_agregados_en_m4() {
+        assert_eq!(Lenguaje::detectar_por_extension("app.ts"), Some(Lenguaje::TypeScript));
+        assert_eq!(Lenguaje::detectar_por_extension("componente.tsx"), Some(Lenguaje::TypeScript));
+        assert_eq!(Lenguaje::detectar_por_extension("Principal.java"), Some(Lenguaje::Java));
+        assert_eq!(Lenguaje::detectar_por_extension("main.c"), Some(Lenguaje::C));
+        assert_eq!(Lenguaje::detectar_por_extension("cabecera.h"), Some(Lenguaje::C));
+        assert_eq!(Lenguaje::detectar_por_extension("main.cpp"), Some(Lenguaje::Cpp));
+        assert_eq!(Lenguaje::detectar_por_extension("cabecera.hpp"), Some(Lenguaje::Cpp));
+    }
+
+    #[test]
+    fn detecta_la_segunda_tanda_de_lenguajes_agregados_en_m4() {
+        assert_eq!(Lenguaje::detectar_por_extension("Principal.kt"), Some(Lenguaje::Kotlin));
+        assert_eq!(Lenguaje::detectar_por_extension("build.kts"), Some(Lenguaje::Kotlin));
+        assert_eq!(Lenguaje::detectar_por_extension("Programa.cs"), Some(Lenguaje::CSharp));
+        assert_eq!(Lenguaje::detectar_por_extension("script.rb"), Some(Lenguaje::Ruby));
+        assert_eq!(Lenguaje::detectar_por_extension("index.php"), Some(Lenguaje::Php));
+    }
+
+    #[test]
+    fn detecta_la_tercera_tanda_de_lenguajes_agregados_en_m4() {
+        assert_eq!(Lenguaje::detectar_por_extension("index.html"), Some(Lenguaje::Html));
+        assert_eq!(Lenguaje::detectar_por_extension("pagina.htm"), Some(Lenguaje::Html));
+        assert_eq!(Lenguaje::detectar_por_extension("estilos.css"), Some(Lenguaje::Css));
+        assert_eq!(Lenguaje::detectar_por_extension("consulta.sql"), Some(Lenguaje::Sql));
     }
 
     #[test]

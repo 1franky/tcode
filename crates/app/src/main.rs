@@ -34,8 +34,8 @@ use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
 use tcode_config::{
-    CampoTemas, Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin, ResultadoDuplicarTema,
-    Seccion,
+    CampoTemas, Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin, ModoEdicion,
+    ResultadoDuplicarTema, Seccion,
 };
 use tcode_core::{analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda};
 use tcode_fs::{BuscadorArchivos, Explorador};
@@ -244,7 +244,7 @@ async fn ejecutar(
     let mut panel_admin = EstadoPanelAdmin::nueva();
     let indice_atajos = tcode_config::indice_de(Seccion::Atajos);
     let indice_lenguajes = tcode_config::indice_de(Seccion::Lenguajes);
-    panel_admin.fijar_num_filas_atajos(1 + tcode_commands::comandos_disponibles().len());
+    panel_admin.fijar_num_filas_atajos(FILAS_ESPECIALES_ATAJOS + tcode_commands::comandos_disponibles().len());
     panel_admin.fijar_num_filas_lenguajes(Lenguaje::TODOS.len());
     panel_admin.fijar_opciones_externas(
         tcode_commands::comandos_disponibles()
@@ -341,27 +341,63 @@ async fn ejecutar(
         // escribir el código hex nuevo.
         if estado.editor_tema.activo() {
             estado.confirmar_salida = false;
-            if estado.editor_tema.editando() {
-                match key.code {
+            match categoria_modo_editor_tema(&estado.editor_tema) {
+                CategoriaModoEditorTema::Ninguno => match key.code {
+                    KeyCode::Esc => estado.editor_tema.cerrar(),
+                    KeyCode::Up => estado.editor_tema.mover_arriba(),
+                    KeyCode::Down => estado.editor_tema.mover_abajo(),
+                    KeyCode::Enter => estado.editor_tema.iniciar_edicion_hex(),
+                    // Sin `Ctrl`: son mnemónicos de una sola tecla (como
+                    // en un menú fijo), no hay texto que se pueda estar
+                    // escribiendo en esta vista mientras la lista tiene
+                    // el foco.
+                    KeyCode::Char('p') if sin_modificadores(key) => estado.editor_tema.iniciar_paleta(),
+                    KeyCode::Char('h') if sin_modificadores(key) => estado.editor_tema.iniciar_hsl(),
+                    _ => {}
+                },
+                CategoriaModoEditorTema::Hex => match key.code {
                     KeyCode::Esc => estado.editor_tema.cancelar_edicion(),
                     KeyCode::Backspace => estado.editor_tema.borrar_hex(),
                     KeyCode::Enter => {
-                        estado.editor_tema.confirmar_edicion();
+                        estado.editor_tema.confirmar_hex();
                         refrescar_preview_editor_tema(&mut estado);
                     }
                     KeyCode::Char(c) if sin_modificadores(key) && c.is_ascii_hexdigit() => {
                         estado.editor_tema.escribir_hex(c);
                     }
                     _ => {}
-                }
-            } else {
-                match key.code {
-                    KeyCode::Esc => estado.editor_tema.cerrar(),
-                    KeyCode::Up => estado.editor_tema.mover_arriba(),
-                    KeyCode::Down => estado.editor_tema.mover_abajo(),
-                    KeyCode::Enter => estado.editor_tema.iniciar_edicion(),
+                },
+                CategoriaModoEditorTema::Paleta => match key.code {
+                    KeyCode::Esc => estado.editor_tema.cancelar_edicion(),
+                    KeyCode::Up => estado.editor_tema.mover_paleta_arriba(),
+                    KeyCode::Down => estado.editor_tema.mover_paleta_abajo(),
+                    KeyCode::Enter => {
+                        estado.editor_tema.confirmar_paleta();
+                        refrescar_preview_editor_tema(&mut estado);
+                    }
                     _ => {}
-                }
+                },
+                CategoriaModoEditorTema::Hsl => match key.code {
+                    KeyCode::Esc => {
+                        estado.editor_tema.cancelar_edicion();
+                        refrescar_preview_editor_tema(&mut estado);
+                    }
+                    KeyCode::Left => estado.editor_tema.mover_foco_hsl(false),
+                    KeyCode::Right => estado.editor_tema.mover_foco_hsl(true),
+                    KeyCode::Up => {
+                        estado.editor_tema.ajustar_hsl(1);
+                        refrescar_preview_editor_tema(&mut estado);
+                    }
+                    KeyCode::Down => {
+                        estado.editor_tema.ajustar_hsl(-1);
+                        refrescar_preview_editor_tema(&mut estado);
+                    }
+                    KeyCode::Enter => {
+                        estado.editor_tema.confirmar_hsl();
+                        refrescar_preview_editor_tema(&mut estado);
+                    }
+                    _ => {}
+                },
             }
             sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
@@ -383,6 +419,19 @@ async fn ejecutar(
             // resolverse esta captura antes de cualquier otra cosa.
             if estado.panel_admin.capturando() {
                 manejar_captura_atajo(&mut estado, &mut resolvedor, key);
+            } else if estado.panel_admin.editando_comando_lsp().is_some() {
+                // Igual que la captura de atajo de arriba: mientras se
+                // edita el comando LSP personalizado de un lenguaje
+                // (`c` en "Lenguajes / LSP"), cualquier tecla se consume
+                // acá — `Enter`/`Esc` cierran el modo, el resto edita el
+                // buffer de texto.
+                match key.code {
+                    KeyCode::Esc => estado.panel_admin.cancelar_edicion_comando_lsp(),
+                    KeyCode::Enter => confirmar_edicion_comando_lsp(&mut estado),
+                    KeyCode::Backspace => estado.panel_admin.borrar_comando_lsp(),
+                    KeyCode::Char(c) if sin_modificadores(key) => estado.panel_admin.escribir_comando_lsp(c),
+                    _ => {}
+                }
             } else {
                 match estado.panel_admin.foco() {
                     FocoPanelAdmin::Barra => match key.code {
@@ -422,7 +471,7 @@ async fn ejecutar(
                             ejecutar_accion_temas_admin(&mut estado);
                         }
                         KeyCode::Enter if estado.panel_admin.seccion_actual() == Seccion::Atajos => {
-                            iniciar_o_restablecer_todos_los_atajos(&mut estado, &mut resolvedor);
+                            ejecutar_fila_atajos(&mut estado, &mut resolvedor);
                         }
                         KeyCode::Backspace if estado.panel_admin.seccion_actual() == Seccion::Atajos => {
                             restablecer_atajo_seleccionado(&mut estado, &mut resolvedor);
@@ -431,6 +480,14 @@ async fn ejecutar(
                             if estado.panel_admin.seccion_actual() == Seccion::Lenguajes =>
                         {
                             alternar_lsp_lenguaje_seleccionado(&mut estado);
+                        }
+                        KeyCode::Char('c')
+                            if sin_modificadores(key) && estado.panel_admin.seccion_actual() == Seccion::Lenguajes =>
+                        {
+                            iniciar_edicion_comando_lsp_seleccionado(&mut estado);
+                        }
+                        KeyCode::Backspace if estado.panel_admin.seccion_actual() == Seccion::Lenguajes => {
+                            quitar_comando_lsp_seleccionado(&mut estado);
                         }
                         KeyCode::Enter | KeyCode::Left | KeyCode::Right
                             if estado.panel_admin.seccion_actual() == Seccion::Interfaz =>
@@ -1018,6 +1075,29 @@ fn confirmar_tema_seleccionado(estado: &mut EstadoApp, id: &str) {
     let _ = tcode_config::guardar(&estado.config);
 }
 
+/// Qué bloque del `match` de más arriba corresponde al modo de edición
+/// actual del editor visual de tema — separado de `ModoEdicion` porque
+/// ese enum lleva los VALORES en curso (buffer de hex, HSL parcial...) y
+/// acá solo hace falta saber a cuál de los cuatro casos ir; extraerlo a
+/// una variable de esta forma, sin quedarse con el préstamo de
+/// `estado.editor_tema.modo()`, es lo que permite llamar métodos que la
+/// mutan (`&mut estado.editor_tema...`) en el cuerpo de cada rama.
+enum CategoriaModoEditorTema {
+    Ninguno,
+    Hex,
+    Paleta,
+    Hsl,
+}
+
+fn categoria_modo_editor_tema(editor_tema: &EstadoEditorTema) -> CategoriaModoEditorTema {
+    match editor_tema.modo() {
+        ModoEdicion::Ninguno => CategoriaModoEditorTema::Ninguno,
+        ModoEdicion::Hex(_) => CategoriaModoEditorTema::Hex,
+        ModoEdicion::Paleta(_) => CategoriaModoEditorTema::Paleta,
+        ModoEdicion::Hsl { .. } => CategoriaModoEditorTema::Hsl,
+    }
+}
+
 /// `Ctrl+K Ctrl+P` (`tema.editor_visual`, PLAN.md §7): abre el editor
 /// visual sobre una copia editable del tema activo (duplicándolo si
 /// hace falta, ver `EstadoEditorTema::abrir`) y lo deja como tema activo
@@ -1032,10 +1112,13 @@ fn abrir_editor_visual_tema(estado: &mut EstadoApp) {
     }
 }
 
-/// Tras aplicar un cambio de color en el editor visual: refresca
-/// `estado.paleta` desde la copia de trabajo (preview en vivo) — el
-/// guardado a disco ya lo hizo `EstadoEditorTema::confirmar_edicion` por
-/// su cuenta.
+/// Tras aplicar un cambio de color en el editor visual (por cualquiera
+/// de los tres métodos — `confirmar_hex`/`confirmar_paleta`/
+/// `ajustar_hsl`/`confirmar_hsl`, o `cancelar_edicion` revirtiendo un
+/// ajuste HSL a mitad de camino): refresca `estado.paleta` desde la
+/// copia de trabajo para que el preview en vivo se vea de inmediato — el
+/// guardado a disco, si corresponde, ya lo hizo el método de
+/// `EstadoEditorTema` por su cuenta.
 fn refrescar_preview_editor_tema(estado: &mut EstadoApp) {
     estado.paleta = Paleta::desde_tema(estado.editor_tema.tema()).unwrap_or_else(|_| Paleta::basica());
 }
@@ -1078,10 +1161,10 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
     Lenguaje::TODOS
         .iter()
         .map(|&lenguaje| {
-            let (comando, en_path) = match tcode_lsp::comando_para(lenguaje) {
+            let (comando, en_path) = match lsp::comando_efectivo(lenguaje, &estado.config) {
                 Some((comando, args)) => {
-                    let texto = if args.is_empty() { comando.to_string() } else { format!("{comando} {}", args.join(" ")) };
-                    (texto, ruta_en_path(comando))
+                    let texto = if args.is_empty() { comando.clone() } else { format!("{comando} {}", args.join(" ")) };
+                    (texto, ruta_en_path(&comando))
                 }
                 None => (String::new(), false),
             };
@@ -1095,6 +1178,7 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
                 comando,
                 en_path,
                 habilitado: estado.config.lenguajes.lsp_habilitado(lenguaje.id()),
+                personalizado: estado.config.lenguajes.comando_configurado(lenguaje.id()).is_some(),
                 estado: estado_texto,
             }
         })
@@ -1124,37 +1208,115 @@ fn alternar_lsp_lenguaje_seleccionado(estado: &mut EstadoApp) {
     }
 }
 
+/// Lenguaje de la fila seleccionada en "Lenguajes / LSP", o `None` si la
+/// sección actual no es esa.
+fn lenguaje_seleccionado_en_lenguajes(panel: &tcode_config::EstadoPanelAdmin) -> Option<Lenguaje> {
+    if panel.seccion_actual() != Seccion::Lenguajes {
+        return None;
+    }
+    Lenguaje::TODOS.get(panel.campo()).copied()
+}
+
+/// `c` sobre una fila de "Lenguajes / LSP": empieza a editar su comando
+/// personalizado, precargando el buffer con el comando efectivo actual
+/// (personalizado si ya hay uno, o el que trae `tcode_lsp::comando_para`
+/// por defecto, o vacío si no hay ninguno) — así se puede ajustar solo
+/// los argumentos sin volver a escribir todo desde cero.
+fn iniciar_edicion_comando_lsp_seleccionado(estado: &mut EstadoApp) {
+    let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
+    let valor_inicial = lsp::comando_efectivo(lenguaje, &estado.config)
+        .map(|(comando, args)| if args.is_empty() { comando } else { format!("{comando} {}", args.join(" ")) })
+        .unwrap_or_default();
+    estado.panel_admin.iniciar_edicion_comando_lsp(valor_inicial);
+}
+
+/// `Enter` mientras se edita el comando LSP de un lenguaje: guarda la
+/// línea escrita (o no hace nada si quedó vacía — no tiene sentido un
+/// comando en blanco) y cierra el modo de edición.
+fn confirmar_edicion_comando_lsp(estado: &mut EstadoApp) {
+    let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else {
+        estado.panel_admin.cancelar_edicion_comando_lsp();
+        return;
+    };
+    if let Some(linea) = estado.panel_admin.confirmar_edicion_comando_lsp() {
+        estado.config.lenguajes.fijar_comando_desde_linea(lenguaje.id(), &linea);
+        let _ = tcode_config::guardar(&estado.config);
+    }
+}
+
+/// `Backspace` sobre una fila de "Lenguajes / LSP" (fuera del modo de
+/// edición): quita el comando personalizado de ese lenguaje, si tenía
+/// uno — vuelve a usar el que trae `tcode_lsp::comando_para` por defecto.
+fn quitar_comando_lsp_seleccionado(estado: &mut EstadoApp) {
+    let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
+    estado.config.lenguajes.quitar_comando(lenguaje.id());
+    let _ = tcode_config::guardar(&estado.config);
+}
+
 /// El comando de `tcode_commands::comandos_disponibles()` que corresponde
 /// a la fila seleccionada de la sección "Atajos" del panel de
 /// administración — `None` si la fila 0 (la acción especial "restablecer
 /// todos") está seleccionada, o si la sección actual no es "Atajos".
+/// La sección "Atajos" tiene 3 filas especiales antes de la lista de
+/// comandos (ver `filas_atajos` en `tcode-ui`): restablecer todos,
+/// exportar, importar.
+const FILAS_ESPECIALES_ATAJOS: usize = 3;
+
 fn comando_seleccionado_en_atajos(panel: &tcode_config::EstadoPanelAdmin) -> Option<&'static str> {
-    if panel.seccion_actual() != Seccion::Atajos || panel.campo() == 0 {
+    if panel.seccion_actual() != Seccion::Atajos || panel.campo() < FILAS_ESPECIALES_ATAJOS {
         return None;
     }
-    tcode_commands::comandos_disponibles().get(panel.campo() - 1).map(|c| c.id)
+    tcode_commands::comandos_disponibles().get(panel.campo() - FILAS_ESPECIALES_ATAJOS).map(|c| c.id)
 }
 
-/// `Enter` sobre una fila de "Atajos" (PLAN.md §5): la fila 0 es la
-/// acción especial "restablecer TODOS los atajos por defecto" (borra el
-/// `keymap.toml` de usuario); cualquier otra fila entra en modo captura
-/// para reasignar ESE comando en particular.
-fn iniciar_o_restablecer_todos_los_atajos(estado: &mut EstadoApp, resolvedor: &mut Resolvedor) {
-    if estado.panel_admin.campo() == 0 {
-        let _ = tcode_keymap::eliminar_override_usuario();
-        estado.keymap = tcode_keymap::keymap_por_defecto();
-        resolvedor.reemplazar_keymap(estado.keymap.clone());
-        estado.panel_admin.establecer_mensaje("Todos los atajos vuelven a su valor por defecto".to_string());
-    } else {
-        estado.panel_admin.iniciar_captura();
+/// `Enter` sobre una de las 3 filas especiales de "Atajos" (PLAN.md
+/// §5.1) — restablecer todos, exportar, importar — o sobre cualquier
+/// otra fila, que entra en modo captura para reasignar ESE comando en
+/// particular.
+fn ejecutar_fila_atajos(estado: &mut EstadoApp, resolvedor: &mut Resolvedor) {
+    match estado.panel_admin.campo() {
+        0 => {
+            let _ = tcode_keymap::eliminar_override_usuario();
+            estado.keymap = tcode_keymap::keymap_por_defecto();
+            resolvedor.reemplazar_keymap(estado.keymap.clone());
+            estado.panel_admin.establecer_mensaje("Todos los atajos vuelven a su valor por defecto".to_string());
+        }
+        1 => match estado.keymap.exportar() {
+            Ok(ruta) => estado.panel_admin.establecer_mensaje(format!("Exportado a {}", ruta.display())),
+            Err(e) => estado.panel_admin.establecer_mensaje(format!("No se pudo exportar: {e}")),
+        },
+        2 => importar_atajos(estado, resolvedor),
+        _ => estado.panel_admin.iniciar_captura(),
     }
+}
+
+/// Fila "Importar atajos desde archivo" (PLAN.md §5.1): busca el
+/// archivo fijo de `tcode_keymap::ruta_keymap_a_importar()` — mismo
+/// espíritu que "poner un archivo en la carpeta de temas" para
+/// importar un tema (PLAN.md §7) — y, si está, lo adopta como keymap
+/// activo en caliente. Si no hay ningún archivo esperando, avisa dónde
+/// tiene que dejarse en vez de fallar en silencio.
+fn importar_atajos(estado: &mut EstadoApp, resolvedor: &mut Resolvedor) {
+    let mensaje = match tcode_keymap::importar_keymap() {
+        Ok(tcode_keymap::ResultadoImportarKeymap::Importado { ruta, keymap }) => {
+            estado.keymap = keymap;
+            resolvedor.reemplazar_keymap(estado.keymap.clone());
+            format!("Importado desde {}", ruta.display())
+        }
+        Ok(tcode_keymap::ResultadoImportarKeymap::NoHabiaArchivo(ruta)) => {
+            format!("No hay nada para importar — dejá el archivo en {}", ruta.display())
+        }
+        Err(e) => format!("No se pudo importar: {e}"),
+    };
+    estado.panel_admin.establecer_mensaje(mensaje);
 }
 
 /// `Backspace` sobre un comando de "Atajos": lo restablece a lo que ese
 /// comando tiene en el keymap por defecto (PLAN.md §5: "Botón
 /// 'Restablecer valor por defecto' por atajo"), sin tocar el resto de
-/// las personalizaciones. Sobre la fila 0 ("restablecer todos") no hace
-/// nada — ya tiene su propio gesto con `Enter`.
+/// las personalizaciones. Sobre cualquiera de las 3 filas especiales
+/// (restablecer todos / exportar / importar) no hace nada — cada una ya
+/// tiene su propio gesto con `Enter`.
 fn restablecer_atajo_seleccionado(estado: &mut EstadoApp, resolvedor: &mut Resolvedor) {
     let Some(comando) = comando_seleccionado_en_atajos(&estado.panel_admin) else { return };
     estado.keymap = estado.keymap.restablecer_comando(comando);

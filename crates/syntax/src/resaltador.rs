@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use anyhow::Result;
@@ -36,6 +37,11 @@ const NOMBRES_RECONOCIDOS: &[&str] = &[
     "text.reference",
     "punctuation.special",
     "punctuation.delimiter",
+    "punctuation.bracket",
+    "tag",
+    "attribute",
+    "property",
+    "spell",
 ];
 
 fn nombre_canonico(indice: usize) -> &'static str {
@@ -45,7 +51,24 @@ fn nombre_canonico(indice: usize) -> &'static str {
         "text.title" => "keyword",
         "text.literal" => "string",
         "text.uri" | "text.reference" => "constant",
-        "punctuation.special" | "punctuation.delimiter" => "operator",
+        "punctuation.special" | "punctuation.delimiter" | "punctuation.bracket" => "operator",
+        // HTML/CSS: nombres de etiqueta (`div`, seudo-elementos) como
+        // palabra clave, nombres de atributo (`class`, `href`...) como
+        // tipo, y nombres de propiedad CSS (`color`, `background`...)
+        // como variable — ninguno tiene una categoría propia entre las 9
+        // de `NOMBRES_RESALTADO`, así que se reasignan a la más
+        // parecida visualmente.
+        "tag" => "keyword",
+        "attribute" => "type",
+        "property" => "variable",
+        // SQL: `(comment) @comment @spell` marca el mismo nodo con dos
+        // capturas — si una de las dos no está entre las reconocidas,
+        // `tree-sitter-highlight` descarta el patrón completo (las dos
+        // capturas, no solo la desconocida), así que el comentario
+        // desaparecía por completo en vez de solo perder el marcado de
+        // "revisar ortografía" (que este editor no usa igual). Se
+        // reconoce y se reasigna a la misma categoría que su compañera.
+        "spell" => "comment",
         otro => otro,
     }
 }
@@ -80,39 +103,90 @@ impl Resaltador {
     }
 
     fn construir_config(lenguaje: Lenguaje) -> Result<HighlightConfiguration> {
-        let (language, nombre, highlights_query) = match lenguaje {
-            Lenguaje::Rust => (
-                tree_sitter_rust::LANGUAGE.into(),
-                "rust",
-                tree_sitter_rust::HIGHLIGHTS_QUERY,
-            ),
-            Lenguaje::Python => (
-                tree_sitter_python::LANGUAGE.into(),
-                "python",
-                tree_sitter_python::HIGHLIGHTS_QUERY,
-            ),
+        // `Cow` porque la mayoría de las queries son el `&'static str` que
+        // ya trae cada crate de gramática, pero TypeScript y C++ necesitan
+        // una concatenada en el momento (ver los dos casos de abajo).
+        let (language, nombre, highlights_query): (tree_sitter::Language, &str, Cow<'static, str>) = match lenguaje
+        {
+            Lenguaje::Rust => (tree_sitter_rust::LANGUAGE.into(), "rust", tree_sitter_rust::HIGHLIGHTS_QUERY.into()),
+            Lenguaje::Python => {
+                (tree_sitter_python::LANGUAGE.into(), "python", tree_sitter_python::HIGHLIGHTS_QUERY.into())
+            }
             Lenguaje::JavaScript => (
                 tree_sitter_javascript::LANGUAGE.into(),
                 "javascript",
-                tree_sitter_javascript::HIGHLIGHT_QUERY,
+                tree_sitter_javascript::HIGHLIGHT_QUERY.into(),
             ),
-            Lenguaje::Go => (
-                tree_sitter_go::LANGUAGE.into(),
-                "go",
-                tree_sitter_go::HIGHLIGHTS_QUERY,
-            ),
+            Lenguaje::Go => (tree_sitter_go::LANGUAGE.into(), "go", tree_sitter_go::HIGHLIGHTS_QUERY.into()),
             // Solo la gramática de bloque: encabezados, listas, citas,
             // bloques de código, etc. El contenido inline (negrita,
             // cursiva, enlaces) necesita la gramática inyectada aparte y
             // llega junto con la vista Markdown doble de M3.
-            Lenguaje::Markdown => (
-                tree_sitter_md::LANGUAGE.into(),
-                "markdown",
-                tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
+            Lenguaje::Markdown => {
+                (tree_sitter_md::LANGUAGE.into(), "markdown", tree_sitter_md::HIGHLIGHT_QUERY_BLOCK.into())
+            }
+            // El highlights.scm que trae `tree-sitter-typescript` es solo
+            // un complemento (tipos y palabras clave propias de TS) —
+            // asume que se combina con el de JavaScript para lo demás
+            // (strings, números, funciones...), igual que hacen
+            // nvim-treesitter y el resto del ecosistema. TSX es superset
+            // de TypeScript (además acepta JSX), así que una sola gramática
+            // alcanza para .ts y .tsx, igual que decidió
+            // `Lenguaje::detectar_por_extension`.
+            Lenguaje::TypeScript => (
+                tree_sitter_typescript::LANGUAGE_TSX.into(),
+                "typescript",
+                format!("{}\n{}", tree_sitter_javascript::HIGHLIGHT_QUERY, tree_sitter_typescript::HIGHLIGHTS_QUERY)
+                    .into(),
             ),
+            Lenguaje::Java => (tree_sitter_java::LANGUAGE.into(), "java", tree_sitter_java::HIGHLIGHTS_QUERY.into()),
+            Lenguaje::C => (tree_sitter_c::LANGUAGE.into(), "c", tree_sitter_c::HIGHLIGHT_QUERY.into()),
+            // Mismo caso que TypeScript/JavaScript: el highlights.scm de
+            // `tree-sitter-cpp` es un complemento sobre el de C (la
+            // gramática de C++ extiende la de C).
+            Lenguaje::Cpp => (
+                tree_sitter_cpp::LANGUAGE.into(),
+                "cpp",
+                format!("{}\n{}", tree_sitter_c::HIGHLIGHT_QUERY, tree_sitter_cpp::HIGHLIGHT_QUERY).into(),
+            ),
+            // `tree-sitter-kotlin-sg` (mantenida por ast-grep) en vez de la
+            // original de fwcd/tree-sitter-kotlin: esa última fija
+            // `tree-sitter` <0.23, incompatible con la 0.27 que usa el
+            // resto del crate (conflicto de la librería nativa "links").
+            // Su query es autocontenida (basada en la de nvim-treesitter).
+            Lenguaje::Kotlin => {
+                (tree_sitter_kotlin_sg::LANGUAGE.into(), "kotlin", tree_sitter_kotlin_sg::HIGHLIGHTS_QUERY.into())
+            }
+            Lenguaje::CSharp => {
+                (tree_sitter_c_sharp::LANGUAGE.into(), "c_sharp", tree_sitter_c_sharp::HIGHLIGHTS_QUERY.into())
+            }
+            Lenguaje::Ruby => (tree_sitter_ruby::LANGUAGE.into(), "ruby", tree_sitter_ruby::HIGHLIGHTS_QUERY.into()),
+            // La gramática "PHP" completa (a diferencia de "PHP_ONLY")
+            // reconoce el archivo típico que arranca con `<?php` sin
+            // necesitar tratarlo como HTML con PHP incrustado.
+            Lenguaje::Php => {
+                (tree_sitter_php::LANGUAGE_PHP.into(), "php", tree_sitter_php::HIGHLIGHTS_QUERY.into())
+            }
+            Lenguaje::Html => (tree_sitter_html::LANGUAGE.into(), "html", tree_sitter_html::HIGHLIGHTS_QUERY.into()),
+            Lenguaje::Css => (tree_sitter_css::LANGUAGE.into(), "css", tree_sitter_css::HIGHLIGHTS_QUERY.into()),
+            // El nombre del crate es "sequel" ("SQL" se lee igual en
+            // inglés) porque "tree-sitter-sql" ya estaba tomado en
+            // crates.io por una gramática distinta/menos completa.
+            //
+            // Limitación conocida de su `highlights.scm`: el predicado
+            // que distingue números (`#match? @number "^[-+]?%d+$"`)
+            // usa `%d`, sintaxis de patrones de Lua (viene de
+            // nvim-treesitter) — el motor de regex de `tree-sitter-
+            // highlight` en Rust no la entiende, así que nunca matchea
+            // y los números terminan cayendo en la captura genérica
+            // `(literal) @string` de la línea anterior. No es corregible
+            // desde acá sin mantener un fork de la query; cosmético
+            // nomás (los números igual se ven, solo que del color de
+            // los strings en vez de un color propio).
+            Lenguaje::Sql => (tree_sitter_sequel::LANGUAGE.into(), "sql", tree_sitter_sequel::HIGHLIGHTS_QUERY.into()),
         };
 
-        let mut config = HighlightConfiguration::new(language, nombre, highlights_query, "", "")?;
+        let mut config = HighlightConfiguration::new(language, nombre, &highlights_query, "", "")?;
         config.configure(NOMBRES_RECONOCIDOS);
         Ok(config)
     }
@@ -218,6 +292,76 @@ mod tests {
         let fuente = "# Título\n\ntexto normal\n";
         let tokens = resaltador.resaltar(Lenguaje::Markdown, fuente).unwrap();
         assert!(!tokens.is_empty(), "se esperaba al menos un token para el encabezado");
+    }
+
+    #[test]
+    fn resalta_la_primera_tanda_de_lenguajes_agregados_en_m4() {
+        let mut resaltador = Resaltador::nuevo();
+
+        let ts = "const x: string = \"hola\";\n";
+        let tokens_ts = resaltador.resaltar(Lenguaje::TypeScript, ts).unwrap();
+        assert!(nombres_en(&tokens_ts, ts).iter().any(|(n, _)| *n == "string"));
+
+        let tsx = "const f = () => <div>hola</div>;\n";
+        assert!(resaltador.resaltar(Lenguaje::TypeScript, tsx).is_ok());
+
+        let java = "// comentario\nclass Principal {}\n";
+        let tokens_java = resaltador.resaltar(Lenguaje::Java, java).unwrap();
+        assert!(nombres_en(&tokens_java, java).iter().any(|(n, _)| *n == "comment"));
+
+        let c = "int main() { return 0; }\n";
+        let tokens_c = resaltador.resaltar(Lenguaje::C, c).unwrap();
+        assert!(nombres_en(&tokens_c, c).iter().any(|(n, texto)| *n == "keyword" && texto == "return"));
+
+        let cpp = "#include <string>\nint main() { return 0; }\n";
+        let tokens_cpp = resaltador.resaltar(Lenguaje::Cpp, cpp).unwrap();
+        assert!(nombres_en(&tokens_cpp, cpp).iter().any(|(n, texto)| *n == "keyword" && texto == "return"));
+    }
+
+    #[test]
+    fn resalta_la_segunda_tanda_de_lenguajes_agregados_en_m4() {
+        let mut resaltador = Resaltador::nuevo();
+
+        let kotlin = "// comentario\nfun saludar(): String = \"hola\"\n";
+        let tokens_kt = resaltador.resaltar(Lenguaje::Kotlin, kotlin).unwrap();
+        assert!(nombres_en(&tokens_kt, kotlin).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_kt, kotlin).iter().any(|(n, _)| *n == "string"));
+
+        let csharp = "class Principal {\n    // comentario\n    static void Main() { int x = 42; }\n}\n";
+        let tokens_cs = resaltador.resaltar(Lenguaje::CSharp, csharp).unwrap();
+        assert!(nombres_en(&tokens_cs, csharp).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_cs, csharp).iter().any(|(n, texto)| *n == "number" && texto == "42"));
+
+        let ruby = "# comentario\ndef saludar\n  \"hola\"\nend\n";
+        let tokens_rb = resaltador.resaltar(Lenguaje::Ruby, ruby).unwrap();
+        assert!(nombres_en(&tokens_rb, ruby).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_rb, ruby).iter().any(|(n, _)| *n == "string"));
+
+        let php = "<?php\n// comentario\n$x = 42;\necho \"hola\";\n";
+        let tokens_php = resaltador.resaltar(Lenguaje::Php, php).unwrap();
+        assert!(nombres_en(&tokens_php, php).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_php, php).iter().any(|(n, texto)| *n == "number" && texto == "42"));
+    }
+
+    #[test]
+    fn resalta_la_tercera_tanda_de_lenguajes_agregados_en_m4() {
+        let mut resaltador = Resaltador::nuevo();
+
+        let html = "<!-- comentario -->\n<div class=\"main\">hola</div>\n";
+        let tokens_html = resaltador.resaltar(Lenguaje::Html, html).unwrap();
+        assert!(nombres_en(&tokens_html, html).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_html, html).iter().any(|(n, texto)| *n == "keyword" && texto == "div"));
+        assert!(nombres_en(&tokens_html, html).iter().any(|(n, _)| *n == "string"));
+
+        let css = "/* comentario */\n.main {\n  color: red;\n}\n";
+        let tokens_css = resaltador.resaltar(Lenguaje::Css, css).unwrap();
+        assert!(nombres_en(&tokens_css, css).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_css, css).iter().any(|(n, texto)| *n == "variable" && texto == "color"));
+
+        let sql = "-- comentario\nSELECT * FROM usuarios WHERE id = 42;\n";
+        let tokens_sql = resaltador.resaltar(Lenguaje::Sql, sql).unwrap();
+        assert!(nombres_en(&tokens_sql, sql).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_sql, sql).iter().any(|(n, texto)| *n == "keyword" && texto.eq_ignore_ascii_case("select")));
     }
 
     #[test]

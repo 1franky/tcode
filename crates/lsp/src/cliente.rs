@@ -109,10 +109,34 @@ async fn leer_en_bucle(mut reader: BufReader<ChildStdout>, tx: mpsc::UnboundedSe
 /// Comando y argumentos para lanzar el LSP server de un lenguaje, si
 /// `tcode` conoce uno (PLAN.md §6). `None` si no hay soporte configurado
 /// todavía — el resto de los 13 lenguajes objetivo se suman
-/// incrementalmente; el editor sigue funcionando igual sin LSP para esos.
+/// incrementalmente; el editor sigue funcionando igual sin LSP para esos
+/// (y el usuario puede fijar el suyo a mano desde el panel de
+/// administración, sección "Lenguajes / LSP", aunque no haya uno acá).
 pub fn comando_para(lenguaje: tcode_syntax::Lenguaje) -> Option<(&'static str, &'static [&'static str])> {
     match lenguaje {
         tcode_syntax::Lenguaje::Python => Some(("pyright-langserver", &["--stdio"])),
+        tcode_syntax::Lenguaje::TypeScript => Some(("typescript-language-server", &["--stdio"])),
+        // clangd sirve tanto a C como a C++ (PLAN.md §6, fila "C/C++") y
+        // habla por stdio sin argumentos adicionales.
+        tcode_syntax::Lenguaje::C | tcode_syntax::Lenguaje::Cpp => Some(("clangd", &[])),
+        tcode_syntax::Lenguaje::Ruby => Some(("solargraph", &["stdio"])),
+        tcode_syntax::Lenguaje::Php => Some(("intelephense", &["--stdio"])),
+        // Habla LSP por stdio sin flags ni argumentos adicionales, igual
+        // que clangd/pyright — no necesita saber de antemano nada del
+        // proyecto para arrancar (a diferencia de jdtls/omnisharp).
+        tcode_syntax::Lenguaje::Kotlin => Some(("kotlin-language-server", &[])),
+        // El paquete `vscode-langservers-extracted` (PLAN.md §6, fila
+        // "HTML/CSS") instala un binario separado para cada uno, ambos
+        // hablando LSP por `--stdio` sin argumentos extra.
+        tcode_syntax::Lenguaje::Html => Some(("vscode-html-language-server", &["--stdio"])),
+        tcode_syntax::Lenguaje::Css => Some(("vscode-css-language-server", &["--stdio"])),
+        tcode_syntax::Lenguaje::Sql => Some(("sqls", &[])),
+        // `jdtls` (Java) necesita un directorio de datos de workspace
+        // como argumento (`-data <dir>`) para funcionar bien, y
+        // `omnisharp` (C#) necesita el `.sln`/directorio del proyecto —
+        // ninguno tiene un valor razonable que fijar acá sin saber el
+        // proyecto del usuario, así que quedan sin comando por defecto
+        // (configurables a mano, como cualquier lenguaje sin uno).
         _ => None,
     }
 }
@@ -131,6 +155,64 @@ mod tests {
     #[test]
     fn comando_para_rust_todavia_no_existe() {
         assert!(comando_para(tcode_syntax::Lenguaje::Rust).is_none());
+    }
+
+    #[test]
+    fn comando_para_typescript_es_typescript_language_server() {
+        let (comando, args) = comando_para(tcode_syntax::Lenguaje::TypeScript).unwrap();
+        assert_eq!(comando, "typescript-language-server");
+        assert_eq!(args, &["--stdio"]);
+    }
+
+    #[test]
+    fn comando_para_c_y_cpp_es_clangd() {
+        assert_eq!(comando_para(tcode_syntax::Lenguaje::C).unwrap().0, "clangd");
+        assert_eq!(comando_para(tcode_syntax::Lenguaje::Cpp).unwrap().0, "clangd");
+    }
+
+    #[test]
+    fn comando_para_java_todavia_no_tiene_default() {
+        assert!(comando_para(tcode_syntax::Lenguaje::Java).is_none());
+    }
+
+    #[test]
+    fn comando_para_ruby_es_solargraph() {
+        let (comando, args) = comando_para(tcode_syntax::Lenguaje::Ruby).unwrap();
+        assert_eq!(comando, "solargraph");
+        assert_eq!(args, &["stdio"]);
+    }
+
+    #[test]
+    fn comando_para_php_es_intelephense() {
+        let (comando, args) = comando_para(tcode_syntax::Lenguaje::Php).unwrap();
+        assert_eq!(comando, "intelephense");
+        assert_eq!(args, &["--stdio"]);
+    }
+
+    #[test]
+    fn comando_para_kotlin_es_kotlin_language_server() {
+        assert_eq!(comando_para(tcode_syntax::Lenguaje::Kotlin).unwrap().0, "kotlin-language-server");
+    }
+
+    #[test]
+    fn comando_para_csharp_todavia_no_tiene_default() {
+        assert!(comando_para(tcode_syntax::Lenguaje::CSharp).is_none());
+    }
+
+    #[test]
+    fn comando_para_html_y_css_es_vscode_langservers_extracted() {
+        let (comando, args) = comando_para(tcode_syntax::Lenguaje::Html).unwrap();
+        assert_eq!(comando, "vscode-html-language-server");
+        assert_eq!(args, &["--stdio"]);
+
+        let (comando, args) = comando_para(tcode_syntax::Lenguaje::Css).unwrap();
+        assert_eq!(comando, "vscode-css-language-server");
+        assert_eq!(args, &["--stdio"]);
+    }
+
+    #[test]
+    fn comando_para_sql_es_sqls() {
+        assert_eq!(comando_para(tcode_syntax::Lenguaje::Sql).unwrap().0, "sqls");
     }
 
     /// Verifica el ciclo de vida completo contra un proceso real y
