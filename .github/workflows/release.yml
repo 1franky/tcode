@@ -1,8 +1,9 @@
 name: Release
 
 # Se dispara al empujar un tag "v*.*.*" a main (ej. v0.1.0) — no en cada
-# push. Compila tcode para Linux, macOS (Intel + Apple Silicon) y Windows,
-# y publica los binarios como un GitHub Release (PLAN.md §10, §11 M5).
+# push. Compila tcode para Linux (x86_64 y ARM64), macOS (Intel y Apple
+# Silicon) y Windows, y publica los binarios como un GitHub Release
+# (PLAN.md §10, §11 M5).
 #
 # Firma de binarios (macOS notarización, Authenticode de Windows) queda
 # pendiente: requiere certificados de pago que el proyecto no tiene
@@ -28,6 +29,15 @@ jobs:
           - nombre: linux-x86_64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+          - nombre: linux-arm64
+            # Sin runner ARM64 gratuito para repos públicos todavía en
+            # este proyecto: se compila cruzado desde un runner x86_64
+            # (ver el paso "Instalar el compilador cruzado" más abajo).
+            # Cubre VPS ARM (AWS Graviton, Oracle Ampere, Raspberry Pi de
+            # 64 bits) — reportado como faltante al intentar instalar en
+            # uno de esos.
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
           - nombre: macos-arm64
             os: macos-latest
             target: aarch64-apple-darwin
@@ -48,8 +58,22 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Instalar el compilador cruzado (Linux ARM64 en runner x86_64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Compilar en modo release
         run: cargo build --release --target ${{ matrix.target }}
+        env:
+          # Sin efecto en los demás targets — cargo solo consulta la
+          # variable del target que está compilando en este paso. Hace
+          # falta tanto para el linker final como para el compilador C
+          # que usa `cc-rs` al compilar las gramáticas de tree-sitter
+          # (son código C, no Rust — necesitan su propio cruce).
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
 
       - name: Empaquetar (Linux/macOS)
         if: runner.os != 'Windows'

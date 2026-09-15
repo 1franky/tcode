@@ -29,6 +29,11 @@ detectar_plataforma() {
         Linux)
             case "$arquitectura" in
                 x86_64) echo "linux-x86_64" ;;
+                # `uname -m` reporta "aarch64" en todos los Linux ARM de
+                # 64 bits que se probaron (VPS ARM tipo AWS Graviton/
+                # Oracle Ampere, Raspberry Pi de 64 bits) — "arm64" queda
+                # como alias por si algún sistema lo reporta distinto.
+                aarch64 | arm64) echo "linux-arm64" ;;
                 *) error "Linux en '$arquitectura' no tiene binario pre-compilado todavía. Compila desde el código fuente con 'cargo build --release'." ;;
             esac
             ;;

@@ -207,7 +207,8 @@ abajo, es donde más problemas aparecieron).
 ## Distribución / instaladores
 
 - [ ] `install/linux.sh` en una máquina Linux limpia (o `install/windows.ps1` en Windows): instala sin pedir contraseña/administrador, y `tcode` queda disponible en cualquier carpeta después de abrir una terminal nueva.
-- [ ] La release en GitHub del tag correspondiente tiene los 4 binarios: `tcode-linux-x86_64.tar.gz`, `tcode-macos-arm64.tar.gz`, `tcode-macos-x86_64.tar.gz`, `tcode-windows-x86_64.zip`.
+- [ ] La release en GitHub del tag correspondiente tiene los 5 binarios: `tcode-linux-x86_64.tar.gz`, `tcode-linux-arm64.tar.gz`, `tcode-macos-arm64.tar.gz`, `tcode-macos-x86_64.tar.gz`, `tcode-windows-x86_64.zip`.
+- [ ] `install/linux.sh` en una VPS/máquina Linux ARM64 real (`uname -m` da `aarch64` — AWS Graviton, Oracle Ampere, Raspberry Pi de 64 bits): detecta la plataforma como `linux-arm64`, descarga ese binario (no el de x86_64) y funciona igual que en x86_64 — confirmar que el binario corre (`tcode --help` o abrir un archivo) sin error de "exec format error".
 
 ## ⚠️ Bug conocido en Windows — todavía sin resolver
 
