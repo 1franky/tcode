@@ -190,6 +190,16 @@ abajo, es donde más problemas aparecieron).
 - [ ] Con `clangd` instalado y un `.c` o `.cpp` abierto: el estado pasa de "Iniciando…" a "Conectado" solo.
 - [ ] Un bloque de código Markdown con etiqueta ` ```typescript `, ` ```java `, ` ```c ` o ` ```cpp ` (alias `ts`/`c++`/`cxx` también) se resalta con la vista de preview (`Ctrl+K V`).
 
+### Segunda tanda de lenguajes nuevos: Kotlin, C#, Ruby, PHP
+
+- [ ] Abrir un archivo `.kt` (y opcionalmente `.kts`): resaltado correcto (`fun`/`val`/`return`, tipos como `String`, nombres de función en verde, strings con interpolación `$variable`, comentarios); la statusbar muestra "Kotlin".
+- [ ] Abrir un archivo `.cs`: resaltado correcto (`class`/`static`/`void`, tipos, nombres de método, números, strings, comentarios); la statusbar muestra "C#".
+- [ ] Abrir un archivo `.rb`: resaltado correcto (`def`/`end`, strings con interpolación `#{...}`, comentarios con `#`); la statusbar muestra "Ruby".
+- [ ] Abrir un archivo `.php` que arranca con `<?php`: resaltado correcto (`echo`, variables `$x`, strings, números, comentarios `//`); la statusbar muestra "PHP".
+- [ ] Dentro del panel (`Ctrl+K A` → "Lenguajes / LSP"): ahora hay 13 filas (los 13 lenguajes objetivo de PLAN.md §6 completos) — las nuevas son Kotlin ("kotlin-language-server"), C# ("(sin LSP configurado)" — `omnisharp` necesita el directorio del proyecto, se configura a mano con `c` si se quiere), Ruby ("solargraph stdio") y PHP ("intelephense --stdio").
+- [ ] Con `solargraph` o `intelephense` instalado y un `.rb`/`.php` abierto respectivamente: el estado pasa de "Iniciando…" a "Conectado" solo.
+- [ ] Un bloque de código Markdown con etiqueta ` ```kotlin `, ` ```csharp `, ` ```ruby ` o ` ```php ` (alias `kt`/`cs`/`rb` también) se resalta con la vista de preview (`Ctrl+K V`).
+
 ## M4 — Sección "Interfaz" del panel de administración
 
 - [ ] Dentro del panel (`Ctrl+K A`), la sección "Interfaz" ya NO dice "(próximamente)": lista 7 filas — "Mostrar barra de estado" y 6 elementos de la statusbar (posición del cursor, codificación, fin de línea, lenguaje detectado, resumen de diagnósticos LSP, modo), todas en "Sí" por defecto.

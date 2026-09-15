@@ -119,11 +119,18 @@ pub fn comando_para(lenguaje: tcode_syntax::Lenguaje) -> Option<(&'static str, &
         // clangd sirve tanto a C como a C++ (PLAN.md §6, fila "C/C++") y
         // habla por stdio sin argumentos adicionales.
         tcode_syntax::Lenguaje::C | tcode_syntax::Lenguaje::Cpp => Some(("clangd", &[])),
+        tcode_syntax::Lenguaje::Ruby => Some(("solargraph", &["stdio"])),
+        tcode_syntax::Lenguaje::Php => Some(("intelephense", &["--stdio"])),
+        // Habla LSP por stdio sin flags ni argumentos adicionales, igual
+        // que clangd/pyright — no necesita saber de antemano nada del
+        // proyecto para arrancar (a diferencia de jdtls/omnisharp).
+        tcode_syntax::Lenguaje::Kotlin => Some(("kotlin-language-server", &[])),
         // `jdtls` (Java) necesita un directorio de datos de workspace
-        // como argumento (`-data <dir>`) para funcionar bien — no hay un
-        // valor razonable que fijar acá sin saber el proyecto del
-        // usuario, así que queda sin comando por defecto (configurable a
-        // mano, como cualquier lenguaje sin uno).
+        // como argumento (`-data <dir>`) para funcionar bien, y
+        // `omnisharp` (C#) necesita el `.sln`/directorio del proyecto —
+        // ninguno tiene un valor razonable que fijar acá sin saber el
+        // proyecto del usuario, así que quedan sin comando por defecto
+        // (configurables a mano, como cualquier lenguaje sin uno).
         _ => None,
     }
 }
@@ -160,6 +167,30 @@ mod tests {
     #[test]
     fn comando_para_java_todavia_no_tiene_default() {
         assert!(comando_para(tcode_syntax::Lenguaje::Java).is_none());
+    }
+
+    #[test]
+    fn comando_para_ruby_es_solargraph() {
+        let (comando, args) = comando_para(tcode_syntax::Lenguaje::Ruby).unwrap();
+        assert_eq!(comando, "solargraph");
+        assert_eq!(args, &["stdio"]);
+    }
+
+    #[test]
+    fn comando_para_php_es_intelephense() {
+        let (comando, args) = comando_para(tcode_syntax::Lenguaje::Php).unwrap();
+        assert_eq!(comando, "intelephense");
+        assert_eq!(args, &["--stdio"]);
+    }
+
+    #[test]
+    fn comando_para_kotlin_es_kotlin_language_server() {
+        assert_eq!(comando_para(tcode_syntax::Lenguaje::Kotlin).unwrap().0, "kotlin-language-server");
+    }
+
+    #[test]
+    fn comando_para_csharp_todavia_no_tiene_default() {
+        assert!(comando_para(tcode_syntax::Lenguaje::CSharp).is_none());
     }
 
     /// Verifica el ciclo de vida completo contra un proceso real y
