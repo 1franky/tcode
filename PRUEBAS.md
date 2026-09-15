@@ -169,6 +169,17 @@ abajo, es donde más problemas aparecieron).
 - [ ] La búsqueda global del panel (`Ctrl+F`) encuentra los lenguajes por su nombre (probar "python", "rust") y salta a la fila correcta de "Lenguajes / LSP".
 - [ ] Sin `pyright` instalado (o con el `PATH` alterado para que no se encuentre): la fila de Python muestra "[no encontrado en el PATH]" resaltado, y el comando LSP simplemente no se lanza (sin romper nada) al abrir un `.py`.
 
+### Comando LSP personalizado por lenguaje (`c` / `Backspace` en "Lenguajes / LSP")
+
+- [ ] Sobre cualquier fila de "Lenguajes / LSP" (foco en el área central), `c` abre un campo de texto en el lugar del comando, con el cursor (`▏`) al final y el pie cambia a "Escribí el comando y sus argumentos · Enter guarda · Esc cancela". Si el lenguaje ya tiene un comando (propio o por defecto, como Python), el campo arranca precargado con ese valor completo, listo para ajustarlo en vez de reescribirlo entero.
+- [ ] Escribir "rust-analyzer --stdio" sobre la fila de Rust (que no tiene LSP por defecto) y `Enter`: la fila pasa a mostrar "rust-analyzer --stdio (personalizado) [en el PATH]" (o "[no encontrado en el PATH]" si no está instalado) y el estado pasa a "Iniciando…"/"Conectado" si el archivo activo es de ese lenguaje — confirma en `config.toml` que quedó guardado en `[lenguajes.lsp_comando.rust]` con `comando`/`argumentos` separados.
+- [ ] Sobre Python (que sí tiene comando por defecto), editar el precargado agregando un argumento (p. ej. `--verbose`) y `Enter`: la fila muestra "(personalizado)" junto al comando, y si hay un `.py` abierto el proceso se relanza usando el comando nuevo — confirmar con `ps aux | grep pyright` que el proceso real corre con el argumento agregado.
+- [ ] `Esc` en vez de `Enter` mientras se edita: descarta el buffer, la fila vuelve a mostrar el valor de antes y no se persiste nada en `config.toml`.
+- [ ] Escribir una línea vacía (o solo espacios) y `Enter`: no guarda nada (no tiene sentido un comando en blanco) — la fila queda igual que antes de entrar a editar.
+- [ ] `Backspace` sobre una fila (sin estar editando) que tiene un comando personalizado: lo quita y vuelve a usar el de `tcode_lsp::comando_para` por defecto (o "(sin LSP configurado)" si no hay ninguno, como en Rust) — si había una sesión activa con ese lenguaje, se relanza con el comando por defecto (o se cierra, si no queda ninguno).
+- [ ] Con un `.py` abierto y el LSP ya "Conectado" con el comando por defecto: editar el comando personalizado de Python en vivo (agregar/quitar un argumento) y confirmar con `Enter` — la sesión vieja se cierra y se relanza sola con el comando nuevo (pasa por "Iniciando…" y vuelve a "Conectado"), sin reiniciar el editor.
+- [ ] Cerrar tcode y volver a abrirlo con un `.py` activo: el override de Python persiste (sigue mostrando "(personalizado)" y el LSP se conecta con el comando guardado, no con el de por defecto).
+
 ## M4 — Sección "Interfaz" del panel de administración
 
 - [ ] Dentro del panel (`Ctrl+K A`), la sección "Interfaz" ya NO dice "(próximamente)": lista 7 filas — "Mostrar barra de estado" y 6 elementos de la statusbar (posición del cursor, codificación, fin de línea, lenguaje detectado, resumen de diagnósticos LSP, modo), todas en "Sí" por defecto.

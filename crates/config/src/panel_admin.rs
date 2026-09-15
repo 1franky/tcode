@@ -323,6 +323,14 @@ pub struct EstadoPanelAdmin {
     /// prender/apagar el modo; `app` es quien interpreta la tecla
     /// siguiente y decide qué hacer con ella.
     capturando: bool,
+    /// `Some(buffer)` mientras se edita el comando LSP personalizado de un
+    /// lenguaje en la sección "Lenguajes / LSP" (PLAN.md §5.3) — el
+    /// `buffer` es la línea completa tal como se está escribiendo
+    /// ("comando arg1 arg2 ..."), igual al formato que espera
+    /// `ConfigLenguajes::fijar_comando_desde_linea`. Igual que
+    /// `capturando`, es un flag genérico: este crate no sabe de teclas
+    /// concretas, solo guarda el texto que `app` va acumulando.
+    editando_comando_lsp: Option<String>,
 }
 
 impl EstadoPanelAdmin {
@@ -338,6 +346,7 @@ impl EstadoPanelAdmin {
             num_filas_lenguajes: 0,
             opciones_externas: Vec::new(),
             capturando: false,
+            editando_comando_lsp: None,
         }
     }
 
@@ -381,6 +390,46 @@ impl EstadoPanelAdmin {
     /// en ese estado.
     pub fn terminar_captura(&mut self) {
         self.capturando = false;
+    }
+
+    /// Buffer actual mientras se edita un comando LSP personalizado, o
+    /// `None` si no se está editando ninguno.
+    pub fn editando_comando_lsp(&self) -> Option<&str> {
+        self.editando_comando_lsp.as_deref()
+    }
+
+    /// Empieza a editar el comando LSP de la fila seleccionada en
+    /// "Lenguajes / LSP", con `valor_inicial` precargado en el buffer —
+    /// `app` decide qué precargar (el comando personalizado si ya hay
+    /// uno, o el efectivo por defecto, o vacío si no hay ninguno).
+    pub fn iniciar_edicion_comando_lsp(&mut self, valor_inicial: String) {
+        self.editando_comando_lsp = Some(valor_inicial);
+        self.mensaje = None;
+    }
+
+    pub fn escribir_comando_lsp(&mut self, c: char) {
+        if let Some(buffer) = &mut self.editando_comando_lsp {
+            buffer.push(c);
+        }
+    }
+
+    pub fn borrar_comando_lsp(&mut self) {
+        if let Some(buffer) = &mut self.editando_comando_lsp {
+            buffer.pop();
+        }
+    }
+
+    /// `Esc` durante la edición: descarta el buffer sin guardar nada.
+    pub fn cancelar_edicion_comando_lsp(&mut self) {
+        self.editando_comando_lsp = None;
+    }
+
+    /// `Enter` durante la edición: devuelve el buffer para que `app` lo
+    /// guarde vía `ConfigLenguajes::fijar_comando_desde_linea` y cierra el
+    /// modo de edición. `None` si no se estaba editando nada (no debería
+    /// pasar si quien llama ya chequeó `editando_comando_lsp().is_some()`).
+    pub fn confirmar_edicion_comando_lsp(&mut self) -> Option<String> {
+        self.editando_comando_lsp.take()
     }
 
     pub fn activo(&self) -> bool {
@@ -429,6 +478,7 @@ impl EstadoPanelAdmin {
         self.busqueda.clear();
         self.mensaje = None;
         self.capturando = false;
+        self.editando_comando_lsp = None;
     }
 
     pub fn cerrar(&mut self) {
@@ -441,6 +491,7 @@ impl EstadoPanelAdmin {
             self.campo = 0;
             self.mensaje = None;
             self.capturando = false;
+            self.editando_comando_lsp = None;
         }
     }
 
@@ -450,6 +501,7 @@ impl EstadoPanelAdmin {
             self.campo = 0;
             self.mensaje = None;
             self.capturando = false;
+            self.editando_comando_lsp = None;
         }
     }
 
@@ -532,6 +584,7 @@ impl EstadoPanelAdmin {
             self.campo = 0;
             self.mensaje = None;
             self.capturando = false;
+            self.editando_comando_lsp = None;
         }
     }
 
@@ -551,6 +604,7 @@ impl EstadoPanelAdmin {
                 self.foco = FocoPanelAdmin::Barra;
                 self.mensaje = None;
                 self.capturando = false;
+                self.editando_comando_lsp = None;
                 true
             }
             FocoPanelAdmin::Barra => {
@@ -568,6 +622,7 @@ impl EstadoPanelAdmin {
         self.campo = 0;
         self.mensaje = None;
         self.capturando = false;
+        self.editando_comando_lsp = None;
     }
 
     pub fn escribir_busqueda(&mut self, c: char) {

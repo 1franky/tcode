@@ -419,6 +419,19 @@ async fn ejecutar(
             // resolverse esta captura antes de cualquier otra cosa.
             if estado.panel_admin.capturando() {
                 manejar_captura_atajo(&mut estado, &mut resolvedor, key);
+            } else if estado.panel_admin.editando_comando_lsp().is_some() {
+                // Igual que la captura de atajo de arriba: mientras se
+                // edita el comando LSP personalizado de un lenguaje
+                // (`c` en "Lenguajes / LSP"), cualquier tecla se consume
+                // acá — `Enter`/`Esc` cierran el modo, el resto edita el
+                // buffer de texto.
+                match key.code {
+                    KeyCode::Esc => estado.panel_admin.cancelar_edicion_comando_lsp(),
+                    KeyCode::Enter => confirmar_edicion_comando_lsp(&mut estado),
+                    KeyCode::Backspace => estado.panel_admin.borrar_comando_lsp(),
+                    KeyCode::Char(c) if sin_modificadores(key) => estado.panel_admin.escribir_comando_lsp(c),
+                    _ => {}
+                }
             } else {
                 match estado.panel_admin.foco() {
                     FocoPanelAdmin::Barra => match key.code {
@@ -467,6 +480,14 @@ async fn ejecutar(
                             if estado.panel_admin.seccion_actual() == Seccion::Lenguajes =>
                         {
                             alternar_lsp_lenguaje_seleccionado(&mut estado);
+                        }
+                        KeyCode::Char('c')
+                            if sin_modificadores(key) && estado.panel_admin.seccion_actual() == Seccion::Lenguajes =>
+                        {
+                            iniciar_edicion_comando_lsp_seleccionado(&mut estado);
+                        }
+                        KeyCode::Backspace if estado.panel_admin.seccion_actual() == Seccion::Lenguajes => {
+                            quitar_comando_lsp_seleccionado(&mut estado);
                         }
                         KeyCode::Enter | KeyCode::Left | KeyCode::Right
                             if estado.panel_admin.seccion_actual() == Seccion::Interfaz =>
@@ -1140,10 +1161,10 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
     Lenguaje::TODOS
         .iter()
         .map(|&lenguaje| {
-            let (comando, en_path) = match tcode_lsp::comando_para(lenguaje) {
+            let (comando, en_path) = match lsp::comando_efectivo(lenguaje, &estado.config) {
                 Some((comando, args)) => {
-                    let texto = if args.is_empty() { comando.to_string() } else { format!("{comando} {}", args.join(" ")) };
-                    (texto, ruta_en_path(comando))
+                    let texto = if args.is_empty() { comando.clone() } else { format!("{comando} {}", args.join(" ")) };
+                    (texto, ruta_en_path(&comando))
                 }
                 None => (String::new(), false),
             };
@@ -1157,6 +1178,7 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
                 comando,
                 en_path,
                 habilitado: estado.config.lenguajes.lsp_habilitado(lenguaje.id()),
+                personalizado: estado.config.lenguajes.comando_configurado(lenguaje.id()).is_some(),
                 estado: estado_texto,
             }
         })
@@ -1184,6 +1206,51 @@ fn alternar_lsp_lenguaje_seleccionado(estado: &mut EstadoApp) {
         estado.config.lenguajes.alternar_lsp(lenguaje.id());
         let _ = tcode_config::guardar(&estado.config);
     }
+}
+
+/// Lenguaje de la fila seleccionada en "Lenguajes / LSP", o `None` si la
+/// sección actual no es esa.
+fn lenguaje_seleccionado_en_lenguajes(panel: &tcode_config::EstadoPanelAdmin) -> Option<Lenguaje> {
+    if panel.seccion_actual() != Seccion::Lenguajes {
+        return None;
+    }
+    Lenguaje::TODOS.get(panel.campo()).copied()
+}
+
+/// `c` sobre una fila de "Lenguajes / LSP": empieza a editar su comando
+/// personalizado, precargando el buffer con el comando efectivo actual
+/// (personalizado si ya hay uno, o el que trae `tcode_lsp::comando_para`
+/// por defecto, o vacío si no hay ninguno) — así se puede ajustar solo
+/// los argumentos sin volver a escribir todo desde cero.
+fn iniciar_edicion_comando_lsp_seleccionado(estado: &mut EstadoApp) {
+    let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
+    let valor_inicial = lsp::comando_efectivo(lenguaje, &estado.config)
+        .map(|(comando, args)| if args.is_empty() { comando } else { format!("{comando} {}", args.join(" ")) })
+        .unwrap_or_default();
+    estado.panel_admin.iniciar_edicion_comando_lsp(valor_inicial);
+}
+
+/// `Enter` mientras se edita el comando LSP de un lenguaje: guarda la
+/// línea escrita (o no hace nada si quedó vacía — no tiene sentido un
+/// comando en blanco) y cierra el modo de edición.
+fn confirmar_edicion_comando_lsp(estado: &mut EstadoApp) {
+    let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else {
+        estado.panel_admin.cancelar_edicion_comando_lsp();
+        return;
+    };
+    if let Some(linea) = estado.panel_admin.confirmar_edicion_comando_lsp() {
+        estado.config.lenguajes.fijar_comando_desde_linea(lenguaje.id(), &linea);
+        let _ = tcode_config::guardar(&estado.config);
+    }
+}
+
+/// `Backspace` sobre una fila de "Lenguajes / LSP" (fuera del modo de
+/// edición): quita el comando personalizado de ese lenguaje, si tenía
+/// uno — vuelve a usar el que trae `tcode_lsp::comando_para` por defecto.
+fn quitar_comando_lsp_seleccionado(estado: &mut EstadoApp) {
+    let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
+    estado.config.lenguajes.quitar_comando(lenguaje.id());
+    let _ = tcode_config::guardar(&estado.config);
 }
 
 /// El comando de `tcode_commands::comandos_disponibles()` que corresponde

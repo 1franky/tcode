@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -71,11 +72,22 @@ impl Default for ConfigInterfaz {
     }
 }
 
+/// Comando + argumentos configurados a mano para el LSP de un lenguaje
+/// (PLAN.md §5.3: "Configurar comando, argumentos y variables de
+/// entorno") — sobreescribe lo que `tcode_lsp::comando_para` trae fijo
+/// para ese lenguaje (que puede ser nada, como todos salvo Python por
+/// ahora). Variables de entorno quedan fuera de esta pieza: por ahora
+/// solo comando + argumentos, que ya es lo que hace falta para apuntar
+/// a `rust-analyzer`/`gopls`/`clangd`/etc. sin recompilar.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Default)]
+#[serde(default)]
+pub struct ComandoLsp {
+    pub comando: String,
+    pub argumentos: Vec<String>,
+}
+
 /// Corresponde a la sección "Lenguajes / LSP" del panel de
-/// administración (PLAN.md §5.3). Por ahora solo guarda qué lenguajes
-/// tienen su LSP deshabilitado a propósito — configurar comando,
-/// argumentos y variables de entorno por lenguaje queda para una pieza
-/// aparte de M4.
+/// administración (PLAN.md §5.3).
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct ConfigLenguajes {
@@ -83,6 +95,9 @@ pub struct ConfigLenguajes {
     /// cuyo LSP no se lanza aunque haya uno configurado, aun si el
     /// archivo activo es de ese lenguaje.
     pub lsp_deshabilitado: Vec<String>,
+    /// Comando personalizado por lenguaje — si un id no está acá, se
+    /// usa el que trae `tcode_lsp::comando_para` (si alguno).
+    pub lsp_comando: HashMap<String, ComandoLsp>,
 }
 
 impl ConfigLenguajes {
@@ -98,6 +113,29 @@ impl ConfigLenguajes {
         } else {
             self.lsp_deshabilitado.push(id_lenguaje.to_string());
         }
+    }
+
+    pub fn comando_configurado(&self, id_lenguaje: &str) -> Option<&ComandoLsp> {
+        self.lsp_comando.get(id_lenguaje)
+    }
+
+    /// Guarda (o reemplaza) el comando personalizado de `id_lenguaje`.
+    /// `linea` es la línea completa tal como se escribió ("comando arg1
+    /// arg2 ..."), separada por espacios en blanco — el primer token es
+    /// el comando, el resto son argumentos. `None` si `linea` está vacía
+    /// (nada para guardar).
+    pub fn fijar_comando_desde_linea(&mut self, id_lenguaje: &str, linea: &str) -> Option<()> {
+        let mut tokens = linea.split_whitespace();
+        let comando = tokens.next()?.to_string();
+        let argumentos = tokens.map(str::to_string).collect();
+        self.lsp_comando.insert(id_lenguaje.to_string(), ComandoLsp { comando, argumentos });
+        Some(())
+    }
+
+    /// Quita el comando personalizado de `id_lenguaje` — vuelve a usar
+    /// el que trae `tcode_lsp::comando_para`, si alguno.
+    pub fn quitar_comando(&mut self, id_lenguaje: &str) {
+        self.lsp_comando.remove(id_lenguaje);
     }
 }
 
@@ -185,6 +223,10 @@ mod tests {
             },
             lenguajes: ConfigLenguajes {
                 lsp_deshabilitado: vec!["python".to_string()],
+                lsp_comando: HashMap::from([(
+                    "rust".to_string(),
+                    ComandoLsp { comando: "rust-analyzer".to_string(), argumentos: vec![] },
+                )]),
             },
         };
         let texto = toml::to_string_pretty(&original).unwrap();
@@ -216,5 +258,33 @@ mod tests {
 
         lenguajes.alternar_lsp("python");
         assert!(lenguajes.lsp_habilitado("python"));
+    }
+
+    #[test]
+    fn fijar_comando_desde_linea_separa_comando_y_argumentos() {
+        let mut lenguajes = ConfigLenguajes::default();
+        lenguajes.fijar_comando_desde_linea("rust", "rust-analyzer --stdio --log-file /tmp/ra.log").unwrap();
+
+        let comando = lenguajes.comando_configurado("rust").unwrap();
+        assert_eq!(comando.comando, "rust-analyzer");
+        assert_eq!(comando.argumentos, vec!["--stdio", "--log-file", "/tmp/ra.log"]);
+    }
+
+    #[test]
+    fn fijar_comando_desde_linea_vacia_no_guarda_nada() {
+        let mut lenguajes = ConfigLenguajes::default();
+        assert!(lenguajes.fijar_comando_desde_linea("rust", "   ").is_none());
+        assert!(lenguajes.comando_configurado("rust").is_none());
+    }
+
+    #[test]
+    fn quitar_comando_borra_solo_ese_lenguaje() {
+        let mut lenguajes = ConfigLenguajes::default();
+        lenguajes.fijar_comando_desde_linea("rust", "rust-analyzer").unwrap();
+        lenguajes.fijar_comando_desde_linea("go", "gopls").unwrap();
+
+        lenguajes.quitar_comando("rust");
+        assert!(lenguajes.comando_configurado("rust").is_none());
+        assert!(lenguajes.comando_configurado("go").is_some());
     }
 }

@@ -33,9 +33,28 @@ enum Fase {
 struct SesionLsp {
     cliente: Cliente,
     lenguaje: Lenguaje,
+    /// Comando + argumentos con los que se lanzó esta sesión —
+    /// `comando_efectivo` en el momento del lanzamiento. Se guarda para
+    /// que `actualizar_para_archivo` note un cambio de configuración
+    /// (usuario edita el comando personalizado desde el panel de
+    /// administración) aunque el lenguaje no haya cambiado, y relance.
+    comando_usado: (String, Vec<String>),
     fase: Fase,
     uri: Uri,
     ultimo_texto_enviado: String,
+}
+
+/// Comando + argumentos a usar para lanzar el LSP de `lenguaje`: el que
+/// configuró el usuario a mano en la sección "Lenguajes / LSP" (PLAN.md
+/// §5.3), si hay uno, o si no el que trae `tcode_lsp::comando_para` por
+/// defecto (que puede no haber ninguno, como para todos los lenguajes
+/// salvo Python por ahora).
+pub fn comando_efectivo(lenguaje: Lenguaje, config: &Config) -> Option<(String, Vec<String>)> {
+    if let Some(personalizado) = config.lenguajes.comando_configurado(lenguaje.id()) {
+        return Some((personalizado.comando.clone(), personalizado.argumentos.clone()));
+    }
+    tcode_lsp::comando_para(lenguaje)
+        .map(|(comando, args)| (comando.to_string(), args.iter().map(|a| a.to_string()).collect()))
 }
 
 /// Estado LSP de la aplicación: como mucho una sesión activa (ver nota de
@@ -63,9 +82,15 @@ impl EstadoLsp {
     pub async fn actualizar_para_archivo(&mut self, ruta: &str, contenido: &str, config: &Config) {
         let lenguaje = Lenguaje::detectar_por_extension(ruta);
         let lenguaje_efectivo = lenguaje.filter(|l| config.lenguajes.lsp_habilitado(l.id()));
+        let comando_efectivo_actual = lenguaje_efectivo.and_then(|l| comando_efectivo(l, config));
 
         let necesita_relanzar = match (&self.sesion, lenguaje_efectivo) {
-            (Some(sesion), Some(l)) => sesion.lenguaje != l,
+            // Mismo lenguaje: relanza si además cambió el comando
+            // configurado (edición en vivo desde el panel de
+            // administración), no solo si cambió el lenguaje.
+            (Some(sesion), Some(l)) => {
+                sesion.lenguaje != l || comando_efectivo_actual.as_ref() != Some(&sesion.comando_usado)
+            }
             (Some(_), None) | (None, Some(_)) => true,
             (None, None) => false,
         };
@@ -78,9 +103,10 @@ impl EstadoLsp {
         }
 
         let Some(lenguaje) = lenguaje_efectivo else { return };
-        let Some((comando, args)) = tcode_lsp::comando_para(lenguaje) else { return };
+        let Some((comando, args)) = comando_efectivo_actual else { return };
+        let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
         let Ok(uri) = uri_de_archivo(Path::new(ruta)) else { return };
-        let Ok(mut cliente) = Cliente::lanzar(comando, args).await else { return };
+        let Ok(mut cliente) = Cliente::lanzar(&comando, &args_ref).await else { return };
 
         let params = InitializeParams {
             process_id: Some(std::process::id()),
@@ -92,6 +118,7 @@ impl EstadoLsp {
         self.sesion = Some(SesionLsp {
             cliente,
             lenguaje,
+            comando_usado: (comando, args),
             fase: Fase::Iniciando { id_initialize },
             uri,
             ultimo_texto_enviado: contenido.to_string(),
