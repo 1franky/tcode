@@ -1,9 +1,9 @@
 /// Lenguajes con resaltado de sintaxis vía tree-sitter. Los 5 primeros son
 /// los de M1 (PLAN.md §11: "5 lenguajes iniciales"); TypeScript, Java, C y
 /// C++ fueron la primera tanda de los 13 lenguajes objetivo de PLAN.md §6
-/// sumada en M4; Kotlin, C#, Ruby y PHP son la segunda — el resto
-/// (HTML/CSS, SQL) queda para una tanda siguiente. Añadir uno nuevo es
-/// agregar una variante aquí y un caso en `Resaltador::config_para`.
+/// sumada en M4; Kotlin, C#, Ruby y PHP la segunda; HTML, CSS y SQL
+/// completan la tabla en esta tercera tanda. Añadir uno nuevo es agregar
+/// una variante aquí y un caso en `Resaltador::config_para`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Lenguaje {
     Rust,
@@ -19,13 +19,16 @@ pub enum Lenguaje {
     CSharp,
     Ruby,
     Php,
+    Html,
+    Css,
+    Sql,
 }
 
 impl Lenguaje {
     /// Todos los lenguajes con resaltado — usado por la sección
     /// "Lenguajes / LSP" del panel de administración (PLAN.md §5.3) para
     /// listarlos todos sin tener que enumerarlos de nuevo a mano en `app`.
-    pub const TODOS: [Lenguaje; 13] = [
+    pub const TODOS: [Lenguaje; 16] = [
         Lenguaje::Rust,
         Lenguaje::Python,
         Lenguaje::JavaScript,
@@ -39,6 +42,9 @@ impl Lenguaje {
         Lenguaje::CSharp,
         Lenguaje::Ruby,
         Lenguaje::Php,
+        Lenguaje::Html,
+        Lenguaje::Css,
+        Lenguaje::Sql,
     ];
 
     /// Identificador estable en minúsculas, para usar como clave de
@@ -61,6 +67,9 @@ impl Lenguaje {
             Lenguaje::CSharp => "csharp",
             Lenguaje::Ruby => "ruby",
             Lenguaje::Php => "php",
+            Lenguaje::Html => "html",
+            Lenguaje::Css => "css",
+            Lenguaje::Sql => "sql",
         }
     }
 
@@ -92,6 +101,9 @@ impl Lenguaje {
             "cs" => Some(Lenguaje::CSharp),
             "rb" => Some(Lenguaje::Ruby),
             "php" | "phtml" => Some(Lenguaje::Php),
+            "html" | "htm" => Some(Lenguaje::Html),
+            "css" => Some(Lenguaje::Css),
+            "sql" => Some(Lenguaje::Sql),
             _ => None,
         }
     }
@@ -116,6 +128,9 @@ impl Lenguaje {
             "csharp" | "cs" | "c#" => Some(Lenguaje::CSharp),
             "ruby" | "rb" => Some(Lenguaje::Ruby),
             "php" => Some(Lenguaje::Php),
+            "html" => Some(Lenguaje::Html),
+            "css" => Some(Lenguaje::Css),
+            "sql" => Some(Lenguaje::Sql),
             _ => None,
         }
     }
@@ -135,6 +150,9 @@ impl Lenguaje {
             Lenguaje::CSharp => "C#",
             Lenguaje::Ruby => "Ruby",
             Lenguaje::Php => "PHP",
+            Lenguaje::Html => "HTML",
+            Lenguaje::Css => "CSS",
+            Lenguaje::Sql => "SQL",
         }
     }
 }
@@ -171,6 +189,14 @@ mod tests {
         assert_eq!(Lenguaje::detectar_por_extension("Programa.cs"), Some(Lenguaje::CSharp));
         assert_eq!(Lenguaje::detectar_por_extension("script.rb"), Some(Lenguaje::Ruby));
         assert_eq!(Lenguaje::detectar_por_extension("index.php"), Some(Lenguaje::Php));
+    }
+
+    #[test]
+    fn detecta_la_tercera_tanda_de_lenguajes_agregados_en_m4() {
+        assert_eq!(Lenguaje::detectar_por_extension("index.html"), Some(Lenguaje::Html));
+        assert_eq!(Lenguaje::detectar_por_extension("pagina.htm"), Some(Lenguaje::Html));
+        assert_eq!(Lenguaje::detectar_por_extension("estilos.css"), Some(Lenguaje::Css));
+        assert_eq!(Lenguaje::detectar_por_extension("consulta.sql"), Some(Lenguaje::Sql));
     }
 
     #[test]
