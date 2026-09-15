@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use anyhow::Result;
@@ -80,39 +81,55 @@ impl Resaltador {
     }
 
     fn construir_config(lenguaje: Lenguaje) -> Result<HighlightConfiguration> {
-        let (language, nombre, highlights_query) = match lenguaje {
-            Lenguaje::Rust => (
-                tree_sitter_rust::LANGUAGE.into(),
-                "rust",
-                tree_sitter_rust::HIGHLIGHTS_QUERY,
-            ),
-            Lenguaje::Python => (
-                tree_sitter_python::LANGUAGE.into(),
-                "python",
-                tree_sitter_python::HIGHLIGHTS_QUERY,
-            ),
+        // `Cow` porque la mayoría de las queries son el `&'static str` que
+        // ya trae cada crate de gramática, pero TypeScript y C++ necesitan
+        // una concatenada en el momento (ver los dos casos de abajo).
+        let (language, nombre, highlights_query): (tree_sitter::Language, &str, Cow<'static, str>) = match lenguaje
+        {
+            Lenguaje::Rust => (tree_sitter_rust::LANGUAGE.into(), "rust", tree_sitter_rust::HIGHLIGHTS_QUERY.into()),
+            Lenguaje::Python => {
+                (tree_sitter_python::LANGUAGE.into(), "python", tree_sitter_python::HIGHLIGHTS_QUERY.into())
+            }
             Lenguaje::JavaScript => (
                 tree_sitter_javascript::LANGUAGE.into(),
                 "javascript",
-                tree_sitter_javascript::HIGHLIGHT_QUERY,
+                tree_sitter_javascript::HIGHLIGHT_QUERY.into(),
             ),
-            Lenguaje::Go => (
-                tree_sitter_go::LANGUAGE.into(),
-                "go",
-                tree_sitter_go::HIGHLIGHTS_QUERY,
-            ),
+            Lenguaje::Go => (tree_sitter_go::LANGUAGE.into(), "go", tree_sitter_go::HIGHLIGHTS_QUERY.into()),
             // Solo la gramática de bloque: encabezados, listas, citas,
             // bloques de código, etc. El contenido inline (negrita,
             // cursiva, enlaces) necesita la gramática inyectada aparte y
             // llega junto con la vista Markdown doble de M3.
-            Lenguaje::Markdown => (
-                tree_sitter_md::LANGUAGE.into(),
-                "markdown",
-                tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
+            Lenguaje::Markdown => {
+                (tree_sitter_md::LANGUAGE.into(), "markdown", tree_sitter_md::HIGHLIGHT_QUERY_BLOCK.into())
+            }
+            // El highlights.scm que trae `tree-sitter-typescript` es solo
+            // un complemento (tipos y palabras clave propias de TS) —
+            // asume que se combina con el de JavaScript para lo demás
+            // (strings, números, funciones...), igual que hacen
+            // nvim-treesitter y el resto del ecosistema. TSX es superset
+            // de TypeScript (además acepta JSX), así que una sola gramática
+            // alcanza para .ts y .tsx, igual que decidió
+            // `Lenguaje::detectar_por_extension`.
+            Lenguaje::TypeScript => (
+                tree_sitter_typescript::LANGUAGE_TSX.into(),
+                "typescript",
+                format!("{}\n{}", tree_sitter_javascript::HIGHLIGHT_QUERY, tree_sitter_typescript::HIGHLIGHTS_QUERY)
+                    .into(),
+            ),
+            Lenguaje::Java => (tree_sitter_java::LANGUAGE.into(), "java", tree_sitter_java::HIGHLIGHTS_QUERY.into()),
+            Lenguaje::C => (tree_sitter_c::LANGUAGE.into(), "c", tree_sitter_c::HIGHLIGHT_QUERY.into()),
+            // Mismo caso que TypeScript/JavaScript: el highlights.scm de
+            // `tree-sitter-cpp` es un complemento sobre el de C (la
+            // gramática de C++ extiende la de C).
+            Lenguaje::Cpp => (
+                tree_sitter_cpp::LANGUAGE.into(),
+                "cpp",
+                format!("{}\n{}", tree_sitter_c::HIGHLIGHT_QUERY, tree_sitter_cpp::HIGHLIGHT_QUERY).into(),
             ),
         };
 
-        let mut config = HighlightConfiguration::new(language, nombre, highlights_query, "", "")?;
+        let mut config = HighlightConfiguration::new(language, nombre, &highlights_query, "", "")?;
         config.configure(NOMBRES_RECONOCIDOS);
         Ok(config)
     }
@@ -218,6 +235,30 @@ mod tests {
         let fuente = "# Título\n\ntexto normal\n";
         let tokens = resaltador.resaltar(Lenguaje::Markdown, fuente).unwrap();
         assert!(!tokens.is_empty(), "se esperaba al menos un token para el encabezado");
+    }
+
+    #[test]
+    fn resalta_la_primera_tanda_de_lenguajes_agregados_en_m4() {
+        let mut resaltador = Resaltador::nuevo();
+
+        let ts = "const x: string = \"hola\";\n";
+        let tokens_ts = resaltador.resaltar(Lenguaje::TypeScript, ts).unwrap();
+        assert!(nombres_en(&tokens_ts, ts).iter().any(|(n, _)| *n == "string"));
+
+        let tsx = "const f = () => <div>hola</div>;\n";
+        assert!(resaltador.resaltar(Lenguaje::TypeScript, tsx).is_ok());
+
+        let java = "// comentario\nclass Principal {}\n";
+        let tokens_java = resaltador.resaltar(Lenguaje::Java, java).unwrap();
+        assert!(nombres_en(&tokens_java, java).iter().any(|(n, _)| *n == "comment"));
+
+        let c = "int main() { return 0; }\n";
+        let tokens_c = resaltador.resaltar(Lenguaje::C, c).unwrap();
+        assert!(nombres_en(&tokens_c, c).iter().any(|(n, texto)| *n == "keyword" && texto == "return"));
+
+        let cpp = "#include <string>\nint main() { return 0; }\n";
+        let tokens_cpp = resaltador.resaltar(Lenguaje::Cpp, cpp).unwrap();
+        assert!(nombres_en(&tokens_cpp, cpp).iter().any(|(n, texto)| *n == "keyword" && texto == "return"));
     }
 
     #[test]
