@@ -196,9 +196,18 @@ abajo, es donde más problemas aparecieron).
 - [ ] Abrir un archivo `.cs`: resaltado correcto (`class`/`static`/`void`, tipos, nombres de método, números, strings, comentarios); la statusbar muestra "C#".
 - [ ] Abrir un archivo `.rb`: resaltado correcto (`def`/`end`, strings con interpolación `#{...}`, comentarios con `#`); la statusbar muestra "Ruby".
 - [ ] Abrir un archivo `.php` que arranca con `<?php`: resaltado correcto (`echo`, variables `$x`, strings, números, comentarios `//`); la statusbar muestra "PHP".
-- [ ] Dentro del panel (`Ctrl+K A` → "Lenguajes / LSP"): ahora hay 13 filas (los 13 lenguajes objetivo de PLAN.md §6 completos) — las nuevas son Kotlin ("kotlin-language-server"), C# ("(sin LSP configurado)" — `omnisharp` necesita el directorio del proyecto, se configura a mano con `c` si se quiere), Ruby ("solargraph stdio") y PHP ("intelephense --stdio").
+- [ ] Dentro del panel (`Ctrl+K A` → "Lenguajes / LSP"): ahora hay 13 filas (9 de los 13 lenguajes objetivo de PLAN.md §6 — faltan HTML/CSS y SQL, ver la tanda siguiente) — las nuevas son Kotlin ("kotlin-language-server"), C# ("(sin LSP configurado)" — `omnisharp` necesita el directorio del proyecto, se configura a mano con `c` si se quiere), Ruby ("solargraph stdio") y PHP ("intelephense --stdio").
 - [ ] Con `solargraph` o `intelephense` instalado y un `.rb`/`.php` abierto respectivamente: el estado pasa de "Iniciando…" a "Conectado" solo.
 - [ ] Un bloque de código Markdown con etiqueta ` ```kotlin `, ` ```csharp `, ` ```ruby ` o ` ```php ` (alias `kt`/`cs`/`rb` también) se resalta con la vista de preview (`Ctrl+K V`).
+
+### Tercera tanda de lenguajes nuevos: HTML, CSS, SQL — completa los 13 objetivo
+
+- [ ] Abrir un archivo `.html` (o `.htm`): resaltado correcto (nombres de etiqueta en negrita como color de palabra clave, nombres de atributo de un color distinto, valores de atributo entre comillas como string, comentarios `<!-- -->`); la statusbar muestra "HTML". No hay resaltado de CSS/JS incrustado en `<style>`/`<script>` (mismo criterio que Markdown: solo la gramática de bloque, sin gramáticas inyectadas).
+- [ ] Abrir un archivo `.css`: resaltado correcto (selectores de etiqueta/clase, nombres de propiedad como `color`/`background`, valores, comentarios `/* */`); la statusbar muestra "CSS". Con el tema Dracula activo, los nombres de propiedad se ven del mismo color que el texto normal — es a propósito, así resalta CSS el tema Dracula real (no es que falten resaltar).
+- [ ] Abrir un archivo `.sql`: resaltado correcto (`SELECT`/`FROM`/`WHERE` en negrita, nombres de tabla, comentarios `-- `); la statusbar muestra "SQL". Los literales numéricos (`42`) se ven con el color de los strings en vez de uno propio — limitación conocida de la query de resaltado que trae la gramática (usa un patrón de Lua que el motor de regex de Rust no entiende), cosmética nomás.
+- [ ] Dentro del panel (`Ctrl+K A` → "Lenguajes / LSP"): ahora hay 16 filas — los 13 lenguajes objetivo de PLAN.md §6 completos (HTML y CSS cuentan como 2 filas separadas aunque el plan las liste en una sola). Las nuevas son HTML ("vscode-html-language-server --stdio"), CSS ("vscode-css-language-server --stdio") y SQL ("sqls").
+- [ ] Con `vscode-langservers-extracted` instalado (trae los binarios de HTML y CSS) y un `.html`/`.css` abierto: el estado pasa de "Iniciando…" a "Conectado" solo.
+- [ ] Un bloque de código Markdown con etiqueta ` ```html `, ` ```css ` o ` ```sql ` se resalta con la vista de preview (`Ctrl+K V`).
 
 ## M4 — Sección "Interfaz" del panel de administración
 

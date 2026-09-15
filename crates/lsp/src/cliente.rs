@@ -125,6 +125,12 @@ pub fn comando_para(lenguaje: tcode_syntax::Lenguaje) -> Option<(&'static str, &
         // que clangd/pyright — no necesita saber de antemano nada del
         // proyecto para arrancar (a diferencia de jdtls/omnisharp).
         tcode_syntax::Lenguaje::Kotlin => Some(("kotlin-language-server", &[])),
+        // El paquete `vscode-langservers-extracted` (PLAN.md §6, fila
+        // "HTML/CSS") instala un binario separado para cada uno, ambos
+        // hablando LSP por `--stdio` sin argumentos extra.
+        tcode_syntax::Lenguaje::Html => Some(("vscode-html-language-server", &["--stdio"])),
+        tcode_syntax::Lenguaje::Css => Some(("vscode-css-language-server", &["--stdio"])),
+        tcode_syntax::Lenguaje::Sql => Some(("sqls", &[])),
         // `jdtls` (Java) necesita un directorio de datos de workspace
         // como argumento (`-data <dir>`) para funcionar bien, y
         // `omnisharp` (C#) necesita el `.sln`/directorio del proyecto —
@@ -191,6 +197,22 @@ mod tests {
     #[test]
     fn comando_para_csharp_todavia_no_tiene_default() {
         assert!(comando_para(tcode_syntax::Lenguaje::CSharp).is_none());
+    }
+
+    #[test]
+    fn comando_para_html_y_css_es_vscode_langservers_extracted() {
+        let (comando, args) = comando_para(tcode_syntax::Lenguaje::Html).unwrap();
+        assert_eq!(comando, "vscode-html-language-server");
+        assert_eq!(args, &["--stdio"]);
+
+        let (comando, args) = comando_para(tcode_syntax::Lenguaje::Css).unwrap();
+        assert_eq!(comando, "vscode-css-language-server");
+        assert_eq!(args, &["--stdio"]);
+    }
+
+    #[test]
+    fn comando_para_sql_es_sqls() {
+        assert_eq!(comando_para(tcode_syntax::Lenguaje::Sql).unwrap().0, "sqls");
     }
 
     /// Verifica el ciclo de vida completo contra un proceso real y

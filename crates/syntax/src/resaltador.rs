@@ -37,6 +37,11 @@ const NOMBRES_RECONOCIDOS: &[&str] = &[
     "text.reference",
     "punctuation.special",
     "punctuation.delimiter",
+    "punctuation.bracket",
+    "tag",
+    "attribute",
+    "property",
+    "spell",
 ];
 
 fn nombre_canonico(indice: usize) -> &'static str {
@@ -46,7 +51,24 @@ fn nombre_canonico(indice: usize) -> &'static str {
         "text.title" => "keyword",
         "text.literal" => "string",
         "text.uri" | "text.reference" => "constant",
-        "punctuation.special" | "punctuation.delimiter" => "operator",
+        "punctuation.special" | "punctuation.delimiter" | "punctuation.bracket" => "operator",
+        // HTML/CSS: nombres de etiqueta (`div`, seudo-elementos) como
+        // palabra clave, nombres de atributo (`class`, `href`...) como
+        // tipo, y nombres de propiedad CSS (`color`, `background`...)
+        // como variable — ninguno tiene una categoría propia entre las 9
+        // de `NOMBRES_RESALTADO`, así que se reasignan a la más
+        // parecida visualmente.
+        "tag" => "keyword",
+        "attribute" => "type",
+        "property" => "variable",
+        // SQL: `(comment) @comment @spell` marca el mismo nodo con dos
+        // capturas — si una de las dos no está entre las reconocidas,
+        // `tree-sitter-highlight` descarta el patrón completo (las dos
+        // capturas, no solo la desconocida), así que el comentario
+        // desaparecía por completo en vez de solo perder el marcado de
+        // "revisar ortografía" (que este editor no usa igual). Se
+        // reconoce y se reasigna a la misma categoría que su compañera.
+        "spell" => "comment",
         otro => otro,
     }
 }
@@ -145,6 +167,23 @@ impl Resaltador {
             Lenguaje::Php => {
                 (tree_sitter_php::LANGUAGE_PHP.into(), "php", tree_sitter_php::HIGHLIGHTS_QUERY.into())
             }
+            Lenguaje::Html => (tree_sitter_html::LANGUAGE.into(), "html", tree_sitter_html::HIGHLIGHTS_QUERY.into()),
+            Lenguaje::Css => (tree_sitter_css::LANGUAGE.into(), "css", tree_sitter_css::HIGHLIGHTS_QUERY.into()),
+            // El nombre del crate es "sequel" ("SQL" se lee igual en
+            // inglés) porque "tree-sitter-sql" ya estaba tomado en
+            // crates.io por una gramática distinta/menos completa.
+            //
+            // Limitación conocida de su `highlights.scm`: el predicado
+            // que distingue números (`#match? @number "^[-+]?%d+$"`)
+            // usa `%d`, sintaxis de patrones de Lua (viene de
+            // nvim-treesitter) — el motor de regex de `tree-sitter-
+            // highlight` en Rust no la entiende, así que nunca matchea
+            // y los números terminan cayendo en la captura genérica
+            // `(literal) @string` de la línea anterior. No es corregible
+            // desde acá sin mantener un fork de la query; cosmético
+            // nomás (los números igual se ven, solo que del color de
+            // los strings en vez de un color propio).
+            Lenguaje::Sql => (tree_sitter_sequel::LANGUAGE.into(), "sql", tree_sitter_sequel::HIGHLIGHTS_QUERY.into()),
         };
 
         let mut config = HighlightConfiguration::new(language, nombre, &highlights_query, "", "")?;
@@ -302,6 +341,27 @@ mod tests {
         let tokens_php = resaltador.resaltar(Lenguaje::Php, php).unwrap();
         assert!(nombres_en(&tokens_php, php).iter().any(|(n, _)| *n == "comment"));
         assert!(nombres_en(&tokens_php, php).iter().any(|(n, texto)| *n == "number" && texto == "42"));
+    }
+
+    #[test]
+    fn resalta_la_tercera_tanda_de_lenguajes_agregados_en_m4() {
+        let mut resaltador = Resaltador::nuevo();
+
+        let html = "<!-- comentario -->\n<div class=\"main\">hola</div>\n";
+        let tokens_html = resaltador.resaltar(Lenguaje::Html, html).unwrap();
+        assert!(nombres_en(&tokens_html, html).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_html, html).iter().any(|(n, texto)| *n == "keyword" && texto == "div"));
+        assert!(nombres_en(&tokens_html, html).iter().any(|(n, _)| *n == "string"));
+
+        let css = "/* comentario */\n.main {\n  color: red;\n}\n";
+        let tokens_css = resaltador.resaltar(Lenguaje::Css, css).unwrap();
+        assert!(nombres_en(&tokens_css, css).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_css, css).iter().any(|(n, texto)| *n == "variable" && texto == "color"));
+
+        let sql = "-- comentario\nSELECT * FROM usuarios WHERE id = 42;\n";
+        let tokens_sql = resaltador.resaltar(Lenguaje::Sql, sql).unwrap();
+        assert!(nombres_en(&tokens_sql, sql).iter().any(|(n, _)| *n == "comment"));
+        assert!(nombres_en(&tokens_sql, sql).iter().any(|(n, texto)| *n == "keyword" && texto.eq_ignore_ascii_case("select")));
     }
 
     #[test]
