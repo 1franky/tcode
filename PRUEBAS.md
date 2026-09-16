@@ -249,6 +249,7 @@ abajo, es donde más problemas aparecieron).
 - [ ] `install/linux.sh` en una máquina Linux limpia (o `install/windows.ps1` en Windows): instala sin pedir contraseña/administrador, y `tcode` queda disponible en cualquier carpeta después de abrir una terminal nueva.
 - [ ] La release en GitHub del tag correspondiente tiene los 5 binarios: `tcode-linux-x86_64.tar.gz`, `tcode-linux-arm64.tar.gz`, `tcode-macos-arm64.tar.gz`, `tcode-macos-x86_64.tar.gz`, `tcode-windows-x86_64.zip`.
 - [ ] `install/linux.sh` en una VPS/máquina Linux ARM64 real (`uname -m` da `aarch64` — AWS Graviton, Oracle Ampere, Raspberry Pi de 64 bits): detecta la plataforma como `linux-arm64`, descarga ese binario (no el de x86_64) y funciona igual que en x86_64 — confirmar que el binario corre (`tcode --help` o abrir un archivo) sin error de "exec format error".
+- [ ] En una distro Linux no bleeding-edge (Ubuntu 22.04, Debian 11/12, o cualquier VPS con `ldd --version` por debajo de glibc 2.39): el binario de la release (x86_64 o ARM64) corre sin el error `version 'GLIBC_2.XX' not found` — confirma que el workflow de release sigue compilando sobre `ubuntu-22.04` (glibc 2.35) y no volvió a `ubuntu-latest` (que GitHub puede mover a una Ubuntu más nueva con el tiempo).
 
 ## ⚠️ Bug conocido en Windows — todavía sin resolver
 

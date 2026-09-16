@@ -27,7 +27,17 @@ jobs:
       matrix:
         include:
           - nombre: linux-x86_64
-            os: ubuntu-latest
+            # ubuntu-22.04 fijo a propósito, NO ubuntu-latest: un binario
+            # enlazado dinámicamente contra glibc solo corre en sistemas
+            # con una glibc igual o más nueva que la que se usó para
+            # compilarlo. ubuntu-latest pasó a Ubuntu 24.04 (glibc 2.39)
+            # a principios de 2025 — un binario compilado ahí falla con
+            # "GLIBC_2.39 not found" en cualquier VPS/distro un poco más
+            # vieja (Ubuntu 22.04 trae 2.35, Debian 11/12, etc.), que es
+            # la inmensa mayoría de lo que hay instalado hoy. 22.04 da un
+            # piso de compatibilidad mucho más realista sin necesitar
+            # binarios estáticos (musl).
+            os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           - nombre: linux-arm64
             # Sin runner ARM64 gratuito para repos públicos todavía en
@@ -35,8 +45,11 @@ jobs:
             # (ver el paso "Instalar el compilador cruzado" más abajo).
             # Cubre VPS ARM (AWS Graviton, Oracle Ampere, Raspberry Pi de
             # 64 bits) — reportado como faltante al intentar instalar en
-            # uno de esos.
-            os: ubuntu-latest
+            # uno de esos. ubuntu-22.04 fijo por el mismo motivo de
+            # compatibilidad de glibc que linux-x86_64, arriba — el
+            # compilador cruzado usa el sysroot del runner igual que el
+            # nativo.
+            os: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
           - nombre: macos-arm64
             os: macos-latest
