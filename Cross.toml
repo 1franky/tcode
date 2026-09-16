@@ -1,0 +1,9 @@
+# Config de `cross` (compilación cruzada de Linux ARM64 vía Docker en el
+# workflow de release, ver .github/workflows/release.yml) — por defecto
+# `cross` NO reenvía variables de entorno arbitrarias al contenedor donde
+# compila, así que hay que pedirlo a mano acá. Sin esto, `TCODE_VERSION`
+# no llegaría al build de `aarch64-unknown-linux-musl` y `tcode --version`
+# mostraría el valor de respaldo "-dev" en ese binario en particular, aun
+# viniendo de una release real.
+[build.env]
+passthrough = ["TCODE_VERSION"]
