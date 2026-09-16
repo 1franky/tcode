@@ -27,30 +27,34 @@ jobs:
       matrix:
         include:
           - nombre: linux-x86_64
-            # ubuntu-22.04 fijo a propósito, NO ubuntu-latest: un binario
-            # enlazado dinámicamente contra glibc solo corre en sistemas
-            # con una glibc igual o más nueva que la que se usó para
-            # compilarlo. ubuntu-latest pasó a Ubuntu 24.04 (glibc 2.39)
-            # a principios de 2025 — un binario compilado ahí falla con
-            # "GLIBC_2.39 not found" en cualquier VPS/distro un poco más
-            # vieja (Ubuntu 22.04 trae 2.35, Debian 11/12, etc.), que es
-            # la inmensa mayoría de lo que hay instalado hoy. 22.04 da un
-            # piso de compatibilidad mucho más realista sin necesitar
-            # binarios estáticos (musl).
-            os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
+            # Target musl, no gnu: produce un binario ESTÁTICO (libc
+            # incluida adentro) sin ninguna dependencia de la versión de
+            # glibc del sistema donde se instale. Un binario gnu enlazado
+            # dinámicamente solo corre en sistemas con una glibc igual o
+            # más nueva que la usada para compilarlo — probamos fijar el
+            # runner a ubuntu-22.04 (glibc 2.35) como primer intento tras
+            # un reporte de "GLIBC_2.39 not found" en una VPS, pero otro
+            # reporte confirmó una VPS con glibc todavía más vieja
+            # (< 2.32): no hay ninguna versión de glibc del runner que
+            # sirva para todo el universo de VPS/distros posibles, así
+            # que la única forma de eliminar esta clase de bug de raíz es
+            # no depender de glibc en absoluto. `musl-tools` (paso de
+            # abajo) alcanza para compilar nativo sin necesitar Docker.
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
           - nombre: linux-arm64
-            # Sin runner ARM64 gratuito para repos públicos todavía en
-            # este proyecto: se compila cruzado desde un runner x86_64
-            # (ver el paso "Instalar el compilador cruzado" más abajo).
             # Cubre VPS ARM (AWS Graviton, Oracle Ampere, Raspberry Pi de
-            # 64 bits) — reportado como faltante al intentar instalar en
-            # uno de esos. ubuntu-22.04 fijo por el mismo motivo de
-            # compatibilidad de glibc que linux-x86_64, arriba — el
-            # compilador cruzado usa el sysroot del runner igual que el
-            # nativo.
-            os: ubuntu-22.04
-            target: aarch64-unknown-linux-gnu
+            # 64 bits). Musl por el mismo motivo que linux-x86_64, arriba
+            # — estático, sin depender de la glibc del sistema destino.
+            # Se compila con `cross` (Docker) en vez de `cargo build`
+            # directo: a diferencia del target gnu (que tiene
+            # `gcc-aarch64-linux-gnu` como paquete apt listo), no hay un
+            # compilador cruzado aarch64-musl empaquetado para apt —
+            # `cross` trae su propia imagen con todo el toolchain
+            # necesario, incluido el de C que hace falta para compilar
+            # las gramáticas de tree-sitter.
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
           - nombre: macos-arm64
             os: macos-latest
             target: aarch64-apple-darwin
@@ -71,22 +75,37 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Instalar el compilador cruzado (Linux ARM64 en runner x86_64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Instalar musl-tools (Linux x86_64 nativo, target musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y musl-tools
 
-      - name: Compilar en modo release
+      - name: "Instalar `cross` (Linux ARM64: compilación cruzada vía Docker)"
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: cargo install cross --locked
+
+      - name: Compilar en modo release (nativo — todos los targets salvo ARM64 Linux)
+        if: matrix.target != 'aarch64-unknown-linux-musl'
         run: cargo build --release --target ${{ matrix.target }}
         env:
-          # Sin efecto en los demás targets — cargo solo consulta la
-          # variable del target que está compilando en este paso. Hace
-          # falta tanto para el linker final como para el compilador C
-          # que usa `cc-rs` al compilar las gramáticas de tree-sitter
-          # (son código C, no Rust — necesitan su propio cruce).
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          # El tag que disparó este workflow (ej. "v0.4.1"), leído en
+          # tiempo de compilación vía `option_env!` para que `tcode
+          # --version` reporte la versión real instalada — ver
+          # `crates/app/src/main.rs`. Sin efecto en un `cargo build`
+          # local (la variable no existe), donde cae al valor de
+          # respaldo "-dev".
+          TCODE_VERSION: ${{ github.ref_name }}
+
+      - name: Compilar en modo release (cruzado con `cross`, Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        # `cross` es un reemplazo directo de `cargo build`: deja el
+        # binario en la misma ruta `target/<target>/release/`, así que
+        # el paso de empaquetado de abajo no necesita saber cuál de los
+        # dos se usó.
+        run: cross build --release --target ${{ matrix.target }}
+        env:
+          TCODE_VERSION: ${{ github.ref_name }}
 
       - name: Empaquetar (Linux/macOS)
         if: runner.os != 'Windows'

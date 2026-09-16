@@ -45,9 +45,27 @@ use tcode_ui::{DireccionSplit, FilaLenguajeLsp, Layout as PanelLayout, ModoCsv, 
 
 type Backend = CrosstermBackend<Stdout>;
 
+/// Versión mostrada por `tcode --version`/`-v` — el tag de la release
+/// (`v0.4.1`, ej.) si el binario se compiló en el workflow de release
+/// (que fija `TCODE_VERSION` al `github.ref_name` del tag disparador,
+/// ver `.github/workflows/release.yml`), o un valor obviamente "no es
+/// una release" en un build local de desarrollo (`cargo build` no fija
+/// esa variable). Sirve para que alguien que instaló tcode desde
+/// `install/linux.sh`/`install/windows.ps1` pueda confirmar qué versión
+/// quedó instalada sin tener que abrir el editor.
+const VERSION: &str = match option_env!("TCODE_VERSION") {
+    Some(v) => v,
+    None => concat!("v", env!("CARGO_PKG_VERSION"), "-dev"),
+};
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let ruta_arg = std::env::args().nth(1);
+
+    if matches!(ruta_arg.as_deref(), Some("--version") | Some("-v")) {
+        println!("tcode {VERSION}");
+        return Ok(());
+    }
 
     let editor = match &ruta_arg {
         Some(ruta) => Editor::abrir(ruta)?,
