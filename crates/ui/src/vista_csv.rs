@@ -6,7 +6,7 @@ use ratatui::Frame;
 
 use tcode_core::{EstadoCsv, TablaCsv};
 
-use crate::Paleta;
+use crate::{EstadoUi, Paleta};
 
 /// Ancho de columna (en columnas de terminal) recortado al contenido más
 /// largo de esa columna, entre estos dos límites — sin esto una celda
@@ -15,18 +15,43 @@ use crate::Paleta;
 const ANCHO_MIN_COLUMNA: usize = 4;
 const ANCHO_MAX_COLUMNA: usize = 30;
 
+/// Separación entre columnas que usa `ratatui::widgets::Table` por
+/// defecto (`column_spacing`), nunca cambiada acá — hace falta para
+/// calcular tanto la ventana de columnas visibles como la posición en
+/// pantalla de la celda seleccionada.
+const ESPACIADO_COLUMNAS: usize = 1;
+
 /// Dibuja la tabla CSV/TSV (PLAN.md §9, `Ctrl+K T`): fila de encabezado
 /// congelada (`tabla.filas[0]`, siempre visible arriba, nunca se
-/// desplaza), la celda seleccionada resaltada y, si se está editando una,
-/// su texto en construcción en vez del valor guardado. `mostrar_cursor`
-/// sigue la misma convención que `vista_codigo`/`panel_busqueda`: solo
-/// debe ser `true` para el panel activo, para no pelear por el único
-/// cursor real de la terminal cuando hay varios paneles (`Ctrl+\`).
+/// desplaza verticalmente), la celda seleccionada resaltada y, si se está
+/// editando una, su texto en construcción en vez del valor guardado.
+/// `mostrar_cursor` sigue la misma convención que `vista_codigo`/
+/// `panel_busqueda`: solo debe ser `true` para el panel activo, para no
+/// pelear por el único cursor real de la terminal cuando hay varios
+/// paneles (`Ctrl+\`).
 ///
 /// El desplazamiento vertical que mantiene la fila seleccionada visible
-/// lo calcula `ratatui` (vía `TableState`); aquí solo se le dice cuál
-/// está seleccionada — no hay estado de scroll propio que llevar.
-pub fn dibujar(frame: &mut Frame, area: Rect, tabla: &TablaCsv, estado: &EstadoCsv, paleta: &Paleta, mostrar_cursor: bool) {
+/// lo calcula `ratatui` (vía `TableState`); el horizontal (columnas) no
+/// tiene equivalente nativo en `ratatui::widgets::Table` — sin archivos
+/// con muchas columnas, la suma de anchos supera el ancho de la terminal
+/// y el widget encoge todas las columnas proporcionalmente hasta dejarlas
+/// ilegibles (1-2 caracteres cada una). En vez de eso, acá se elige un
+/// subconjunto contiguo de columnas que sí entra en `area.width` y que
+/// incluye la columna seleccionada (`estado.columna()`), igual de
+/// espíritu que `vista_codigo::ajustar_scroll` pero para columnas de
+/// ancho variable en vez de filas de altura uniforme — de ahí que el
+/// desplazamiento (`estado_ui.scroll`) reutilice el mismo campo de
+/// `EstadoUi` donde vive el scroll vertical del código (un `PanelEditor`
+/// nunca está en los dos modos a la vez, así que no se pisan).
+pub fn dibujar(
+    frame: &mut Frame,
+    area: Rect,
+    tabla: &TablaCsv,
+    estado: &EstadoCsv,
+    estado_ui: &mut EstadoUi,
+    paleta: &Paleta,
+    mostrar_cursor: bool,
+) {
     let estilo_base = Style::default().bg(paleta.fondo).fg(paleta.texto);
 
     if tabla.filas.is_empty() {
@@ -36,10 +61,15 @@ pub fn dibujar(frame: &mut Frame, area: Rect, tabla: &TablaCsv, estado: &EstadoC
 
     let num_columnas = tabla.num_columnas();
     let anchos = anchos_por_columna(tabla, num_columnas);
-    let constraints: Vec<Constraint> = anchos.iter().map(|a| Constraint::Length(*a as u16)).collect();
+
+    ajustar_scroll_horizontal(&mut estado_ui.scroll, &anchos, estado.columna(), area.width as usize);
+    let primera_col = estado_ui.scroll;
+    let ultima_col = columna_final_visible(&anchos, primera_col, area.width as usize);
+    let anchos_visibles = &anchos[primera_col..ultima_col];
+    let constraints: Vec<Constraint> = anchos_visibles.iter().map(|a| Constraint::Length(*a as u16)).collect();
 
     let fila_a_row = |indice_fila: usize, celdas: &[String], es_encabezado: bool| -> Row<'static> {
-        let celdas_estilizadas: Vec<Cell> = (0..num_columnas)
+        let celdas_estilizadas: Vec<Cell> = (primera_col..ultima_col)
             .map(|col| {
                 let es_seleccionada = indice_fila == estado.fila() && col == estado.columna();
                 let texto = if es_seleccionada && estado.editando() {
@@ -79,12 +109,52 @@ pub fn dibujar(frame: &mut Frame, area: Rect, tabla: &TablaCsv, estado: &EstadoC
     frame.render_stateful_widget(tabla_widget, area, &mut estado_tabla);
 
     if mostrar_cursor && estado.editando() {
-        if let Some(rect) = celda_en_pantalla(area, &anchos, estado, &estado_tabla) {
+        if let Some(rect) = celda_en_pantalla(area, &anchos, primera_col, estado, &estado_tabla) {
             let ancho_texto = estado.edicion().unwrap_or_default().chars().count() as u16;
             let columna = rect.x + ancho_texto.min(rect.width.saturating_sub(1));
             frame.set_cursor_position((columna, rect.y));
         }
     }
+}
+
+/// Ajusta `scroll` (índice de la primera columna visible) para que la
+/// columna seleccionada quede dentro de la ventana visible, con el mismo
+/// criterio de `vista_codigo::ajustar_scroll`: si quedó a la izquierda de
+/// lo que se ve, saltar directo a ella; si quedó a la derecha de lo que
+/// entra en `ancho_disponible`, avanzar de a una columna hasta que
+/// vuelva a entrar (a diferencia de filas de altura uniforme, acá hay que
+/// ir probando porque cada columna tiene un ancho distinto).
+fn ajustar_scroll_horizontal(scroll: &mut usize, anchos: &[usize], columna_seleccionada: usize, ancho_disponible: usize) {
+    if anchos.is_empty() {
+        *scroll = 0;
+        return;
+    }
+    *scroll = (*scroll).min(columna_seleccionada);
+    while *scroll < columna_seleccionada {
+        let ancho_ventana: usize = anchos[*scroll..=columna_seleccionada].iter().map(|a| a + ESPACIADO_COLUMNAS).sum();
+        if ancho_ventana <= ancho_disponible {
+            break;
+        }
+        *scroll += 1;
+    }
+}
+
+/// Índice (exclusivo) de la última columna que entra en `ancho_disponible`
+/// arrancando desde `primera_col` — siempre incluye al menos una columna,
+/// aunque sea más ancha que `ancho_disponible`, para no dejar la ventana
+/// vacía si una sola celda ya lo supera.
+fn columna_final_visible(anchos: &[usize], primera_col: usize, ancho_disponible: usize) -> usize {
+    let mut acumulado = 0;
+    let mut fin = primera_col;
+    for ancho in &anchos[primera_col..] {
+        let siguiente = acumulado + ancho + ESPACIADO_COLUMNAS;
+        if fin > primera_col && siguiente > ancho_disponible {
+            break;
+        }
+        acumulado = siguiente;
+        fin += 1;
+    }
+    fin
 }
 
 /// Ancho de cada columna en columnas de terminal: el contenido más largo
@@ -104,8 +174,12 @@ fn anchos_por_columna(tabla: &TablaCsv, num_columnas: usize) -> Vec<usize> {
 /// quedó fuera del área visible tras el scroll (p. ej. se estaba editando
 /// y la ventana de la terminal se hizo más chica). `+1` de separación
 /// entre columnas porque ese es el `column_spacing` por defecto de
-/// `ratatui::widgets::Table`, que aquí nunca se cambia.
-fn celda_en_pantalla(area: Rect, anchos: &[usize], estado: &EstadoCsv, estado_tabla: &TableState) -> Option<Rect> {
+/// `ratatui::widgets::Table`, que aquí nunca se cambia. `primera_col` es
+/// la columna en la esquina izquierda de la ventana visible tras el
+/// scroll horizontal (`ajustar_scroll_horizontal`) — la seleccionada
+/// siempre queda dentro de esa ventana, así que solo hace falta descontar
+/// el ancho de las columnas antes de ella que quedaron fuera de pantalla.
+fn celda_en_pantalla(area: Rect, anchos: &[usize], primera_col: usize, estado: &EstadoCsv, estado_tabla: &TableState) -> Option<Rect> {
     let fila_pantalla = if estado.fila() == 0 {
         area.y
     } else {
@@ -117,7 +191,7 @@ fn celda_en_pantalla(area: Rect, anchos: &[usize], estado: &EstadoCsv, estado_ta
     }
 
     let mut x = area.x;
-    for ancho in anchos.iter().take(estado.columna()) {
+    for ancho in anchos[primera_col..].iter().take(estado.columna() - primera_col) {
         x += *ancho as u16 + 1;
     }
     let ancho_celda = anchos.get(estado.columna()).copied().unwrap_or(0) as u16;
@@ -173,7 +247,7 @@ mod tests {
         let anchos = vec![6, 16];
         let estado = EstadoCsv::nuevo(); // fila=0, columna=0 por defecto
         let estado_tabla = TableState::default();
-        let rect = celda_en_pantalla(area, &anchos, &estado, &estado_tabla).unwrap();
+        let rect = celda_en_pantalla(area, &anchos, 0, &estado, &estado_tabla).unwrap();
         assert_eq!((rect.x, rect.y, rect.width), (10, 5, 6));
     }
 
@@ -185,7 +259,7 @@ mod tests {
         estado.mover_abajo(3); // fila 1
         estado.mover_derecha(2); // columna 1
         let estado_tabla = TableState::default(); // offset 0
-        let rect = celda_en_pantalla(area, &anchos, &estado, &estado_tabla).unwrap();
+        let rect = celda_en_pantalla(area, &anchos, 0, &estado, &estado_tabla).unwrap();
         // y = 1 (fila del encabezado) + 0 (fila de datos relativa) = 1;
         // x = 6 (ancho de la primera columna) + 1 (separador) = 7.
         assert_eq!((rect.x, rect.y, rect.width), (7, 1, 16));
@@ -198,6 +272,70 @@ mod tests {
         let mut estado = EstadoCsv::nuevo();
         estado.mover_abajo(3); // fila 1: ya no entra en un área de 1 fila de alto
         let estado_tabla = TableState::default();
-        assert!(celda_en_pantalla(area, &anchos, &estado, &estado_tabla).is_none());
+        assert!(celda_en_pantalla(area, &anchos, 0, &estado, &estado_tabla).is_none());
+    }
+
+    #[test]
+    fn celda_en_pantalla_descuenta_las_columnas_scrolleadas_fuera_de_pantalla() {
+        let area = Rect { x: 0, y: 0, width: 50, height: 20 };
+        let anchos = vec![6, 16, 10];
+        let mut estado = EstadoCsv::nuevo();
+        estado.mover_derecha(3);
+        estado.mover_derecha(3); // columna 2 (la tercera) — mover_derecha avanza de a una
+        let estado_tabla = TableState::default();
+        // Ventana visible arranca en la columna 1 (la 0 quedó scrolleada
+        // fuera): x arranca en 0, no en 6+1.
+        let rect = celda_en_pantalla(area, &anchos, 1, &estado, &estado_tabla).unwrap();
+        // x = 16 (ancho de la columna 1, la primera visible) + 1 (separador).
+        assert_eq!((rect.x, rect.width), (17, 10));
+    }
+
+    #[test]
+    fn ajustar_scroll_horizontal_no_se_mueve_si_la_seleccion_ya_entra() {
+        let anchos = vec![6, 16];
+        let mut scroll = 0;
+        ajustar_scroll_horizontal(&mut scroll, &anchos, 1, 50);
+        assert_eq!(scroll, 0);
+    }
+
+    #[test]
+    fn ajustar_scroll_horizontal_avanza_hasta_que_la_seleccion_entra() {
+        // 5 columnas de ancho 10 (+1 de separador = 11 cada una); con un
+        // ancho disponible de 25 entran como mucho 2 columnas completas.
+        let anchos = vec![10, 10, 10, 10, 10];
+        let mut scroll = 0;
+        ajustar_scroll_horizontal(&mut scroll, &anchos, 4, 25);
+        // La columna 4 sola más la de al lado (3) ya llenan la ventana;
+        // no puede entrar ninguna más a la izquierda.
+        assert_eq!(scroll, 3);
+    }
+
+    #[test]
+    fn ajustar_scroll_horizontal_retrocede_si_la_seleccion_quedo_a_la_izquierda() {
+        let anchos = vec![10, 10, 10, 10, 10];
+        let mut scroll = 3;
+        ajustar_scroll_horizontal(&mut scroll, &anchos, 0, 25);
+        assert_eq!(scroll, 0);
+    }
+
+    #[test]
+    fn ajustar_scroll_horizontal_no_se_traba_si_una_sola_columna_ya_no_entra() {
+        let anchos = vec![50];
+        let mut scroll = 0;
+        ajustar_scroll_horizontal(&mut scroll, &anchos, 0, 10);
+        assert_eq!(scroll, 0); // no hay a dónde más avanzar
+    }
+
+    #[test]
+    fn columna_final_visible_incluye_las_que_entran_completas() {
+        let anchos = vec![10, 10, 10, 10, 10];
+        // 10+1 + 10+1 = 22 <= 25; con la tercera serían 33 > 25.
+        assert_eq!(columna_final_visible(&anchos, 0, 25), 2);
+    }
+
+    #[test]
+    fn columna_final_visible_incluye_al_menos_una_aunque_no_entre() {
+        let anchos = vec![50, 10];
+        assert_eq!(columna_final_visible(&anchos, 0, 10), 1);
     }
 }

@@ -57,11 +57,19 @@ pub(crate) const BORDE_ASCII: ratatui::symbols::border::Set = ratatui::symbols::
     horizontal_bottom: "-",
 };
 
-/// Estado propio de la UI que no pertenece al `core` — por ahora, solo el
-/// desplazamiento vertical del viewport (uno por [`PanelEditor`]).
+/// Estado propio de la UI que no pertenece al `core` (uno por
+/// [`PanelEditor`]): un único desplazamiento de scroll, reinterpretado
+/// según qué vista esté activa en ese panel — fila lógica de scroll
+/// vertical para `vista_codigo`/`vista_markdown` (ya se compartía entre
+/// esas dos), o columna de scroll horizontal para `vista_csv` en modo
+/// `ModoCsv::Tabla`. Un mismo panel nunca tiene dos de esas vistas
+/// activas a la vez (`ModoCsv`/`ModoMarkdown` son mutuamente
+/// excluyentes), así que un solo campo alcanza sin pisarse — evita hacer
+/// crecer `PanelEditor` (y con él, la variante más grande de `Panel`) por
+/// cada vista nueva que necesite recordar un desplazamiento.
 #[derive(Default)]
 pub struct EstadoUi {
-    scroll_vertical: usize,
+    scroll: usize,
 }
 
 /// Dibuja un frame completo. El panel de administración (`Ctrl+,`,

@@ -367,7 +367,15 @@ fn dibujar_panel(
 
             if panel_editor.es_csv() && panel_editor.modo_csv == ModoCsv::Tabla {
                 let tabla = panel_editor.tabla_csv();
-                vista_csv::dibujar(frame, partes[0], &tabla, &panel_editor.estado_csv, paleta, mostrar_cursor);
+                vista_csv::dibujar(
+                    frame,
+                    partes[0],
+                    &tabla,
+                    &panel_editor.estado_csv,
+                    &mut panel_editor.estado_ui,
+                    paleta,
+                    mostrar_cursor,
+                );
                 if let Some(area_statusbar) = area_statusbar {
                     statusbar::dibujar(
                         frame,
@@ -421,7 +429,7 @@ fn dibujar_panel(
                         indice_coincidencia,
                         mostrar_numeros,
                         // `false` fijo, no `ajuste_linea`: `estado_ui.
-                        // scroll_vertical` se comparte con
+                        // scroll` se comparte con
                         // `vista_markdown::dibujar` de acá abajo, que
                         // asume una fila de scroll por línea lógica (no
                         // sabe de filas visuales) — activar el ajuste acá
@@ -436,7 +444,7 @@ fn dibujar_panel(
                         frame,
                         columnas[1],
                         &panel_editor.editor.buffer().a_texto(),
-                        panel_editor.estado_ui.scroll_vertical,
+                        panel_editor.estado_ui.scroll,
                         panel_editor.editor.buffer().num_lineas(),
                         paleta,
                         resaltador,
@@ -447,7 +455,7 @@ fn dibujar_panel(
                         frame,
                         partes[0],
                         &panel_editor.editor.buffer().a_texto(),
-                        panel_editor.estado_ui.scroll_vertical,
+                        panel_editor.estado_ui.scroll,
                         panel_editor.editor.buffer().num_lineas(),
                         paleta,
                         resaltador,

@@ -62,7 +62,7 @@ fn filas_visuales_de(idx_linea: usize, linea: &str, ancho: usize) -> Vec<FilaVis
 
 /// Índice de la fila visual (posición dentro de la secuencia completa de
 /// filas de todo el archivo, el mismo espacio de coordenadas que
-/// `EstadoUi::scroll_vertical`) que contiene la posición `(idx_linea,
+/// `EstadoUi::scroll`) que contiene la posición `(idx_linea,
 /// columna)` — `columna` es un índice de CARÁCTER dentro de la línea
 /// (`tcode_core::Cursor::columna`), no de byte. Sin ajuste de línea
 /// coincide siempre con `idx_linea` (una fila por línea); con el ajuste
@@ -156,7 +156,7 @@ pub fn dibujar(
 
     let visibles: Vec<Line> = filas
         .iter()
-        .skip(estado.scroll_vertical)
+        .skip(estado.scroll)
         .take(alto_visible)
         .map(|fila| {
             let linea = &lineas[fila.idx_linea];
@@ -259,13 +259,13 @@ pub fn dibujar(
     );
 
     if let Some(area_gutter) = area_gutter {
-        dibujar_gutter(frame, area_gutter, &filas, estado.scroll_vertical, alto_visible, cursor.linea, paleta);
+        dibujar_gutter(frame, area_gutter, &filas, estado.scroll, alto_visible, cursor.linea, paleta);
     }
 
     if mostrar_cursor {
         let columna_local = if ajuste_linea { cursor.columna % ancho } else { cursor.columna };
         let columna = area.x + columna_local as u16;
-        let fila_pantalla = area.y + (fila_cursor - estado.scroll_vertical) as u16;
+        let fila_pantalla = area.y + (fila_cursor - estado.scroll) as u16;
         frame.set_cursor_position((columna, fila_pantalla));
     }
 }
@@ -317,7 +317,7 @@ fn dividir_gutter(area: Rect, total_lineas: usize, mostrar_numeros: bool) -> (Op
 }
 
 /// Dibuja los números de línea de las filas visibles (mismo rango de
-/// scroll que el código, `scroll_vertical..scroll_vertical +
+/// scroll que el código, `scroll..scroll +
 /// alto_visible`, en términos de FILA VISUAL — con ajuste de línea
 /// activo, varias filas seguidas pueden compartir línea lógica), alineados
 /// a la derecha con un espacio de separación antes del código. Solo la
@@ -330,7 +330,7 @@ fn dibujar_gutter(
     frame: &mut Frame,
     area: Rect,
     filas: &[FilaVisual],
-    scroll_vertical: usize,
+    scroll: usize,
     alto_visible: usize,
     linea_cursor: usize,
     paleta: &Paleta,
@@ -339,7 +339,7 @@ fn dibujar_gutter(
     let en_blanco = || Line::from(Span::styled(" ".repeat(area.width as usize), Style::default().bg(paleta.fondo)));
     let filas_pantalla: Vec<Line> = (0..alto_visible)
         .map(|offset| {
-            let Some(fila) = filas.get(scroll_vertical + offset) else { return en_blanco() };
+            let Some(fila) = filas.get(scroll + offset) else { return en_blanco() };
             if !fila.primera() {
                 return en_blanco();
             }
@@ -490,10 +490,10 @@ fn ajustar_scroll(estado: &mut EstadoUi, linea_cursor: usize, alto_visible: usiz
     if alto_visible == 0 {
         return;
     }
-    if linea_cursor < estado.scroll_vertical {
-        estado.scroll_vertical = linea_cursor;
-    } else if linea_cursor >= estado.scroll_vertical + alto_visible {
-        estado.scroll_vertical = linea_cursor - alto_visible + 1;
+    if linea_cursor < estado.scroll {
+        estado.scroll = linea_cursor;
+    } else if linea_cursor >= estado.scroll + alto_visible {
+        estado.scroll = linea_cursor - alto_visible + 1;
     }
 }
 
