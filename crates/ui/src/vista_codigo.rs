@@ -10,6 +10,79 @@ use tcode_syntax::{Lenguaje, Resaltador, Token};
 
 use crate::{EstadoUi, Paleta};
 
+/// El tramo de una línea lógica que ocupa una fila de pantalla. Sin
+/// ajuste de línea hay una fila visual por línea lógica (`inicio: 0,
+/// fin: linea.len()` siempre — el comportamiento de toda la vida);
+/// con el ajuste activo (`Ctrl+,` → Editor → "Ajuste de línea") una
+/// línea más larga que el ancho visible se parte en varias filas
+/// consecutivas. `inicio`/`fin` son offsets de BYTE relativos al
+/// inicio de la línea (no de carácter: hace falta para recortar el
+/// `&str` sin partir un carácter UTF-8 a la mitad).
+#[derive(Debug, Clone, Copy)]
+struct FilaVisual {
+    idx_linea: usize,
+    inicio: usize,
+    fin: usize,
+}
+
+impl FilaVisual {
+    /// La primera fila de su línea (donde va el número en el gutter) —
+    /// las siguientes son "continuación" y van sin número, igual que en
+    /// VSCode y el resto de los editores con ajuste de línea.
+    fn primera(&self) -> bool {
+        self.inicio == 0
+    }
+}
+
+/// Parte `linea` en filas de a lo sumo `ancho` CARACTERES (no bytes)
+/// cada una — al menos una fila siempre, incluso para una línea vacía.
+/// Ajuste "por carácter", no por palabra (no busca el espacio más
+/// cercano): más simple de implementar y alcanza para el caso de uso
+/// principal (líneas largas de código) — ajuste por palabra queda como
+/// mejora posible a futuro si hace falta para prosa (Markdown, por
+/// ejemplo).
+fn filas_visuales_de(idx_linea: usize, linea: &str, ancho: usize) -> Vec<FilaVisual> {
+    if linea.is_empty() {
+        return vec![FilaVisual { idx_linea, inicio: 0, fin: 0 }];
+    }
+    let mut filas = Vec::new();
+    let mut inicio = 0usize;
+    let mut contador = 0usize;
+    for (byte_idx, _) in linea.char_indices() {
+        if contador == ancho {
+            filas.push(FilaVisual { idx_linea, inicio, fin: byte_idx });
+            inicio = byte_idx;
+            contador = 0;
+        }
+        contador += 1;
+    }
+    filas.push(FilaVisual { idx_linea, inicio, fin: linea.len() });
+    filas
+}
+
+/// Índice de la fila visual (posición dentro de la secuencia completa de
+/// filas de todo el archivo, el mismo espacio de coordenadas que
+/// `EstadoUi::scroll_vertical`) que contiene la posición `(idx_linea,
+/// columna)` — `columna` es un índice de CARÁCTER dentro de la línea
+/// (`tcode_core::Cursor::columna`), no de byte. Sin ajuste de línea
+/// coincide siempre con `idx_linea` (una fila por línea); con el ajuste
+/// activo, suma las filas de todas las líneas anteriores más la
+/// sub-fila de `columna` dentro de la suya — sin necesitar buscar en la
+/// lista de filas ya construida.
+fn fila_de_cursor(lineas: &[String], idx_linea: usize, columna: usize, ajuste_linea: bool, ancho: usize) -> usize {
+    if !ajuste_linea {
+        return idx_linea;
+    }
+    let filas_antes: usize = lineas[..idx_linea]
+        .iter()
+        .map(|l| {
+            let num_chars = l.chars().count();
+            if num_chars == 0 { 1 } else { num_chars.div_ceil(ancho) }
+        })
+        .sum();
+    filas_antes + columna / ancho
+}
+
 /// Dibuja el contenido del archivo (coloreado por tree-sitter si la
 /// extensión corresponde a uno de los lenguajes de M1, PLAN.md §11),
 /// resalta la(s) línea(s) con cursor, subraya las líneas con diagnósticos
@@ -24,6 +97,15 @@ use crate::{EstadoUi, Paleta};
 /// `config.editor.numeros_de_linea` (panel de administración, PLAN.md §5
 /// M4): reserva un gutter angosto a la izquierda con el número de cada
 /// línea visible, la actual resaltada con un color distinto.
+/// `ajuste_linea` es `config.editor.ajuste_linea`: con el toggle
+/// apagado, el comportamiento es exactamente el de siempre (líneas
+/// largas se recortan al ancho visible en vez de partirse en varias
+/// filas). Con el toggle prendido, una línea lógica puede ocupar varias
+/// filas de pantalla consecutivas (ver [`FilaVisual`]) — `Up`/`Down`
+/// siguen moviendo por línea LÓGICA, no por fila visual, igual que
+/// antes de esta pieza: reinterpretarlos como movimiento "visual" queda
+/// fuera de alcance por ahora (tocaría el cursor del `core`, compartido
+/// con multi-cursor y demás, no solo el renderizado).
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -38,29 +120,52 @@ pub fn dibujar(
     coincidencias_busqueda: &[Coincidencia],
     indice_coincidencia_actual: Option<usize>,
     mostrar_numeros: bool,
+    ajuste_linea: bool,
 ) {
     let lineas = editor.buffer().lineas_texto();
     let (area_gutter, area) = dividir_gutter(area, lineas.len(), mostrar_numeros);
 
     let alto_visible = area.height as usize;
     let ancho_visible = area.width as usize;
+    let ancho = ancho_visible.max(1);
     let cursor = editor.cursor();
     let cursores = editor.cursores();
-    ajustar_scroll(estado, cursor.linea, alto_visible);
+
+    // Filas visuales de TODO el archivo, no solo las visibles: hace
+    // falta la secuencia completa para poder calcular scroll/cursor en
+    // términos de fila visual quando el ajuste de línea está activo
+    // (una línea larga puede correr el índice de las que vienen
+    // después). Recorrer todo el archivo cada frame para esto es
+    // aceptable con el mismo criterio que ya usa el resaltador de
+    // sintaxis (recalcula tree-sitter completo cada frame en vez de
+    // parsing incremental, ver `tcode_syntax::Resaltador`): correctitud
+    // primero, optimizar cuando haga falta de verdad. Sin ajuste de
+    // línea esto es tan barato como antes (una fila por línea, sin
+    // partir nada).
+    let filas: Vec<FilaVisual> = if ajuste_linea {
+        lineas.iter().enumerate().flat_map(|(idx, l)| filas_visuales_de(idx, l, ancho)).collect()
+    } else {
+        lineas.iter().enumerate().map(|(idx, l)| FilaVisual { idx_linea: idx, inicio: 0, fin: l.len() }).collect()
+    };
+
+    let fila_cursor = fila_de_cursor(&lineas, cursor.linea, cursor.columna, ajuste_linea, ancho);
+    ajustar_scroll(estado, fila_cursor, alto_visible);
 
     let tokens = calcular_tokens(editor, resaltador, ruta);
     let lineas_con_cursor: Vec<usize> = cursores.iter().map(|c| c.cursor.linea).collect();
 
-    let visibles: Vec<Line> = lineas
+    let visibles: Vec<Line> = filas
         .iter()
-        .enumerate()
         .skip(estado.scroll_vertical)
         .take(alto_visible)
-        .map(|(idx, linea)| {
-            let inicio_byte = editor.buffer().inicio_byte_linea(idx);
-            let fin_byte = inicio_byte + linea.len();
+        .map(|fila| {
+            let linea = &lineas[fila.idx_linea];
+            let inicio_byte_linea = editor.buffer().inicio_byte_linea(fila.idx_linea);
+            let inicio_byte = inicio_byte_linea + fila.inicio;
+            let fin_byte = inicio_byte_linea + fila.fin;
+            let texto_fila = &linea[fila.inicio..fila.fin];
             let mut spans = spans_de_linea(
-                linea,
+                texto_fila,
                 inicio_byte,
                 &tokens,
                 paleta,
@@ -91,28 +196,37 @@ pub fn dibujar(
 
             // Marcador de los cursores adicionales (todo menos el
             // principal, índice 0, que usa el cursor real de la terminal
-            // — ver doc de esta función).
+            // — ver doc de esta función). Con ajuste de línea, una
+            // línea puede tener varias filas: el marcador va solo en la
+            // que de verdad contiene el cursor, no en todas las de esa
+            // línea.
             for c in cursores.iter().skip(1) {
-                if c.cursor.linea != idx {
+                if c.cursor.linea != fila.idx_linea {
                     continue;
                 }
-                let offset_local = editor.buffer().offset_byte(c.cursor.linea, c.cursor.columna) - inicio_byte;
-                if offset_local >= linea.len() {
-                    // Al final de la línea no hay carácter que invertir:
+                let offset_abs = editor.buffer().offset_byte(c.cursor.linea, c.cursor.columna);
+                let en_esta_fila =
+                    offset_abs >= inicio_byte && (offset_abs < fin_byte || (offset_abs == fin_byte && fila.fin == linea.len()));
+                if !en_esta_fila {
+                    continue;
+                }
+                let offset_local = offset_abs - inicio_byte;
+                if offset_local >= texto_fila.len() {
+                    // Al final de la fila no hay carácter que invertir:
                     // se agrega un espacio de relleno marcado en su lugar.
                     spans.push(Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED)));
                     continue;
                 }
-                let ancho_char = linea[offset_local..].chars().next().map(char::len_utf8).unwrap_or(1);
+                let ancho_char = texto_fila[offset_local..].chars().next().map(char::len_utf8).unwrap_or(1);
                 spans = transformar_rango(spans, offset_local, offset_local + ancho_char, |estilo| {
                     estilo.add_modifier(Modifier::REVERSED)
                 });
             }
 
-            if lineas_con_cursor.contains(&idx) {
+            if lineas_con_cursor.contains(&fila.idx_linea) {
                 // Se añade un span final de relleno para que el resaltado
                 // de la línea actual cubra todo el ancho, no solo el texto.
-                let ocupado = linea.len();
+                let ocupado = texto_fila.chars().count();
                 if ancho_visible > ocupado {
                     spans.push(Span::raw(" ".repeat(ancho_visible - ocupado)));
                 }
@@ -126,7 +240,7 @@ pub fn dibujar(
                     }
                 }
             }
-            if let Some(severidad) = severidad_mas_grave_en_linea(diagnosticos, idx) {
+            if let Some(severidad) = severidad_mas_grave_en_linea(diagnosticos, fila.idx_linea) {
                 let color = color_severidad(paleta, severidad);
                 for span in &mut spans {
                     // Subraya sin tocar el color del texto (preserva el
@@ -145,13 +259,14 @@ pub fn dibujar(
     );
 
     if let Some(area_gutter) = area_gutter {
-        dibujar_gutter(frame, area_gutter, estado.scroll_vertical, alto_visible, lineas.len(), cursor.linea, paleta);
+        dibujar_gutter(frame, area_gutter, &filas, estado.scroll_vertical, alto_visible, cursor.linea, paleta);
     }
 
     if mostrar_cursor {
-        let columna = area.x + cursor.columna as u16;
-        let fila = area.y + (cursor.linea - estado.scroll_vertical) as u16;
-        frame.set_cursor_position((columna, fila));
+        let columna_local = if ajuste_linea { cursor.columna % ancho } else { cursor.columna };
+        let columna = area.x + columna_local as u16;
+        let fila_pantalla = area.y + (fila_cursor - estado.scroll_vertical) as u16;
+        frame.set_cursor_position((columna, fila_pantalla));
     }
 }
 
@@ -201,34 +316,39 @@ fn dividir_gutter(area: Rect, total_lineas: usize, mostrar_numeros: bool) -> (Op
     (Some(partes[0]), partes[1])
 }
 
-/// Dibuja los números de las líneas visibles (mismo rango de scroll que
-/// el código, `scroll_vertical..scroll_vertical + alto_visible`),
-/// alineados a la derecha con un espacio de separación antes del código;
-/// las filas que quedan más allá del final del archivo (ventana más alta
-/// que el archivo) se dejan en blanco en vez de mostrar números
-/// inexistentes.
-#[allow(clippy::too_many_arguments)]
+/// Dibuja los números de línea de las filas visibles (mismo rango de
+/// scroll que el código, `scroll_vertical..scroll_vertical +
+/// alto_visible`, en términos de FILA VISUAL — con ajuste de línea
+/// activo, varias filas seguidas pueden compartir línea lógica), alineados
+/// a la derecha con un espacio de separación antes del código. Solo la
+/// primera fila de cada línea (`FilaVisual::primera`) muestra el número
+/// — las de continuación van en blanco, igual que en VSCode y el resto
+/// de los editores con ajuste de línea. Las filas que quedan más allá
+/// del final del archivo (ventana más alta que el contenido) también van
+/// en blanco en vez de mostrar números inexistentes.
 fn dibujar_gutter(
     frame: &mut Frame,
     area: Rect,
+    filas: &[FilaVisual],
     scroll_vertical: usize,
     alto_visible: usize,
-    total_lineas: usize,
     linea_cursor: usize,
     paleta: &Paleta,
 ) {
     let ancho_numero = area.width.saturating_sub(1) as usize;
-    let filas: Vec<Line> = (scroll_vertical..scroll_vertical + alto_visible)
-        .map(|idx| {
-            if idx >= total_lineas {
-                return Line::from(Span::styled(" ".repeat(area.width as usize), Style::default().bg(paleta.fondo)));
+    let en_blanco = || Line::from(Span::styled(" ".repeat(area.width as usize), Style::default().bg(paleta.fondo)));
+    let filas_pantalla: Vec<Line> = (0..alto_visible)
+        .map(|offset| {
+            let Some(fila) = filas.get(scroll_vertical + offset) else { return en_blanco() };
+            if !fila.primera() {
+                return en_blanco();
             }
-            let color = if idx == linea_cursor { paleta.numero_linea_activo } else { paleta.numero_linea };
-            let texto = format!("{:>ancho$} ", idx + 1, ancho = ancho_numero);
+            let color = if fila.idx_linea == linea_cursor { paleta.numero_linea_activo } else { paleta.numero_linea };
+            let texto = format!("{:>ancho$} ", fila.idx_linea + 1, ancho = ancho_numero);
             Line::from(Span::styled(texto, Style::default().fg(color).bg(paleta.fondo)))
         })
         .collect();
-    frame.render_widget(Paragraph::new(filas), area);
+    frame.render_widget(Paragraph::new(filas_pantalla), area);
 }
 
 /// Resalta el archivo completo si su extensión corresponde a uno de los 5
@@ -427,5 +547,86 @@ mod tests {
         let resultado = transformar_rango(spans.clone(), 2, 2, |e| e.bg(ratatui::style::Color::Red));
         assert_eq!(texto(&resultado), texto(&spans));
         assert!(resultado[0].style.bg.is_none());
+    }
+
+    fn textos_de_filas<'a>(linea: &'a str, filas: &[FilaVisual]) -> Vec<&'a str> {
+        filas.iter().map(|f| &linea[f.inicio..f.fin]).collect()
+    }
+
+    #[test]
+    fn filas_visuales_de_linea_vacia_da_una_sola_fila_vacia() {
+        let filas = filas_visuales_de(0, "", 10);
+        assert_eq!(filas.len(), 1);
+        assert_eq!(filas[0].inicio, 0);
+        assert_eq!(filas[0].fin, 0);
+        assert!(filas[0].primera());
+    }
+
+    #[test]
+    fn filas_visuales_de_linea_mas_corta_que_el_ancho_no_se_parte() {
+        let filas = filas_visuales_de(0, "hola", 10);
+        assert_eq!(textos_de_filas("hola", &filas), vec!["hola"]);
+    }
+
+    #[test]
+    fn filas_visuales_de_multiplo_exacto_del_ancho() {
+        // 6 caracteres, ancho 3: exactamente 2 filas, ninguna a medias.
+        let filas = filas_visuales_de(0, "abcdef", 3);
+        assert_eq!(textos_de_filas("abcdef", &filas), vec!["abc", "def"]);
+    }
+
+    #[test]
+    fn filas_visuales_de_deja_la_ultima_fila_mas_corta() {
+        // 8 caracteres, ancho 3: dos filas completas más un resto de 2.
+        let filas = filas_visuales_de(0, "abcdefgh", 3);
+        assert_eq!(textos_de_filas("abcdefgh", &filas), vec!["abc", "def", "gh"]);
+        assert!(filas[0].primera());
+        assert!(!filas[1].primera());
+        assert!(!filas[2].primera());
+    }
+
+    #[test]
+    fn filas_visuales_de_no_parte_un_caracter_utf8_a_la_mitad() {
+        // "áéí" son 3 caracteres pero 6 bytes (2 cada uno) — con ancho 2
+        // (en CARACTERES) la primera fila debe ser "áé" completo, no
+        // "á" + medio byte de "é".
+        let filas = filas_visuales_de(0, "áéíóú", 2);
+        assert_eq!(textos_de_filas("áéíóú", &filas), vec!["áé", "íó", "ú"]);
+    }
+
+    #[test]
+    fn fila_de_cursor_sin_ajuste_es_siempre_el_indice_de_linea() {
+        let lineas = vec!["una línea bastante larga de verdad".to_string(), "corta".to_string()];
+        assert_eq!(fila_de_cursor(&lineas, 0, 20, false, 10), 0);
+        assert_eq!(fila_de_cursor(&lineas, 1, 3, false, 10), 1);
+    }
+
+    #[test]
+    fn fila_de_cursor_con_ajuste_suma_las_filas_de_las_lineas_anteriores() {
+        // Línea 0: 8 caracteres, ancho 3 -> 3 filas visuales (0,1,2).
+        // Línea 1 arranca en la fila visual global 3.
+        let lineas = vec!["abcdefgh".to_string(), "xy".to_string()];
+        assert_eq!(fila_de_cursor(&lineas, 1, 0, true, 3), 3);
+        assert_eq!(fila_de_cursor(&lineas, 1, 1, true, 3), 3);
+    }
+
+    #[test]
+    fn fila_de_cursor_con_ajuste_encuentra_la_sub_fila_dentro_de_su_propia_linea() {
+        let lineas = vec!["abcdefgh".to_string()];
+        // Columna 0..2 -> fila 0 ("abc"); 3..5 -> fila 1 ("def"); 6..7 ->
+        // fila 2 ("gh").
+        assert_eq!(fila_de_cursor(&lineas, 0, 0, true, 3), 0);
+        assert_eq!(fila_de_cursor(&lineas, 0, 2, true, 3), 0);
+        assert_eq!(fila_de_cursor(&lineas, 0, 3, true, 3), 1);
+        assert_eq!(fila_de_cursor(&lineas, 0, 6, true, 3), 2);
+        // Columna 8 (justo después de la última 'h', fin de línea):
+        // sigue siendo la fila 2, igual que el resto de "gh".
+        assert_eq!(fila_de_cursor(&lineas, 0, 8, true, 3), 2);
+    }
+
+    #[test]
+    fn fila_de_cursor_con_ajuste_y_linea_vacia_cuenta_como_una_fila() {
+        let lineas = vec!["".to_string(), "resto".to_string()];
+        assert_eq!(fila_de_cursor(&lineas, 1, 0, true, 3), 1);
     }
 }

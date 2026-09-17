@@ -78,14 +78,13 @@ impl CampoEditor {
     }
 
     /// Nota aparte de un campo, si hace falta aclarar algo sobre su
-    /// estado actual — por ahora solo "ajuste de línea", que se persiste
-    /// pero todavía no reflowa el texto en pantalla (llega en una pieza
-    /// aparte de M4).
+    /// estado actual. Ninguno de los 4 campos la necesita hoy — queda el
+    /// método (en vez de borrarlo) porque "ajuste de línea" ya usó este
+    /// mecanismo mientras el reflow real todavía no estaba implementado,
+    /// y el siguiente campo que llegue a medio terminar probablemente lo
+    /// vuelva a necesitar.
     pub fn nota(&self) -> Option<&'static str> {
-        match self {
-            CampoEditor::AjusteLinea => Some("todavía no reflowa el texto en pantalla"),
-            _ => None,
-        }
+        None
     }
 
     /// Valor actual como texto, para dibujarlo en la fila.
