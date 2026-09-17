@@ -237,13 +237,105 @@ impl EstadoLsp {
     }
 }
 
-/// Convierte una ruta de archivo a un URI `file://` válido para LSP.
-/// Escapado mínimo (solo espacios): suficiente para las rutas típicas de
-/// un proyecto; un percent-encoding completo según RFC 3986 es una mejora
-/// pendiente para nombres de archivo con caracteres más exóticos.
+/// Convierte una ruta de archivo a un URI `file://` válido para LSP
+/// (RFC 8089), con percent-encoding RFC 3986 completo — antes solo se
+/// escapaban los espacios, así que rutas con `#`, `?`, tildes u otros
+/// caracteres fuera de ASCII imprimible quedaban truncadas o mal
+/// interpretadas por el servidor (todo lo que sigue a un `#`/`?` sin
+/// escapar se interpreta como fragmento/query del URI, no como parte de
+/// la ruta). Sigue sin cubrir archivos cuyo nombre no sea UTF-8 válido
+/// (poco común, y no hay forma simple/portable de acceder a los bytes
+/// crudos del nombre sin código específico por SO) — `Path::display`
+/// ya reemplaza esos bytes por `�` antes de que esta función los vea.
 fn uri_de_archivo(ruta: &Path) -> Result<Uri> {
     let absoluta = if ruta.is_absolute() { ruta.to_path_buf() } else { std::env::current_dir()?.join(ruta) };
-    let texto = absoluta.display().to_string().replace(' ', "%20");
+    let texto = codificar_ruta_para_uri(&absoluta.display().to_string(), cfg!(windows));
     format!("file://{texto}").parse::<Uri>().map_err(|e| anyhow::anyhow!("ruta no convertible a URI: {e}"))
+}
+
+/// Percent-encoding RFC 3986 de una ruta absoluta ya como texto, para
+/// concatenar después de `"file://"`. `es_windows` decide la
+/// normalización previa (parámetro en vez de `cfg!(windows)` acá adentro
+/// para que los tests puedan ejercitar el camino de Windows sin
+/// necesitar correr en Windows de verdad):
+///
+/// - Windows separa carpetas con `\`, no `/` — se convierten antes de
+///   codificar (una vez convertida, una barra invertida ya no
+///   existe como para que el paso de abajo la toque).
+/// - Una ruta absoluta de Windows empieza con la letra de unidad
+///   (`C:\...`), no con `/` — RFC 8089 pide anteponerle una barra más
+///   para que el URI completo quede `file:///C:/...` (tres barras en
+///   total: dos de la autoridad vacía, más el separador inicial del
+///   path).
+///
+/// Después de esa normalización, cualquier byte fuera del conjunto
+/// "unreserved" de la RFC (`ALPHA` / `DIGIT` / `-` / `.` / `_` / `~`) se
+/// escapa como `%XX` en mayúsculas, salvo `/` que se preserva como
+/// separador — incluye los dos puntos de la letra de unidad de Windows
+/// (`C:` → `C%3A`), que es justo como lo hace VS Code.
+fn codificar_ruta_para_uri(ruta: &str, es_windows: bool) -> String {
+    let normalizada = if es_windows { ruta.replace('\\', "/") } else { ruta.to_string() };
+    let con_barra_inicial = if es_windows && !normalizada.starts_with('/') {
+        format!("/{normalizada}")
+    } else {
+        normalizada
+    };
+
+    con_barra_inicial
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests_uri {
+    use super::*;
+
+    #[test]
+    fn ruta_unix_simple_no_cambia() {
+        assert_eq!(codificar_ruta_para_uri("/home/user/archivo.rs", false), "/home/user/archivo.rs");
+    }
+
+    #[test]
+    fn espacios_se_codifican() {
+        assert_eq!(codificar_ruta_para_uri("/home/user/mi archivo.rs", false), "/home/user/mi%20archivo.rs");
+    }
+
+    #[test]
+    fn caracteres_especiales_de_uri_se_codifican() {
+        // "#" y "?" sin escapar romperían el URI (se interpretarían
+        // como el inicio del fragmento/query) — el caso que justifica
+        // esta pieza.
+        assert_eq!(codificar_ruta_para_uri("/tmp/nota#1.md", false), "/tmp/nota%231.md");
+        assert_eq!(codificar_ruta_para_uri("/tmp/¿qué?.txt", false), "/tmp/%C2%BFqu%C3%A9%3F.txt");
+    }
+
+    #[test]
+    fn puntos_guion_y_guion_bajo_no_se_codifican() {
+        assert_eq!(codificar_ruta_para_uri("/tmp/mi-archivo_v2.0.tar.gz", false), "/tmp/mi-archivo_v2.0.tar.gz");
+    }
+
+    #[test]
+    fn ruta_windows_convierte_barras_y_antepone_barra_inicial() {
+        assert_eq!(codificar_ruta_para_uri(r"C:\Users\nombre\archivo.rs", true), "/C%3A/Users/nombre/archivo.rs");
+    }
+
+    #[test]
+    fn ruta_windows_con_espacios_y_letra_de_unidad_minuscula() {
+        assert_eq!(
+            codificar_ruta_para_uri(r"c:\Program Files\proyecto\main.rs", true),
+            "/c%3A/Program%20Files/proyecto/main.rs"
+        );
+    }
+
+    #[test]
+    fn uri_de_archivo_produce_tres_barras_tras_el_esquema_en_windows() {
+        let texto = format!("file://{}", codificar_ruta_para_uri(r"C:\Users\a.rs", true));
+        assert_eq!(texto, "file:///C%3A/Users/a.rs");
+        assert!(texto.parse::<Uri>().is_ok(), "el URI resultante debe ser válido");
+    }
 }
 

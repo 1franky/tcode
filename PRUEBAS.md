@@ -64,6 +64,11 @@ abajo, es donde más problemas aparecieron).
 - [ ] Cambiar de un archivo `.py` (con LSP activo) a uno de un lenguaje distinto sin comando configurado (ej. `.rs`): el cambio de panel/archivo se siente **instantáneo**, sin ninguna pausa — el relanzado mata la sesión vieja directo (no espera el protocolo de cierre educado, que sí se usa solo al salir de `tcode`) para no introducir latencia al cambiar de archivo.
 - [ ] (Extremo, opcional) Configurar a mano un comando LSP inválido/que cuelgue (ej. `cat` desde el panel de administración, sección "Lenguajes / LSP", tecla `c`) y luego salir de `tcode`: el cierre no debería tardar más de ~1 segundo — el servidor "no cooperativo" se mata igual una vez vencido ese margen, en vez de trabar el cierre para siempre.
 
+### URI del LSP con caracteres especiales en la ruta
+
+- [ ] Abrir un archivo `.py` cuya ruta tenga un espacio y un `#` en el nombre (ej. `mi archivo#1.py`) con `pyright` instalado: el LSP conecta igual ("Conectado" en el panel de administración) y los diagnósticos aparecen subrayados en el lugar correcto — antes de esta pieza, el `#` sin escapar rompía el URI (todo lo que sigue a un `#` se interpreta como fragmento, no como parte de la ruta) y los diagnósticos podían no llegar o llegar para la ruta equivocada.
+- [ ] Lo mismo con tildes/eñes en el nombre del archivo o alguna carpeta del camino (ej. `código/año.py`).
+
 ## M3 — Búsqueda y reemplazo (`Ctrl+F` / `Ctrl+H`)
 
 - [ ] `Ctrl+F`: abre la barra de búsqueda flotante en la esquina superior derecha (no tapa el código).
