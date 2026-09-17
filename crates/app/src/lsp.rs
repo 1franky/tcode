@@ -175,7 +175,12 @@ impl EstadoLsp {
             }
             MensajeEntrante::Notificacion { metodo, params } => {
                 if metodo == "textDocument/publishDiagnostics" {
-                    if let Ok((uri, diagnosticos)) = tcode_lsp::parsear_diagnosticos(&params) {
+                    // El texto tal como lo tiene `tcode` ahora mismo — hace
+                    // falta para la conversión UTF-16 → carácter de las
+                    // columnas del diagnóstico (`parsear_diagnosticos`).
+                    if let Ok((uri, diagnosticos)) =
+                        tcode_lsp::parsear_diagnosticos(&params, &sesion.ultimo_texto_enviado)
+                    {
                         if uri == sesion.uri.as_str() {
                             layout.establecer_diagnosticos_activo(diagnosticos);
                         }
