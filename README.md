@@ -5,16 +5,21 @@ tree-sitter, buffers múltiples, splits) y comandos en español para
 memorización rápida.
 
 100% operable por teclado, corre en terminal (Linux, Windows portable,
-macOS). Ver el diseño completo en [PLAN.md](./PLAN.md).
+macOS). Ver [MANUAL.md](./MANUAL.md) para la guía de uso, o
+[PLAN.md](./PLAN.md) para el diseño completo.
 
 ## Estado
 
-M0 (fundamentos), M1 (temas/atajos/sintaxis/explorador), M2 (paleta de
-comandos, buscador difuso, splits, cliente LSP) y M3 (búsqueda/reemplazo,
-vista Markdown, vista CSV, multi-cursor) completos en `develop`. Ver
-[PLAN.md](./PLAN.md) §11 para el roadmap completo y
-[PRUEBAS.md](./PRUEBAS.md) para el checklist de pruebas manuales antes de
-cada release.
+M0 a M4 completos (última release: v0.4.2): fundamentos, temas/atajos/
+sintaxis/explorador, paleta de comandos/buscador difuso/splits/cliente
+LSP, búsqueda-reemplazo/vista Markdown/vista CSV/multi-cursor, y panel de
+administración completo — 10+ temas con selector y editor visual,
+editor de atajos con detección de conflictos, LSP configurable desde la
+UI, y los **13 lenguajes objetivo** con resaltado de sintaxis (Rust,
+Python, JavaScript/TypeScript, Go, Java, Kotlin, C/C++, C#, Ruby, PHP,
+HTML/CSS, Markdown, SQL). Ver [PLAN.md](./PLAN.md) §11 para el roadmap
+completo, y [PRUEBAS.md](./PRUEBAS.md) para el checklist de pruebas
+manuales antes de cada release.
 
 ## Instalación
 
@@ -39,7 +44,9 @@ administrador.
 Ambos scripts descargan el binario de la
 [última release](https://github.com/1franky/tcode/releases) — publicada
 automáticamente al taggear una versión en `main`
-(`.github/workflows/release.yml`).
+(`.github/workflows/release.yml`). Los binarios de Linux son estáticos
+(musl): no dependen de la versión de glibc del sistema. `tcode --version`
+(o `-v`) confirma qué versión quedó instalada.
 
 ### Compilar desde el código fuente
 
