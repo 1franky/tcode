@@ -1,4 +1,5 @@
 use std::process::Stdio;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -69,13 +70,74 @@ impl Cliente {
         escribir_mensaje(&mut self.stdin, &mensaje).await
     }
 
-    /// Mata el proceso del servidor. Un shutdown JSON-RPC "educado"
-    /// (`shutdown` + `exit`) queda pendiente para cuando haga falta: para
-    /// esta primera pieza, matar el proceso al cerrar tcode es aceptable.
+    /// Cierra la sesión siguiendo el protocolo que pide la spec de LSP:
+    /// un request `shutdown` (esperando su respuesta antes de seguir,
+    /// correlacionada por id) seguido de una notificación `exit` — le da
+    /// al servidor la chance de liberar sus propios recursos (archivos
+    /// temporales, procesos hijos propios, caches en disco) en vez de
+    /// matarlo en seco a mitad de lo que estuviera haciendo. Nunca cuelga
+    /// el cierre de `tcode` esperando a un servidor que no coopera: todo
+    /// el intento "educado" tiene un límite de tiempo total
+    /// ([`TIMEOUT_CIERRE_EDUCADO`]), y si no terminó para entonces (no
+    /// respondió `shutdown`, o no salió solo tras `exit`) se lo mata
+    /// igual.
     pub async fn cerrar(mut self) {
+        let salio_solo = tokio::time::timeout(TIMEOUT_CIERRE_EDUCADO, self.intentar_cierre_educado())
+            .await
+            .unwrap_or(false);
+        if !salio_solo {
+            let _ = self.proceso.kill().await;
+        }
+    }
+
+    /// Mata el proceso de inmediato, sin el protocolo de cierre educado
+    /// de `cerrar` — para cuando hace falta relanzar la sesión ya mismo
+    /// (cambió el lenguaje del archivo activo, o el comando configurado
+    /// para el mismo lenguaje, PLAN.md §5.3) y esperar hasta un segundo a
+    /// que el servidor viejo responda `shutdown` se sentiría como que
+    /// `tcode` se traba al cambiar de archivo. El servidor no tiene
+    /// margen para liberar sus propios recursos con prolijidad en este
+    /// camino — trade-off aceptado a cambio de que cambiar de archivo
+    /// siga sintiéndose instantáneo; `cerrar` (con el protocolo completo)
+    /// sigue siendo lo que se usa al salir de `tcode`, sin apuro.
+    pub async fn matar(mut self) {
         let _ = self.proceso.kill().await;
     }
+
+    /// La parte "sin límite de tiempo propio" del cierre educado — quien
+    /// llama (`cerrar`) es responsable de acotarla, porque un servidor
+    /// que nunca responde `shutdown` dejaría este `await` colgado para
+    /// siempre. Devuelve `true` solo si el proceso llegó a salir solo.
+    async fn intentar_cierre_educado(&mut self) -> bool {
+        let Ok(id_shutdown) = self.peticion("shutdown", Value::Null).await else { return false };
+
+        loop {
+            match self.receptor.recv().await {
+                Some(MensajeEntrante::Respuesta { id, .. }) if id == id_shutdown => break,
+                // Cualquier otro mensaje mientras se espera (una
+                // notificación de diagnósticos que ya estaba en vuelo,
+                // por ejemplo) se descarta sin problema — la sesión se
+                // está cerrando, a nadie le importa ya.
+                Some(_) => continue,
+                // El canal se cerró: el proceso murió por su cuenta
+                // mientras esperábamos, no hay nada más que "cerrar".
+                None => return false,
+            }
+        }
+
+        if self.notificacion("exit", Value::Null).await.is_err() {
+            return false;
+        }
+        self.proceso.wait().await.is_ok()
+    }
 }
+
+/// Cuánto se espera, en total, a que un servidor responda `shutdown` y
+/// después termine solo tras `exit` antes de matarlo de todos modos. Un
+/// segundo alcanza de sobra para cualquier servidor real (la respuesta a
+/// `shutdown` no hace ningún trabajo pesado según la spec) sin demorar
+/// perceptiblemente el cierre de `tcode` si el servidor no coopera.
+const TIMEOUT_CIERRE_EDUCADO: Duration = Duration::from_secs(1);
 
 async fn leer_en_bucle(mut reader: BufReader<ChildStdout>, tx: mpsc::UnboundedSender<MensajeEntrante>) {
     loop {
@@ -237,6 +299,28 @@ mod tests {
             MensajeEntrante::Respuesta { .. } => panic!("se esperaba una notificación, no una respuesta"),
         }
 
-        cliente.cerrar().await;
+        // `matar`, no `cerrar`: este test prueba el framing del eco, no
+        // el protocolo de cierre (ver `cerrar_no_se_cuelga_aunque_el_
+        // proceso_no_salga_solo` más abajo) — usar `cerrar` acá lo
+        // haría tardar `TIMEOUT_CIERRE_EDUCADO` entero sin necesidad,
+        // porque `cat` nunca sale solo tras `exit`.
+        cliente.matar().await;
+    }
+
+    /// `cerrar` manda `shutdown`+`exit` antes de matar el proceso —
+    /// `cat` no es un LSP real (no interpreta `exit`, nunca termina
+    /// solo), así que ejercita justo el camino "el servidor no
+    /// coopera": confirma que `cerrar` nunca se cuelga esperando para
+    /// siempre a que salga solo, sino que lo mata al vencer
+    /// `TIMEOUT_CIERRE_EDUCADO`. Sin el límite externo de este test, un
+    /// bug que deje `cerrar` esperando indefinidamente trabaría el test
+    /// entero en vez de fallarlo con un mensaje claro.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cerrar_no_se_cuelga_aunque_el_proceso_no_salga_solo() {
+        let cliente = Cliente::lanzar("cat", &[]).await.expect("cat debería existir en cualquier Unix");
+        tokio::time::timeout(TIMEOUT_CIERRE_EDUCADO + Duration::from_millis(500), cliente.cerrar())
+            .await
+            .expect("cerrar() no debería tardar más que su propio timeout interno");
     }
 }

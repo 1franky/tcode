@@ -58,6 +58,17 @@ abajo, es donde más problemas aparecieron).
 - [ ] Abrir un archivo `.py` con `pyright` instalado (`npm install -g pyright`): aparecen diagnósticos (subrayado) al escribir código con errores, y desaparecen al corregirlos.
 - [ ] La barra de estado muestra el resumen de errores/avisos cuando hay diagnósticos LSP activos.
 
+### Cierre educado del protocolo LSP al salir
+
+- [ ] Con un `.py` abierto y `pyright` "Conectado" (panel de administración → "Lenguajes / LSP"): salir de `tcode` (`Ctrl+Q` dos veces) y confirmar con `ps aux | grep pyright` (en otra terminal, justo antes y justo después de salir) que el proceso `pyright-langserver` ya no está — se cerró con el protocolo `shutdown`+`exit` en vez de matarlo en seco, y debería desaparecer casi al instante (no debería sentirse ninguna demora perceptible al cerrar `tcode`).
+- [ ] Cambiar de un archivo `.py` (con LSP activo) a uno de un lenguaje distinto sin comando configurado (ej. `.rs`): el cambio de panel/archivo se siente **instantáneo**, sin ninguna pausa — el relanzado mata la sesión vieja directo (no espera el protocolo de cierre educado, que sí se usa solo al salir de `tcode`) para no introducir latencia al cambiar de archivo.
+- [ ] (Extremo, opcional) Configurar a mano un comando LSP inválido/que cuelgue (ej. `cat` desde el panel de administración, sección "Lenguajes / LSP", tecla `c`) y luego salir de `tcode`: el cierre no debería tardar más de ~1 segundo — el servidor "no cooperativo" se mata igual una vez vencido ese margen, en vez de trabar el cierre para siempre.
+
+### URI del LSP con caracteres especiales en la ruta
+
+- [ ] Abrir un archivo `.py` cuya ruta tenga un espacio y un `#` en el nombre (ej. `mi archivo#1.py`) con `pyright` instalado: el LSP conecta igual ("Conectado" en el panel de administración) y los diagnósticos aparecen subrayados en el lugar correcto — antes de esta pieza, el `#` sin escapar rompía el URI (todo lo que sigue a un `#` se interpreta como fragmento, no como parte de la ruta) y los diagnósticos podían no llegar o llegar para la ruta equivocada.
+- [ ] Lo mismo con tildes/eñes en el nombre del archivo o alguna carpeta del camino (ej. `código/año.py`).
+
 ## M3 — Búsqueda y reemplazo (`Ctrl+F` / `Ctrl+H`)
 
 - [ ] `Ctrl+F`: abre la barra de búsqueda flotante en la esquina superior derecha (no tapa el código).
@@ -127,6 +138,20 @@ abajo, es donde más problemas aparecieron).
 - [ ] Achicar la ventana de la terminal a un ancho muy angosto con el gutter activo: no debería romper el render — el código sigue siendo legible aunque el gutter se termine ocultando si no entra.
 - [ ] Como esta pieza toca el loop de dibujado y agrega una vista de pantalla completa nueva: re-correr al menos la prueba básica de la sección de Windows más abajo.
 
+### Ajuste de línea: reflow real (word wrap)
+
+- [ ] Con "Ajuste de línea" en "No" (el valor por defecto): abrir un archivo con una línea más ancha que la terminal — se recorta al ancho visible, sin partirse en varias filas (comportamiento de siempre, sin cambios).
+- [ ] Activar "Ajuste de línea" (`Enter` sobre esa fila en la sección "Editor") y cerrar el panel: la(s) línea(s) más anchas que la terminal ahora se parten en varias filas de pantalla consecutivas, sin cortar ningún carácter (probar también con tildes/eñes: no debe partir un carácter UTF-8 a la mitad).
+- [ ] Con el gutter de números activo: solo la PRIMERA fila de cada línea partida muestra su número — las filas de continuación van en blanco, igual que en VSCode.
+- [ ] Mover el cursor con `↓`/`↑`/`Home`/`End` hacia y a través de una línea partida: la barra de estado muestra siempre la posición LÓGICA real (`Ln X, Col Y` de la línea completa, no reiniciada por fila) y el cursor visual de la terminal aparece en el lugar correcto de la fila que corresponde.
+- [ ] El resaltado de "línea actual" (fondo distinto) cubre TODAS las filas de pantalla que ocupa la línea con el cursor, no solo la primera.
+- [ ] Escribir/borrar texto cerca del punto donde una línea se parte: el ajuste se recalcula solo, sin romper nada ni perder texto.
+- [ ] Con un archivo que tenga más líneas partidas que las que entran en pantalla: hacer scroll hasta el final y volver al principio — la vista se desplaza de a una FILA de pantalla (no de a una línea lógica completa) y el cursor se mantiene siempre visible, sin saltos raros ni quedar fuera de la ventana.
+- [ ] Multi-cursor (`Ctrl+D`) con una selección que caiga en una línea partida: el marcador de cursor secundario (video invertido) aparece una sola vez, en la fila de pantalla correcta — no se duplica en las demás filas de esa misma línea.
+- [ ] Un archivo `.py` con `pyright` activo y un diagnóstico en una línea partida: el subrayado del error/aviso cubre todas las filas de pantalla de esa línea.
+- [ ] Vista Markdown dividida (`Ctrl+K V`): el ajuste de línea NO tiene efecto en la mitad "fuente" de esa vista en particular (queda como estaba, líneas recortadas) — es una limitación conocida y documentada (esa mitad comparte el scroll con la vista de preview de al lado, que no sabe de filas visuales). El ajuste sí funciona normal en "solo fuente" (sin dividir) del mismo archivo Markdown.
+- [ ] Reiniciar `tcode`: el valor de "Ajuste de línea" persiste entre sesiones (queda guardado en `config.toml`).
+
 ## M4 — Sección "Temas" del panel de administración
 
 - [ ] Dentro del panel (`Ctrl+K A`), la sección "Temas" ya NO dice "(próximamente)" y al entrar muestra 2 filas: "Elegir tema (con preview en vivo)" y "Duplicar tema activo para editar/exportar (<Nombre del tema activo>)".
@@ -168,6 +193,7 @@ abajo, es donde más problemas aparecieron).
 - [ ] Cerrar el editor y volver a abrirlo con Python deshabilitado: el LSP no se lanza al abrir un `.py`, aunque `pyright` esté instalado.
 - [ ] La búsqueda global del panel (`Ctrl+F`) encuentra los lenguajes por su nombre (probar "python", "rust") y salta a la fila correcta de "Lenguajes / LSP".
 - [ ] Sin `pyright` instalado (o con el `PATH` alterado para que no se encuentre): la fila de Python muestra "[no encontrado en el PATH]" resaltado, y el comando LSP simplemente no se lanza (sin romper nada) al abrir un `.py`.
+- [ ] **Solo en Windows**: con `pyright` instalado vía `npm install -g pyright` (que en Windows deja un `pyright-langserver.cmd`, no un `pyright-langserver` pelado), la fila de Python muestra "[en el PATH]" igual que en Linux/macOS — antes de esta pieza mostraba "[no encontrado en el PATH]" a pesar de estar instalado, porque la detección no probaba las extensiones de `PATHEXT` (`.exe`/`.cmd`/`.bat`/...).
 
 ### Comando LSP personalizado por lenguaje (`c` / `Backspace` en "Lenguajes / LSP")
 
@@ -243,6 +269,18 @@ abajo, es donde más problemas aparecieron).
 - [ ] HSL: cada flecha de ajuste se ve reflejada **al instante** tanto en el swatch de esta pantalla como en el color real del campo en la lista (probar cerrando el ajuste sin confirmar — con `Esc` — para el siguiente punto).
 - [ ] HSL: `Esc` a mitad de un ajuste revierte el campo exactamente al color que tenía antes de entrar a HSL (confirmar que `<tema>-mio.toml` no cambió). `Enter` en cambio persiste el color ya aplicado y muestra "Guardado".
 - [ ] Un color de sintaxis con `bold`/`italic`: aplicar un color nuevo por paleta o por HSL también conserva el estilo (mismo comportamiento ya confirmado con hex).
+
+## Guardar como (`Ctrl+Shift+S` / `Ctrl+K S`)
+
+- [ ] Abrir `tcode` sin argumentos (buffer nuevo, "[Sin nombre]"), escribir algo y `Ctrl+S`: en vez de no hacer nada, se abre el prompt "Guardar como" — un recuadro centrado con un campo de ruta vacío y "Enter guarda · Esc cancela" debajo.
+- [ ] Escribir una ruta (relativa o absoluta) y `Enter`: el archivo se crea en esa ruta con el contenido del buffer, el prompt se cierra, y la statusbar/pestaña pasa a mostrar esa ruta (ya no "[Sin nombre]").
+- [ ] Con un archivo ya abierto (con ruta real): `Ctrl+Shift+S` (o `Ctrl+K S` si esa combinación no llega en la terminal usada) abre el mismo prompt, esta vez **precargado con la ruta actual** — cambiarla y `Enter` guarda una copia en la ruta nueva sin tocar ni borrar el archivo original, y la statusbar pasa a mostrar la ruta nueva.
+- [ ] También aparece en la paleta de comandos (`Ctrl+Shift+P`/`F1`) como "Archivo: Guardar como...".
+- [ ] Dejar el campo vacío y `Enter`: no guarda nada, muestra "la ruta no puede estar vacía" en el prompt (que sigue abierto) en vez de cerrarse o fallar en silencio.
+- [ ] Escribir una ruta con un directorio inexistente (ej. `/carpeta-que-no-existe/archivo.txt`) y `Enter`: muestra el error real del sistema de archivos ("no se pudo crear...") sin perder lo escrito ni cerrar el prompt — se puede corregir la ruta ahí mismo.
+- [ ] Escribir cualquier cosa después de un error (o `Backspace`): el mensaje de error desaparece del prompt.
+- [ ] `Esc` en cualquier momento: cierra el prompt sin guardar nada y sin modificar el archivo/buffer.
+- [ ] `Ctrl+S` normal (no `Shift`) sobre un archivo que **ya tiene ruta** sigue guardando directo, sin abrir ningún prompt — el cambio solo afecta al caso "buffer sin nombre" de antes.
 
 ## Distribución / instaladores
 

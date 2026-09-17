@@ -38,7 +38,9 @@ impl Buffer {
     }
 
     /// Guarda en la ruta ya asociada al buffer. Falla si el buffer nunca se
-    /// guardó antes (todavía no hay flujo de "guardar como" en M0).
+    /// guardó antes — quien llama (`app`) usa ese error para abrir el
+    /// prompt "Guardar como" en vez de fallar en silencio (`Ctrl+Shift+S`/
+    /// `Ctrl+K S`, o `Ctrl+S` sobre un buffer sin ruta).
     pub fn guardar(&mut self) -> Result<()> {
         let ruta = self
             .ruta

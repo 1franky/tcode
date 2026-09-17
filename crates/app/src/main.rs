@@ -37,7 +37,9 @@ use tcode_config::{
     CampoTemas, Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin, ModoEdicion,
     ResultadoDuplicarTema, Seccion,
 };
-use tcode_core::{analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda};
+use tcode_core::{
+    analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo,
+};
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_syntax::{Lenguaje, Resaltador};
@@ -224,6 +226,7 @@ struct EstadoApp {
     paleta_comandos: EstadoPaleta,
     buscador_archivos: BuscadorArchivos,
     estado_busqueda: EstadoBusqueda,
+    guardar_como: EstadoGuardarComo,
     selector_tema: EstadoSelectorTema,
     panel_admin: EstadoPanelAdmin,
     editor_tema: EstadoEditorTema,
@@ -289,6 +292,7 @@ async fn ejecutar(
         paleta_comandos: EstadoPaleta::nueva(),
         buscador_archivos: BuscadorArchivos::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
         estado_busqueda: EstadoBusqueda::nueva(),
+        guardar_como: EstadoGuardarComo::nueva(),
         selector_tema: EstadoSelectorTema::nueva(),
         panel_admin,
         editor_tema: EstadoEditorTema::nueva(),
@@ -327,6 +331,7 @@ async fn ejecutar(
                 &estado.paleta_comandos,
                 &estado.buscador_archivos,
                 &estado.estado_busqueda,
+                &estado.guardar_como,
                 &estado.selector_tema,
                 &estado.panel_admin,
                 &estado.config,
@@ -684,6 +689,26 @@ async fn ejecutar(
             continue;
         }
 
+        // Prompt "Guardar como" (`Ctrl+Shift+S`/`Ctrl+K S`, o `Ctrl+S`
+        // sobre un buffer sin ruta): campo de texto de una sola línea con
+        // la ruta destino, sin selector de archivos (misma limitación que
+        // el resto de la UI). `Enter` intenta guardar; si falla (permiso
+        // denegado, directorio inexistente...) el prompt queda abierto
+        // con el error en vez de cerrarse como si nada.
+        if estado.guardar_como.activa() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => estado.guardar_como.cerrar(),
+                KeyCode::Backspace => estado.guardar_como.borrar(),
+                KeyCode::Enter => guardar_como_confirmar(layout, &mut estado.guardar_como),
+                KeyCode::Char(c) if sin_modificadores(key) => estado.guardar_como.escribir(c),
+                _ => {}
+            }
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
         // Edición de una celda de la vista CSV/TSV (`Enter`/`F2` sobre
         // una celda, PLAN.md §9): captura el teclado por completo igual
         // que los bloques anteriores, mientras dura la edición de esa
@@ -760,10 +785,11 @@ async fn sincronizar_lsp(layout: &PanelLayout, lsp: &mut lsp::EstadoLsp, config:
 
 /// Punto de entrada único para ejecutar un id de comando, venga de un
 /// atajo de teclado o de confirmar un resultado en la paleta de comandos.
-/// `config.recargar`, `paleta.comandos` y `buscar.archivos` necesitan
-/// estado que no le corresponde a `ejecutar_comando` (la paleta de
-/// colores, los propios overlays), así que se interceptan aquí antes de
-/// delegar.
+/// `config.recargar`, `paleta.comandos`, `buscar.archivos` y
+/// `archivo.guardar`/`archivo.guardar_como` necesitan estado que no le
+/// corresponde a `ejecutar_comando` (la paleta de colores, los propios
+/// overlays, el prompt de "Guardar como"), así que se interceptan aquí
+/// antes de delegar.
 fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, resolvedor: &mut Resolvedor) -> Accion {
     match id {
         "config.recargar" => {
@@ -824,6 +850,27 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             estado.estado_busqueda.alternar_palabra(&texto);
             Accion::Continuar
         }
+        // `Ctrl+S` sobre un buffer sin ruta asociada (archivo nuevo,
+        // "[Sin nombre]") no tiene dónde escribir — en vez de fallar en
+        // silencio como antes, abre el mismo prompt que "Guardar como".
+        "archivo.guardar" => {
+            if layout.editor_activo().buffer().ruta().is_none() {
+                estado.guardar_como.abrir("");
+            } else {
+                let _ = layout.editor_activo_mut().guardar();
+            }
+            Accion::Continuar
+        }
+        "archivo.guardar_como" => {
+            // Precargado con la ruta actual (si ya tenía una) para poder
+            // "guardar como" un archivo existente con otro nombre/ruta
+            // sin reescribirla entera — no solo para ponerle nombre a uno
+            // nuevo.
+            let ruta_inicial =
+                layout.editor_activo().buffer().ruta().map(|r| r.display().to_string()).unwrap_or_default();
+            estado.guardar_como.abrir(&ruta_inicial);
+            Accion::Continuar
+        }
         _ => ejecutar_comando(
             id,
             layout,
@@ -853,13 +900,6 @@ fn ejecutar_comando(
             } else {
                 return Accion::Salir;
             }
-            return Accion::Continuar;
-        }
-        // M1 no tiene "guardar como" todavía (llega con la paleta de
-        // comandos en M2): si el buffer no tiene ruta, Ctrl+S no hace nada
-        // en vez de hacer fallar el editor entero.
-        "archivo.guardar" => {
-            let _ = layout.editor_activo_mut().guardar();
             return Accion::Continuar;
         }
         "editor.deshacer" => {
@@ -1020,6 +1060,30 @@ fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
         _ => {}
     }
     Accion::Continuar
+}
+
+/// `Enter` con el prompt "Guardar como" abierto: intenta escribir el
+/// archivo en la ruta escrita. Una línea vacía no se intenta guardar (no
+/// tiene sentido un archivo sin nombre) — deja el error visible en vez de
+/// nada, para que quede claro por qué no pasó nada. Si el guardado
+/// funciona, actualiza `ruta_mostrada` del panel activo (statusbar,
+/// pestaña, detección de lenguaje) y cierra el prompt; si falla (permiso
+/// denegado, directorio inexistente...) el prompt queda abierto con el
+/// motivo, para poder corregir la ruta sin perder lo ya escrito.
+fn guardar_como_confirmar(layout: &mut PanelLayout, guardar_como: &mut EstadoGuardarComo) {
+    let ruta = guardar_como.ruta().trim();
+    if ruta.is_empty() {
+        guardar_como.establecer_error("la ruta no puede estar vacía".to_string());
+        return;
+    }
+    let ruta = ruta.to_string();
+    match layout.editor_activo_mut().guardar_como(ruta.clone()) {
+        Ok(()) => {
+            layout.panel_activo_mut().ruta_mostrada = ruta;
+            guardar_como.cerrar();
+        }
+        Err(e) => guardar_como.establecer_error(e.to_string()),
+    }
 }
 
 /// `Enter` con una celda de la vista CSV/TSV en edición: reemplaza la
@@ -1204,13 +1268,44 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
 }
 
 /// Búsqueda simple del ejecutable `comando` en el `PATH` — suficiente
-/// para el indicador "¿está instalado?" de PLAN.md §5.3 (`which`/`where`
-/// completo, con `PATHEXT` en Windows, queda para cuando haga falta más
-/// precisión). No confirma que el binario funcione, solo que existe un
-/// archivo con ese nombre en algún directorio del `PATH`.
+/// para el indicador "¿está instalado?" de la sección "Lenguajes / LSP"
+/// del panel de administración (PLAN.md §5.3; un `which`/`where`
+/// completo queda para cuando haga falta más precisión). No confirma que
+/// el binario funcione, solo que existe un archivo con ese nombre (o, en
+/// Windows, ese nombre más alguna extensión de `PATHEXT`) en algún
+/// directorio del `PATH`.
 fn ruta_en_path(comando: &str) -> bool {
     let Some(path) = std::env::var_os("PATH") else { return false };
-    std::env::split_paths(&path).any(|dir| dir.join(comando).is_file())
+    let extensiones = if cfg!(windows) { Some(extensiones_pathext()) } else { None };
+    std::env::split_paths(&path).any(|dir| existe_ejecutable(&dir, comando, extensiones.as_deref()))
+}
+
+/// Contenido de la variable de entorno `PATHEXT` de Windows
+/// (`.COM;.EXE;.BAT;.CMD;...`), o un valor de respaldo razonable si no
+/// está definida — no debería pasar en un Windows real (el sistema
+/// siempre la fija), pero un valor vacío dejaría `ruta_en_path` sin
+/// encontrar nada nunca en ese caso límite.
+fn extensiones_pathext() -> String {
+    std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+}
+
+/// Si `dir/comando` (probado tal cual, y si `extensiones` trae algo,
+/// también `dir/comando<ext>` por cada extensión de esa lista separada
+/// por `;`) existe como archivo. En Windows, a diferencia de Unix, casi
+/// nunca se invoca un ejecutable con su extensión puesta (`npm`, no
+/// `npm.cmd`) — probar solo el nombre pelado (lo único que hacía esta
+/// función antes) daba un falso negativo para casi cualquier LSP
+/// instalado ahí, aunque estuviera perfectamente disponible.
+/// `extensiones` es un parámetro (no `PATHEXT` leída acá adentro) para
+/// que los tests puedan fijar un valor conocido sin depender de en qué
+/// sistema operativo corren de verdad — `ruta_en_path` es quien decide
+/// con `cfg!(windows)` al llamarla.
+fn existe_ejecutable(dir: &std::path::Path, comando: &str, extensiones: Option<&str>) -> bool {
+    if dir.join(comando).is_file() {
+        return true;
+    }
+    let Some(extensiones) = extensiones else { return false };
+    extensiones.split(';').filter(|ext| !ext.is_empty()).any(|ext| dir.join(format!("{comando}{ext}")).is_file())
 }
 
 /// `Enter`/`←`/`→` sobre una fila de "Lenguajes / LSP": alterna si el
@@ -1423,4 +1518,74 @@ fn reemplazar_todas_las_coincidencias(editor: &mut Editor, estado_busqueda: &mut
         editor.reemplazar_rango_bytes(coincidencia.inicio, coincidencia.fin, &reemplazo);
     }
     estado_busqueda.recalcular(&editor.buffer().a_texto());
+}
+
+#[cfg(test)]
+mod tests_ruta_en_path {
+    use super::*;
+
+    /// Directorio temporal único por test, borrado al final — mismo
+    /// patrón que `tcode_core::tests::guardar_y_recargar_archivo`.
+    struct DirTemporal(std::path::PathBuf);
+
+    impl DirTemporal {
+        fn nuevo(nombre: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("tcode-test-ruta-en-path-{nombre}-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn crear_archivo(&self, nombre: &str) {
+            std::fs::write(self.0.join(nombre), "").unwrap();
+        }
+    }
+
+    impl Drop for DirTemporal {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).ok();
+        }
+    }
+
+    #[test]
+    fn sin_extensiones_solo_encuentra_el_nombre_exacto() {
+        let dir = DirTemporal::nuevo("sin-ext");
+        dir.crear_archivo("clangd");
+        assert!(existe_ejecutable(&dir.0, "clangd", None));
+        assert!(!existe_ejecutable(&dir.0, "clangd.exe", None));
+        assert!(!existe_ejecutable(&dir.0, "no-existe", None));
+    }
+
+    #[test]
+    fn con_extensiones_encuentra_el_nombre_pelado_mas_cualquier_extension() {
+        let dir = DirTemporal::nuevo("con-ext");
+        dir.crear_archivo("pyright-langserver.cmd");
+        // El caso real que motiva esta pieza: en Windows casi nunca se
+        // invoca (ni se busca) un ejecutable con su extensión puesta.
+        assert!(existe_ejecutable(&dir.0, "pyright-langserver", Some(".COM;.EXE;.BAT;.CMD")));
+    }
+
+    #[test]
+    fn con_extensiones_sigue_encontrando_el_nombre_exacto_sin_extension() {
+        // Un ejecutable sin extensión (poco común en Windows, pero
+        // válido) no debería dejar de encontrarse solo porque se pasó
+        // una lista de extensiones para probar además.
+        let dir = DirTemporal::nuevo("exacto-con-lista");
+        dir.crear_archivo("script");
+        assert!(existe_ejecutable(&dir.0, "script", Some(".COM;.EXE;.BAT;.CMD")));
+    }
+
+    #[test]
+    fn no_encuentra_nada_si_ninguna_extension_matchea() {
+        let dir = DirTemporal::nuevo("ninguna-matchea");
+        dir.crear_archivo("otracosa.dll");
+        assert!(!existe_ejecutable(&dir.0, "comando", Some(".COM;.EXE;.BAT;.CMD")));
+    }
+
+    #[test]
+    fn lista_de_extensiones_vacia_o_con_segmentos_vacios_no_hace_fallar_nada() {
+        let dir = DirTemporal::nuevo("lista-rara");
+        dir.crear_archivo("comando.exe");
+        assert!(!existe_ejecutable(&dir.0, "comando", Some("")));
+        assert!(existe_ejecutable(&dir.0, "comando", Some(";;.EXE;;")));
+    }
 }

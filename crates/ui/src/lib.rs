@@ -11,6 +11,7 @@ mod panel_admin;
 mod panel_archivos;
 mod panel_buscador;
 mod panel_busqueda;
+mod panel_guardar_como;
 mod panel_paleta;
 mod panel_selector_tema;
 mod statusbar;
@@ -23,7 +24,7 @@ use ratatui::Frame;
 
 use tcode_commands::EstadoPaleta;
 use tcode_config::{Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema};
-use tcode_core::EstadoBusqueda;
+use tcode_core::{EstadoBusqueda, EstadoGuardarComo};
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::Keymap;
 use tcode_syntax::Resaltador;
@@ -52,10 +53,10 @@ pub struct EstadoUi {
 /// Ctrl+\`, PLAN.md §4) a la derecha, la barra de búsqueda/reemplazo
 /// (`Ctrl+F`/`Ctrl+H`) flotando en la esquina superior derecha del área
 /// de edición si está abierta, y la paleta de comandos
-/// (`Ctrl+Shift+P`/`F1`), el buscador de archivos (`Ctrl+P`) o el
-/// selector de temas (`Ctrl+K Ctrl+T`) encima de todo cuando alguno de
-/// los tres está abierto (son mutuamente excluyentes — nunca dos a la
-/// vez).
+/// (`Ctrl+Shift+P`/`F1`), el buscador de archivos (`Ctrl+P`), el
+/// selector de temas (`Ctrl+K Ctrl+T`) o el prompt de "Guardar como"
+/// (`Ctrl+Shift+S`) encima de todo cuando alguno de los cuatro está
+/// abierto (son mutuamente excluyentes — nunca dos a la vez).
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -66,6 +67,7 @@ pub fn dibujar(
     paleta_comandos: &EstadoPaleta,
     buscador_archivos: &BuscadorArchivos,
     estado_busqueda: &EstadoBusqueda,
+    guardar_como: &EstadoGuardarComo,
     selector_tema: &EstadoSelectorTema,
     panel_admin_estado: &EstadoPanelAdmin,
     config: &Config,
@@ -103,6 +105,7 @@ pub fn dibujar(
         resaltador,
         estado_busqueda,
         config.editor.numeros_de_linea,
+        config.editor.ajuste_linea,
         &config.interfaz,
     );
     panel_busqueda::dibujar(frame, area_principal, estado_busqueda, paleta);
@@ -113,5 +116,7 @@ pub fn dibujar(
         panel_buscador::dibujar(frame, area_total, buscador_archivos, paleta);
     } else if selector_tema.activa() {
         panel_selector_tema::dibujar(frame, area_total, selector_tema, paleta);
+    } else if guardar_como.activa() {
+        panel_guardar_como::dibujar(frame, area_total, guardar_como, paleta);
     }
 }
