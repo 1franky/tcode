@@ -179,6 +179,7 @@ abajo, es donde más problemas aparecieron).
 - [ ] Cerrar el editor y volver a abrirlo con Python deshabilitado: el LSP no se lanza al abrir un `.py`, aunque `pyright` esté instalado.
 - [ ] La búsqueda global del panel (`Ctrl+F`) encuentra los lenguajes por su nombre (probar "python", "rust") y salta a la fila correcta de "Lenguajes / LSP".
 - [ ] Sin `pyright` instalado (o con el `PATH` alterado para que no se encuentre): la fila de Python muestra "[no encontrado en el PATH]" resaltado, y el comando LSP simplemente no se lanza (sin romper nada) al abrir un `.py`.
+- [ ] **Solo en Windows**: con `pyright` instalado vía `npm install -g pyright` (que en Windows deja un `pyright-langserver.cmd`, no un `pyright-langserver` pelado), la fila de Python muestra "[en el PATH]" igual que en Linux/macOS — antes de esta pieza mostraba "[no encontrado en el PATH]" a pesar de estar instalado, porque la detección no probaba las extensiones de `PATHEXT` (`.exe`/`.cmd`/`.bat`/...).
 
 ### Comando LSP personalizado por lenguaje (`c` / `Backspace` en "Lenguajes / LSP")
 
