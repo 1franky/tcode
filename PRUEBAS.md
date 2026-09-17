@@ -58,6 +58,12 @@ abajo, es donde más problemas aparecieron).
 - [ ] Abrir un archivo `.py` con `pyright` instalado (`npm install -g pyright`): aparecen diagnósticos (subrayado) al escribir código con errores, y desaparecen al corregirlos.
 - [ ] La barra de estado muestra el resumen de errores/avisos cuando hay diagnósticos LSP activos.
 
+### Cierre educado del protocolo LSP al salir
+
+- [ ] Con un `.py` abierto y `pyright` "Conectado" (panel de administración → "Lenguajes / LSP"): salir de `tcode` (`Ctrl+Q` dos veces) y confirmar con `ps aux | grep pyright` (en otra terminal, justo antes y justo después de salir) que el proceso `pyright-langserver` ya no está — se cerró con el protocolo `shutdown`+`exit` en vez de matarlo en seco, y debería desaparecer casi al instante (no debería sentirse ninguna demora perceptible al cerrar `tcode`).
+- [ ] Cambiar de un archivo `.py` (con LSP activo) a uno de un lenguaje distinto sin comando configurado (ej. `.rs`): el cambio de panel/archivo se siente **instantáneo**, sin ninguna pausa — el relanzado mata la sesión vieja directo (no espera el protocolo de cierre educado, que sí se usa solo al salir de `tcode`) para no introducir latencia al cambiar de archivo.
+- [ ] (Extremo, opcional) Configurar a mano un comando LSP inválido/que cuelgue (ej. `cat` desde el panel de administración, sección "Lenguajes / LSP", tecla `c`) y luego salir de `tcode`: el cierre no debería tardar más de ~1 segundo — el servidor "no cooperativo" se mata igual una vez vencido ese margen, en vez de trabar el cierre para siempre.
+
 ## M3 — Búsqueda y reemplazo (`Ctrl+F` / `Ctrl+H`)
 
 - [ ] `Ctrl+F`: abre la barra de búsqueda flotante en la esquina superior derecha (no tapa el código).

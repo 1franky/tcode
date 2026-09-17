@@ -99,7 +99,15 @@ impl EstadoLsp {
         }
 
         if let Some(sesion) = self.sesion.take() {
-            sesion.cliente.cerrar().await;
+            // `matar`, no `cerrar`: esto corre en el camino síncrono de
+            // cada tecla (`sincronizar_lsp`, `app/main.rs`) — el
+            // protocolo de cierre educado completo puede tardar hasta un
+            // segundo si el servidor viejo no responde `shutdown` rápido,
+            // y se sentiría como que `tcode` se traba al cambiar de
+            // archivo. El cierre prolijo se reserva para cuando de
+            // verdad no hay apuro: salir de `tcode` (`EstadoLsp::cerrar`,
+            // más abajo).
+            sesion.cliente.matar().await;
         }
 
         let Some(lenguaje) = lenguaje_efectivo else { return };
