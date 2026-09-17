@@ -39,7 +39,8 @@ confirmación pendiente.
 
 | Atajo | Acción |
 |---|---|
-| `Ctrl+S` | Guardar |
+| `Ctrl+S` | Guardar (si el buffer no tiene nombre todavía, abre "Guardar como") |
+| `Ctrl+Shift+S` (o `Ctrl+K S`) | Guardar como... — elegir/cambiar la ruta del archivo |
 | `Ctrl+Z` / `Ctrl+Y` | Deshacer / Rehacer |
 | `Ctrl+Q` | Salir |
 | `Tab` / `Shift+Tab` | Indentar / desindentar |
@@ -50,6 +51,12 @@ confirmación pendiente.
 | `Ctrl+,` o `Ctrl+K A` | Panel de administración |
 | `Ctrl+K Ctrl+T` | Selector de temas (con preview en vivo) |
 | `Ctrl+K Ctrl+L` | Recargar `config.toml`/`keymap.toml` sin reiniciar |
+
+"Guardar como" (y "Guardar" sobre un buffer nuevo, que abre el mismo
+prompt) no tiene selector de archivos — es un campo de texto donde se
+escribe la ruta destino a mano, con `Enter` para confirmar y `Esc` para
+cancelar; también está en la paleta de comandos ("Archivo: Guardar
+como...").
 
 Varios atajos con `Ctrl+Shift+<letra>` o símbolos de control (`Ctrl+\`,
 `Ctrl+,`) no llegan igual en todos los emuladores de terminal — el keymap

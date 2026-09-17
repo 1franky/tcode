@@ -18,6 +18,7 @@ pub struct Comando {
 pub fn comandos_disponibles() -> &'static [Comando] {
     &[
         Comando { id: "archivo.guardar", descripcion: "Archivo: Guardar" },
+        Comando { id: "archivo.guardar_como", descripcion: "Archivo: Guardar como..." },
         Comando { id: "app.salir", descripcion: "Aplicación: Salir del editor" },
         Comando { id: "editor.deshacer", descripcion: "Editor: Deshacer" },
         Comando { id: "editor.rehacer", descripcion: "Editor: Rehacer" },
