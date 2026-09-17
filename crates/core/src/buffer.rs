@@ -4,6 +4,52 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use ropey::Rope;
 
+/// Fin de línea de un archivo. El `rope` interno de `Buffer` está *siempre*
+/// normalizado a `\n` (nunca contiene `\r`) sin importar cuál sea — todo el
+/// resto del editor (cursor, resaltado de sintaxis, búsqueda, vista CSV)
+/// asume esa invariante y no tiene que saber nada de CRLF. Este campo solo
+/// existe para reconstruir el fin de línea original al guardar
+/// ([`Buffer::guardar_como`]), y para mostrarlo en la barra de estado.
+///
+/// Detectado y arreglado tras confirmar en Windows que abrir un archivo con
+/// CRLF (lo normal ahí: scripts `.py`/`.sql`, `.txt` exportados, etc.) dejaba
+/// un `\r` colgando al final de cada línea. `ratatui`/`crossterm` no tratan
+/// ese `\r` como "no ocupa columna": al imprimirlo, la terminal real mueve
+/// el cursor al inicio de la fila, pero el `Buffer` interno de `ratatui`
+/// (que decide cuándo puede omitir un `MoveTo` porque asume que el cursor
+/// ya avanzó de forma natural tras el `Print` anterior) no se entera de ese
+/// salto — el resto de esa fila, y el diffing de frames siguientes, quedan
+/// permanentemente desalineados. Con archivos generados en Windows esto es
+/// mucho más común y más grave que el ancho ambiguo de símbolos decorativos
+/// (ver `tcode_ui::BORDE_ASCII`): esto pasa con contenido común y corriente,
+/// no solo con íconos.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Eol {
+    Lf,
+    Crlf,
+}
+
+impl Eol {
+    /// Detecta el fin de línea de `texto`: `Crlf` si contiene al menos un
+    /// `\r\n` (heurística simple — en la práctica un archivo real usa un
+    /// único estilo de forma consistente), `Lf` en cualquier otro caso
+    /// (incluido un archivo sin saltos de línea).
+    fn detectar(texto: &str) -> Self {
+        if texto.contains("\r\n") {
+            Eol::Crlf
+        } else {
+            Eol::Lf
+        }
+    }
+
+    pub fn como_str(self) -> &'static str {
+        match self {
+            Eol::Lf => "LF",
+            Eol::Crlf => "CRLF",
+        }
+    }
+}
+
 /// Contenido de un archivo abierto en el editor.
 ///
 /// Usa un "rope" (`ropey`) en lugar de un `String` plano: permite insertar y
@@ -13,6 +59,7 @@ pub struct Buffer {
     rope: Rope,
     ruta: Option<PathBuf>,
     modificado: bool,
+    eol: Eol,
 }
 
 impl Buffer {
@@ -22,19 +69,33 @@ impl Buffer {
             rope: Rope::new(),
             ruta: None,
             modificado: false,
+            eol: Eol::Lf,
         }
     }
 
-    /// Carga el contenido de `ruta` en un buffer nuevo.
+    /// Carga el contenido de `ruta` en un buffer nuevo. Si el archivo usa
+    /// CRLF, se normaliza a `\n` para el `rope` interno (ver [`Eol`]) — el
+    /// fin de línea original se recuerda para reescribirlo tal cual al
+    /// guardar.
     pub fn desde_archivo(ruta: impl AsRef<Path>) -> Result<Self> {
         let ruta = ruta.as_ref();
         let contenido = std::fs::read_to_string(ruta)
             .with_context(|| format!("no se pudo leer '{}'", ruta.display()))?;
+        let eol = Eol::detectar(&contenido);
+        let contenido_normalizado = match eol {
+            Eol::Crlf => contenido.replace("\r\n", "\n"),
+            Eol::Lf => contenido,
+        };
         Ok(Self {
-            rope: Rope::from_str(&contenido),
+            rope: Rope::from_str(&contenido_normalizado),
             ruta: Some(ruta.to_path_buf()),
             modificado: false,
+            eol,
         })
+    }
+
+    pub fn eol(&self) -> Eol {
+        self.eol
     }
 
     /// Guarda en la ruta ya asociada al buffer. Falla si el buffer nunca se
@@ -49,13 +110,21 @@ impl Buffer {
         self.guardar_como(ruta)
     }
 
-    /// Escribe el contenido actual en `ruta` y la adopta como ruta del buffer.
+    /// Escribe el contenido actual en `ruta` y la adopta como ruta del
+    /// buffer. Si el archivo se abrió con CRLF, reintroduce el `\r` antes
+    /// de cada `\n` al escribir — el `rope` interno nunca lo tiene (ver
+    /// [`Eol`]), así que esto no puede duplicarlo. Reemplazar dentro de
+    /// cada fragmento de `chunks()` es seguro porque un `\n` (1 byte)
+    /// nunca queda partido entre dos fragmentos.
     pub fn guardar_como(&mut self, ruta: impl Into<PathBuf>) -> Result<()> {
         let ruta = ruta.into();
         let mut archivo = std::fs::File::create(&ruta)
             .with_context(|| format!("no se pudo crear '{}'", ruta.display()))?;
         for fragmento in self.rope.chunks() {
-            archivo.write_all(fragmento.as_bytes())?;
+            match self.eol {
+                Eol::Lf => archivo.write_all(fragmento.as_bytes())?,
+                Eol::Crlf => archivo.write_all(fragmento.replace('\n', "\r\n").as_bytes())?,
+            }
         }
         self.ruta = Some(ruta);
         self.modificado = false;
@@ -204,5 +273,74 @@ impl Buffer {
 impl Default for Buffer {
     fn default() -> Self {
         Self::nuevo()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Escribe `contenido` en un archivo temporal y devuelve su ruta —
+    /// `tempfile` no es una dependencia del crate, así que se usa
+    /// `std::env::temp_dir()` con un nombre único por test para no pisarse
+    /// entre ejecuciones en paralelo.
+    fn archivo_temporal(nombre: &str, contenido: &[u8]) -> PathBuf {
+        let ruta = std::env::temp_dir().join(format!("tcode_buffer_test_{nombre}_{}", std::process::id()));
+        std::fs::write(&ruta, contenido).unwrap();
+        ruta
+    }
+
+    #[test]
+    fn buffer_nuevo_es_lf_por_defecto() {
+        assert_eq!(Buffer::nuevo().eol(), Eol::Lf);
+    }
+
+    #[test]
+    fn desde_archivo_detecta_lf() {
+        let ruta = archivo_temporal("lf", b"fn main() {\n    1\n}\n");
+        let buffer = Buffer::desde_archivo(&ruta).unwrap();
+        assert_eq!(buffer.eol(), Eol::Lf);
+        std::fs::remove_file(ruta).ok();
+    }
+
+    /// El caso que rompía en Windows: un `\r` colgando al final de cada
+    /// línea si no se normaliza al cargar (ver doc de [`Eol`]).
+    #[test]
+    fn desde_archivo_detecta_crlf_y_normaliza_el_rope_a_solo_lf() {
+        let ruta = archivo_temporal("crlf", b"fn main() {\r\n    1\r\n}\r\n");
+        let buffer = Buffer::desde_archivo(&ruta).unwrap();
+        assert_eq!(buffer.eol(), Eol::Crlf);
+        assert!(!buffer.a_texto().contains('\r'));
+        assert_eq!(buffer.lineas_texto(), vec!["fn main() {", "    1", "}", ""]);
+        std::fs::remove_file(ruta).ok();
+    }
+
+    #[test]
+    fn guardar_como_reescribe_crlf_tal_cual_lo_encontro() {
+        let origen = archivo_temporal("crlf_origen", b"a\r\nb\r\n");
+        let mut buffer = Buffer::desde_archivo(&origen).unwrap();
+        buffer.insertar_char(0, 1, 'X'); // "aX\r\nb\r\n" tras reescribir
+
+        let destino = archivo_temporal("crlf_destino", b"");
+        buffer.guardar_como(&destino).unwrap();
+        let bytes_guardados = std::fs::read(&destino).unwrap();
+        assert_eq!(bytes_guardados, b"aX\r\nb\r\n");
+
+        std::fs::remove_file(origen).ok();
+        std::fs::remove_file(destino).ok();
+    }
+
+    #[test]
+    fn guardar_como_no_introduce_cr_en_un_archivo_lf() {
+        let origen = archivo_temporal("lf_origen", b"a\nb\n");
+        let mut buffer = Buffer::desde_archivo(&origen).unwrap();
+
+        let destino = archivo_temporal("lf_destino", b"");
+        buffer.guardar_como(&destino).unwrap();
+        let bytes_guardados = std::fs::read(&destino).unwrap();
+        assert_eq!(bytes_guardados, b"a\nb\n");
+
+        std::fs::remove_file(origen).ok();
+        std::fs::remove_file(destino).ok();
     }
 }

@@ -27,7 +27,13 @@ pub fn dibujar(
     interfaz: &ConfigInterfaz,
 ) {
     let cursor = editor.cursor();
-    let marca_modificado = if editor.buffer().modificado() { " ●" } else { "" };
+    // ASCII a propósito (`*`, no `●`): la statusbar se redibuja en cada
+    // frame junto a varios segmentos más, así que un carácter de ancho
+    // "ambiguo" que una terminal renderice distinto a como lo calcula
+    // `ratatui` correría todo lo que sigue — ver `panel_archivos` sobre
+    // el mismo problema, sospechoso de un bug de desalineación en
+    // Windows Terminal.
+    let marca_modificado = if editor.buffer().modificado() { " *" } else { "" };
 
     let mut partes = vec![format!("{ruta_mostrada}{marca_modificado}")];
 
@@ -46,7 +52,7 @@ pub fn dibujar(
         partes.push("UTF-8".to_string());
     }
     if interfaz.statusbar_eol {
-        partes.push("LF".to_string());
+        partes.push(editor.buffer().eol().como_str().to_string());
     }
     if interfaz.statusbar_lenguaje {
         partes.push(detectar_lenguaje(ruta_mostrada).to_string());
@@ -65,7 +71,14 @@ pub fn dibujar(
         );
     }
 
-    let texto = format!(" {} ", partes.join("  │  "));
+    // Separador ASCII (`|`, no `│`): el de box-drawing tiene ancho
+    // "ambiguo" en Unicode (ver `marca_modificado` más arriba y
+    // `panel_archivos::dibujar`) y aparece varias veces por frame en la
+    // fila que más segmentos concatena de toda la UI — el candidato más
+    // fuerte para un desalineamiento progresivo hacia la derecha si una
+    // terminal lo renderiza con un ancho distinto al que calcula
+    // `ratatui`.
+    let texto = format!(" {} ", partes.join("  |  "));
 
     frame.render_widget(
         Paragraph::new(Line::from(texto))

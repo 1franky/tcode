@@ -71,10 +71,12 @@ pub fn analizar(texto: &str, delimitador: u8) -> Result<TablaCsv> {
 /// Serializa una fila con el delimitador dado, en el mismo estilo que
 /// escribiría cualquier archivo CSV real: solo cita los campos que lo
 /// necesitan (contienen el delimitador, una comilla o un salto de línea).
-/// Siempre con `\n` como terminador — el resto del editor no tiene ningún
-/// soporte de CRLF (la barra de estado siempre muestra "LF"), y el valor
-/// por defecto del propio crate `csv` es CRLF, así que hay que pedirlo
-/// explícito.
+/// Siempre con `\n` como terminador — el `rope` de [`crate::Buffer`] está
+/// siempre normalizado a `\n` puertas adentro sin importar el fin de línea
+/// real del archivo (`Eol`, reconstruido solo al guardar), así que una fila
+/// reemplazada a mitad de archivo debe usar ese mismo `\n` interno para
+/// quedar consistente con el resto del texto. El valor por defecto del
+/// propio crate `csv` es CRLF, así que hay que pedir `\n` explícito.
 ///
 /// No garantiza reproducir el quoting exacto que tenía esa fila en el
 /// archivo original si no hacía falta citar lo que el usuario sí había
