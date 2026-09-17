@@ -290,29 +290,56 @@ abajo, es donde más problemas aparecieron).
 - [ ] `tcode --version` (o `-v`): imprime `tcode vX.Y.Z` con el tag real de la release instalada (no `-dev`) y termina sin abrir el editor — sirve para confirmar que `install/linux.sh`/`install/windows.ps1` dejaron el binario esperado. Con un binario compilado localmente (`cargo build`, sin pasar por el workflow de release), muestra en cambio `vX.Y.Z-dev` — confirma que no es "una release real" por accidente.
 - [ ] Los binarios de Linux (`tcode-linux-x86_64.tar.gz` y `tcode-linux-arm64.tar.gz`) son ahora estáticos (target musl, no gnu) — `file tcode` en Linux debe decir "statically linked" (o no listar ningún intérprete/`.so` dinámico de libc); `ldd tcode` responde "not a dynamic executable". Correrlo en cualquier distro Linux, sin importar qué tan vieja sea su glibc (o directamente sin glibc, como Alpine), no debe dar ningún error `version 'GLIBC_2.XX' not found` — es justamente el problema que este cambio elimina de raíz (dos intentos previos fijando una versión de Ubuntu más vieja en el runner de CI no alcanzaron: siempre hay una VPS con una glibc todavía más vieja que la elegida).
 
-## ⚠️ Bug conocido en Windows — 4º intento (símbolos Unicode → ASCII)
+## ⚠️ Bug conocido en Windows — 5º intento (CRLF sin normalizar)
 
 Ver detalle técnico completo (diagnóstico, intentos de fix ya probados y
 descartados) en la memoria del proyecto / historial de PRs de
-`fix(windows)`. **Hipótesis de este intento** (distinta a las 3
-anteriores, que tocaban codepage/`clear()`): varios caracteres
-decorativos usados en toda la UI (`▾`/`▸`/`●`/`↺`/`⇩`/`⇧`/`•` y, sobre
-todo, los bordes por defecto de `ratatui` — `┌┐└┘│─` — que usa
-prácticamente todo panel con recuadro) tienen ancho "ambiguo" en
-Unicode: distintas terminales los renderizan a 1 o 2 columnas según
-fuente/configuración regional. Si Windows Terminal los renderiza con un
-ancho distinto al que `ratatui` calculó internamente para su buffer de
-diffing, todo lo que sigue en esa fila queda corrido de forma
-permanente (no se autocorrige sola) — coincide con el síntoma exacto
-reportado. Se reemplazaron todos por ASCII (`v`/`>`/`*`/`+`/`-`/`|`),
-incluido un conjunto de borde ASCII global (`crates/ui/src/lib.rs`,
-`BORDE_ASCII`) aplicado a los ~13 recuadros de toda la app.
+`fix(windows)`. El 4º intento (símbolos Unicode → ASCII, `BORDE_ASCII`)
+se probó en Windows real: arregló los recuadros y diálogos internos
+(explorador, selector de temas, paneles — confirmado con capturas, se ven
+perfectos), pero el usuario reportó que el bug seguía apareciendo al
+abrir archivos reales (`.py`, `.sql`, `.txt`, `.csv`) con texto
+completamente descolocado/superpuesto, muy distinto a un simple
+corrimiento de columnas.
 
-- [ ] En Windows con **Windows Terminal** (el caso que seguía roto en el intento anterior): abrir el explorador con `Ctrl+B`, seleccionar "abrir archivo": verificar que el contenido del archivo y el árbol del explorador se dibujan completos, sin caracteres faltantes ni artefactos — el ícono de carpeta debe verse como `v`/`>` (no un triángulo), y el borde del panel como `|` (no una línea fina).
-- [ ] Repetir la prueba anterior en una ventana angosta (~120x30) y en una ancha (~209x51) — el ancho de la ventana fue un factor real en versiones anteriores.
-- [ ] Abrir el panel de administración (`Ctrl+K A`), la paleta de comandos (`F1`), el buscador de archivos (`Ctrl+P`) y el editor visual de tema (`Ctrl+K Ctrl+P`): todos los recuadros deben verse con esquinas `+` y bordes `-`/`|`, sin desalineación al moverse dentro de ellos.
-- [ ] En PowerShell/CMD **sin** Windows Terminal (consola clásica): confirmar que el fix de codepage UTF-8 de v0.1.2 sigue funcionando igual que antes (este intento no lo toca).
-- [ ] Si el problema reaparece pese a esto: anotar versión de Windows Terminal (`$env:WT_SESSION`, y su versión desde el menú "Acerca de"), versión de PowerShell (`$PSVersionTable`), tamaño exacto de ventana, fuente configurada en Windows Terminal, y en qué momento exacto se ve mal (¿ya al abrir el archivo, o recién al desplazarse con las flechas?) — en ese caso, la hipótesis de ancho ambiguo quedaría descartada también y haría falta un video/captura paso a paso para el próximo intento.
+**Causa real, confirmada por código** (no solo hipótesis): `Buffer::desde_archivo`
+leía el archivo con `std::fs::read_to_string` y lo pasaba tal cual a
+`ropey::Rope::from_str` sin normalizar el fin de línea. Un archivo con
+CRLF (lo normal al editar en Windows) dejaba un `\r` colgando al final
+de cada línea — el propio código ya lo admitía en un comentario de
+`crates/core/src/csv.rs` ("el resto del editor no tiene ningún soporte
+de CRLF"). Ese `\r`, al imprimirse en una terminal real, mueve el cursor
+al inicio de la fila — pero el optimizador de `ratatui`/`crossterm` (que
+evita un `MoveTo` explícito cuando asume que el cursor avanzó de forma
+natural tras el `Print` anterior) no se entera de ese salto: el resto de
+esa fila, y el diffing de los frames siguientes, quedan permanentemente
+desalineados. Coincide exactamente con las capturas: se rompe con
+contenido común y corriente (no solo con íconos), es mucho más grave
+cuantas más líneas CRLF tenga el archivo, y "no se autocorrige sola".
+
+Arreglado normalizando el `rope` interno a `\n` siempre al cargar
+(recordando si el archivo era CRLF para reescribirlo igual al guardar,
+`crates/core/src/buffer.rs`, `Eol`) — la barra de estado ahora también
+muestra el fin de línea real (`LF`/`CRLF`) en vez de un `"LF"` fijo.
+
+- [ ] Abrir en Windows Terminal un archivo `.py`/`.sql`/`.txt` real que se sepa que tiene CRLF (cualquier archivo editado antes con Notepad/VS Code en Windows sirve): el texto se ve completo y alineado, sin fragmentos superpuestos ni huecos — el bug de las capturas de este intento.
+- [ ] La barra de estado muestra `CRLF` para ese archivo (antes siempre decía `LF`, sin importar el archivo).
+- [ ] Editar una línea de ese archivo y guardar (`Ctrl+S`): reabrirlo (o `Get-Content -Raw archivo | Format-Hex` en PowerShell) confirma que sigue usando `\r\n`, no se convirtió a LF por accidente.
+- [ ] Abrir un archivo con LF normal (por ejemplo cualquier `.rs` del propio repo clonado en Windows con `core.autocrlf=false`): la barra de estado sigue diciendo `LF`, sin cambios de comportamiento.
+- [ ] Repetir la prueba del 4º intento (explorador `Ctrl+B`, panel de administración, paleta de comandos, editor de tema) para confirmar que los bordes ASCII se mantienen bien sin este cambio haber tocado nada ahí.
+- [ ] Si el problema reaparece pese a esto: guardar el archivo exacto que falla (no solo una captura) para poder reproducirlo aquí directamente — hasta ahora el diagnóstico se hizo por captura de pantalla, sin poder correr el archivo real.
+
+### Pendiente aparte (no bloquea lo anterior): tabla CSV con muchas columnas
+
+Una de las capturas de este intento (`imagesWindows/image-4.png`) mostró
+la vista CSV (`Ctrl+K T`) con columnas comprimidas a 1-2 caracteres cada
+una en un archivo con muchas columnas — probablemente porque
+`vista_csv::anchos_por_columna` usa `Constraint::Length` fijo por
+columna sin considerar que la suma puede superar el ancho de la
+terminal (`ratatui` los encoge proporcionalmente al no entrar, sin
+scroll horizontal). No parece relacionado al bug de CRLF de arriba;
+queda como una limitación aparte para una próxima pieza (scroll
+horizontal en la tabla, o priorizar columnas visibles).
 
 ---
 

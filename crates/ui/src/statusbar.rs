@@ -52,7 +52,7 @@ pub fn dibujar(
         partes.push("UTF-8".to_string());
     }
     if interfaz.statusbar_eol {
-        partes.push("LF".to_string());
+        partes.push(editor.buffer().eol().como_str().to_string());
     }
     if interfaz.statusbar_lenguaje {
         partes.push(detectar_lenguaje(ruta_mostrada).to_string());

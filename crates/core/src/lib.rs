@@ -12,7 +12,7 @@ pub mod estado_csv;
 pub mod estado_guardar_como;
 pub mod history;
 
-pub use buffer::Buffer;
+pub use buffer::{Buffer, Eol};
 pub use busqueda::{buscar_coincidencias, Coincidencia, OpcionesBusqueda};
 pub use csv::{analizar as analizar_csv, delimitador_por_extension, serializar_fila as serializar_fila_csv, FilaCsv, TablaCsv};
 pub use cursor::{Cursor, CursorMultiple};
