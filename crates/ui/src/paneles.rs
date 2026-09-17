@@ -297,6 +297,7 @@ impl Layout {
         resaltador: &mut Resaltador,
         estado_busqueda: &EstadoBusqueda,
         mostrar_numeros: bool,
+        ajuste_linea: bool,
         interfaz: &ConfigInterfaz,
     ) {
         let activo = self.activo;
@@ -311,6 +312,7 @@ impl Layout {
             resaltador,
             estado_busqueda,
             mostrar_numeros,
+            ajuste_linea,
             interfaz,
         );
     }
@@ -327,6 +329,7 @@ fn dibujar_panel(
     resaltador: &mut Resaltador,
     estado_busqueda: &EstadoBusqueda,
     mostrar_numeros: bool,
+    ajuste_linea: bool,
     interfaz: &ConfigInterfaz,
 ) {
     match panel {
@@ -396,6 +399,7 @@ fn dibujar_panel(
                         coincidencias,
                         indice_coincidencia,
                         mostrar_numeros,
+                        ajuste_linea,
                     );
                 }
                 ModoMarkdown::Dividido => {
@@ -416,6 +420,17 @@ fn dibujar_panel(
                         coincidencias,
                         indice_coincidencia,
                         mostrar_numeros,
+                        // `false` fijo, no `ajuste_linea`: `estado_ui.
+                        // scroll_vertical` se comparte con
+                        // `vista_markdown::dibujar` de acá abajo, que
+                        // asume una fila de scroll por línea lógica (no
+                        // sabe de filas visuales) — activar el ajuste acá
+                        // desincronizaría las dos mitades del split en
+                        // cuanto una línea larga se partiera en más de
+                        // una fila. El ajuste de línea sigue andando
+                        // normal en "solo fuente" (arriba), donde no hay
+                        // ninguna otra vista compartiendo el scroll.
+                        false,
                     );
                     vista_markdown::dibujar(
                         frame,
@@ -465,11 +480,11 @@ fn dibujar_panel(
                 .split(area);
             dibujar_panel(
                 frame, partes[0], primero, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
-                interfaz,
+                ajuste_linea, interfaz,
             );
             dibujar_panel(
                 frame, partes[1], segundo, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
-                interfaz,
+                ajuste_linea, interfaz,
             );
         }
     }

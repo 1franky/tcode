@@ -176,6 +176,16 @@ opción por nombre):
 Todos los cambios se aplican y persisten al instante en `config.toml`, sin
 tocar ni reiniciar nada más.
 
+**Ajuste de línea** (sección "Editor"): con el toggle activo, cualquier
+línea más ancha que la terminal se parte en varias filas de pantalla en
+vez de recortarse — sin buscar el espacio más cercano (ajuste por
+carácter, no por palabra). `↑`/`↓`/`Home`/`End` se siguen moviendo por
+línea lógica completa, no por fila de pantalla. No tiene efecto en la
+mitad "fuente" de la vista Markdown dividida (`Ctrl+K V`) — esa mitad
+comparte el desplazamiento vertical con el preview de al lado, que no
+sabe de filas partidas; funciona normal viendo el mismo archivo sin
+dividir.
+
 ## LSP: autocompletado y diagnósticos
 
 `tcode` no instala servidores LSP por vos — si el binario correspondiente

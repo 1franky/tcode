@@ -138,6 +138,20 @@ abajo, es donde más problemas aparecieron).
 - [ ] Achicar la ventana de la terminal a un ancho muy angosto con el gutter activo: no debería romper el render — el código sigue siendo legible aunque el gutter se termine ocultando si no entra.
 - [ ] Como esta pieza toca el loop de dibujado y agrega una vista de pantalla completa nueva: re-correr al menos la prueba básica de la sección de Windows más abajo.
 
+### Ajuste de línea: reflow real (word wrap)
+
+- [ ] Con "Ajuste de línea" en "No" (el valor por defecto): abrir un archivo con una línea más ancha que la terminal — se recorta al ancho visible, sin partirse en varias filas (comportamiento de siempre, sin cambios).
+- [ ] Activar "Ajuste de línea" (`Enter` sobre esa fila en la sección "Editor") y cerrar el panel: la(s) línea(s) más anchas que la terminal ahora se parten en varias filas de pantalla consecutivas, sin cortar ningún carácter (probar también con tildes/eñes: no debe partir un carácter UTF-8 a la mitad).
+- [ ] Con el gutter de números activo: solo la PRIMERA fila de cada línea partida muestra su número — las filas de continuación van en blanco, igual que en VSCode.
+- [ ] Mover el cursor con `↓`/`↑`/`Home`/`End` hacia y a través de una línea partida: la barra de estado muestra siempre la posición LÓGICA real (`Ln X, Col Y` de la línea completa, no reiniciada por fila) y el cursor visual de la terminal aparece en el lugar correcto de la fila que corresponde.
+- [ ] El resaltado de "línea actual" (fondo distinto) cubre TODAS las filas de pantalla que ocupa la línea con el cursor, no solo la primera.
+- [ ] Escribir/borrar texto cerca del punto donde una línea se parte: el ajuste se recalcula solo, sin romper nada ni perder texto.
+- [ ] Con un archivo que tenga más líneas partidas que las que entran en pantalla: hacer scroll hasta el final y volver al principio — la vista se desplaza de a una FILA de pantalla (no de a una línea lógica completa) y el cursor se mantiene siempre visible, sin saltos raros ni quedar fuera de la ventana.
+- [ ] Multi-cursor (`Ctrl+D`) con una selección que caiga en una línea partida: el marcador de cursor secundario (video invertido) aparece una sola vez, en la fila de pantalla correcta — no se duplica en las demás filas de esa misma línea.
+- [ ] Un archivo `.py` con `pyright` activo y un diagnóstico en una línea partida: el subrayado del error/aviso cubre todas las filas de pantalla de esa línea.
+- [ ] Vista Markdown dividida (`Ctrl+K V`): el ajuste de línea NO tiene efecto en la mitad "fuente" de esa vista en particular (queda como estaba, líneas recortadas) — es una limitación conocida y documentada (esa mitad comparte el scroll con la vista de preview de al lado, que no sabe de filas visuales). El ajuste sí funciona normal en "solo fuente" (sin dividir) del mismo archivo Markdown.
+- [ ] Reiniciar `tcode`: el valor de "Ajuste de línea" persiste entre sesiones (queda guardado en `config.toml`).
+
 ## M4 — Sección "Temas" del panel de administración
 
 - [ ] Dentro del panel (`Ctrl+K A`), la sección "Temas" ya NO dice "(próximamente)" y al entrar muestra 2 filas: "Elegir tema (con preview en vivo)" y "Duplicar tema activo para editar/exportar (<Nombre del tema activo>)".

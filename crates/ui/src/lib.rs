@@ -105,6 +105,7 @@ pub fn dibujar(
         resaltador,
         estado_busqueda,
         config.editor.numeros_de_linea,
+        config.editor.ajuste_linea,
         &config.interfaz,
     );
     panel_busqueda::dibujar(frame, area_principal, estado_busqueda, paleta);
