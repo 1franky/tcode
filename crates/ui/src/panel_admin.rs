@@ -72,7 +72,9 @@ pub fn dibujar(
 
 /// Barra lateral con las 5 secciones de PLAN.md §5 (todas visibles desde
 /// ya, aunque algunas todavía solo muestren un aviso "próximamente" en el
-/// área central — ver `Seccion::implementada`).
+/// área central — ver `Seccion::implementada`). La marca de selección es
+/// ASCII (`>`, no `▸`) — ver `panel_archivos` sobre el ancho ambiguo de
+/// esos caracteres geométricos en algunas terminales.
 fn dibujar_barra(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, paleta: &Paleta) {
     let estilo_base = Style::default().bg(paleta.fondo).fg(paleta.texto);
     let items: Vec<ListItem> = Seccion::TODAS
@@ -80,7 +82,7 @@ fn dibujar_barra(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, paleta
         .enumerate()
         .map(|(idx, seccion)| {
             let seleccionada = idx == panel.indice_seccion();
-            let marca = if seleccionada && panel.foco() == FocoPanelAdmin::Barra { "▸ " } else { "  " };
+            let marca = if seleccionada && panel.foco() == FocoPanelAdmin::Barra { "> " } else { "  " };
             let sufijo = if seccion.implementada() { "" } else { " (próximamente)" };
             let estilo = if seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
             ListItem::new(Line::from(Span::styled(format!("{marca}{}{sufijo}", seccion.nombre()), estilo)))
@@ -88,7 +90,13 @@ fn dibujar_barra(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, paleta
         })
         .collect();
     let lista = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(" Administración ").style(estilo_base));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_set(crate::BORDE_ASCII)
+                .title(" Administración ")
+                .style(estilo_base),
+        );
     frame.render_widget(lista, area);
 }
 
@@ -107,7 +115,11 @@ fn dibujar_central(
 ) {
     let estilo_base = Style::default().bg(paleta.fondo).fg(paleta.texto);
     let seccion = panel.seccion_actual();
-    let bloque = Block::default().borders(Borders::ALL).title(format!(" {} ", seccion.nombre())).style(estilo_base);
+    let bloque = Block::default()
+        .borders(Borders::ALL)
+        .border_set(crate::BORDE_ASCII)
+        .title(format!(" {} ", seccion.nombre()))
+        .style(estilo_base);
 
     if !seccion.implementada() {
         let parrafo =
@@ -192,11 +204,14 @@ fn filas_atajos<'a>(
     // restablecer todos los atajos, exportar el keymap activo, e
     // importar uno desde el archivo fijo que deja `Keymap::exportar`/
     // `importar_keymap` (ver `app/main.rs`, que interpreta estas mismas
-    // posiciones de fila).
+    // posiciones de fila). Sin ícono decorativo (antes ↺/⇩/⇧) — ver
+    // `panel_archivos` sobre el ancho ambiguo de esos caracteres en
+    // algunas terminales; el texto ya es suficientemente descriptivo
+    // solo.
     for (fila, texto) in [
-        (0, "↺ Restablecer TODOS los atajos por defecto"),
-        (1, "⇩ Exportar atajos a archivo"),
-        (2, "⇧ Importar atajos desde archivo"),
+        (0, "Restablecer TODOS los atajos por defecto"),
+        (1, "Exportar atajos a archivo"),
+        (2, "Importar atajos desde archivo"),
     ] {
         let seleccionada = panel.campo() == fila && central_activa;
         let estilo = if seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
@@ -317,7 +332,7 @@ fn dibujar_busqueda(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, pal
         .split(area);
 
     let campo = Paragraph::new(format!("> {}", panel.busqueda()))
-        .block(Block::default().borders(Borders::ALL).title(" Buscar opción "))
+        .block(Block::default().borders(Borders::ALL).border_set(crate::BORDE_ASCII).title(" Buscar opción "))
         .style(estilo_base);
     frame.render_widget(campo, partes[0]);
 
@@ -341,7 +356,10 @@ fn dibujar_busqueda(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, pal
             ListItem::new(Line::from(spans)).style(estilo_fila)
         })
         .collect();
-    frame.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).style(estilo_base)), partes[1]);
+    frame.render_widget(
+        List::new(items).block(Block::default().borders(Borders::ALL).border_set(crate::BORDE_ASCII).style(estilo_base)),
+        partes[1],
+    );
 }
 
 /// Barra inferior con el contexto de teclas disponible (PLAN.md §5),
