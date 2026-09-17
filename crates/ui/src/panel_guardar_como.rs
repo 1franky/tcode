@@ -48,7 +48,13 @@ pub fn dibujar(frame: &mut Frame, area_total: Rect, estado: &EstadoGuardarComo, 
     ];
     let widget = Paragraph::new(contenido)
         .style(estilo_base)
-        .block(Block::default().borders(Borders::ALL).title(" Guardar como ").style(estilo_base));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_set(crate::BORDE_ASCII)
+                .title(" Guardar como ")
+                .style(estilo_base),
+        );
     frame.render_widget(widget, area);
 
     // Cursor real de la terminal al final de la ruta escrita.

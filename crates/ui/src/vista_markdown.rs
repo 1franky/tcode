@@ -137,8 +137,11 @@ impl Renderizador<'_> {
             Event::HardBreak => self.flush_linea(),
             Event::Rule => {
                 self.flush_linea();
+                // ASCII (`-`, no `─`): repetido a lo ancho de todo el
+                // panel, es el peor caso posible para un carácter de
+                // ancho "ambiguo" — ver `panel_archivos::dibujar`.
                 self.lineas.push(Line::from(Span::styled(
-                    "─".repeat(self.ancho),
+                    "-".repeat(self.ancho),
                     Style::default().fg(self.paleta.diagnostico_sugerencia),
                 )));
             }
@@ -179,7 +182,9 @@ impl Renderizador<'_> {
                         lista.siguiente += 1;
                         format!("{n}. ")
                     }
-                    _ => "• ".to_string(),
+                    // ASCII (`-`, no `•`) — mismo motivo que el separador
+                    // horizontal de arriba.
+                    _ => "- ".to_string(),
                 };
                 let indent = "  ".repeat(profundidad - 1);
                 self.actual.push(Span::styled(format!("{indent}{marcador}"), Style::default().fg(self.paleta.texto)));
@@ -397,6 +402,10 @@ impl Renderizador<'_> {
     /// Formatea la tabla acumulada como texto alineado en columnas (ver
     /// doc de [`EstadoTabla`]): encabezado en negrita, separador de
     /// guiones y filas de cuerpo con el ancho de la columna más larga.
+    /// Separadores ASCII (`|`/`-`/`+`, no `│`/`─`/`┼`): los caracteres de
+    /// box-drawing tienen ancho "ambiguo" en Unicode — ver
+    /// `panel_archivos::dibujar` sobre el mismo problema en otro widget,
+    /// sospechoso de un bug de desalineación en Windows Terminal.
     fn cerrar_tabla(&mut self) {
         let Some(tabla) = self.tabla.take() else { return };
         if tabla.filas.is_empty() {
@@ -421,16 +430,16 @@ impl Renderizador<'_> {
                     estilo = estilo.add_modifier(Modifier::BOLD);
                 }
                 spans.push(Span::styled(format!("{celda}{relleno}"), estilo));
-                spans.push(Span::raw(" │ "));
+                spans.push(Span::raw(" | "));
             }
             self.lineas.push(Line::from(spans));
 
             if es_encabezado && i + 1 == tabla.num_encabezado {
                 let separador: String = anchos
                     .iter()
-                    .map(|ancho| "─".repeat(*ancho))
+                    .map(|ancho| "-".repeat(*ancho))
                     .collect::<Vec<_>>()
-                    .join("─┼─");
+                    .join("-+-");
                 self.lineas.push(Line::from(Span::styled(
                     separador,
                     Style::default().fg(self.paleta.diagnostico_sugerencia),
@@ -551,8 +560,8 @@ mod tests {
         let paleta = Paleta::basica();
         let lineas = renderizar("- a\n- b\n", 80, &paleta, &mut resaltador);
         let texto = lineas_de_texto(&lineas);
-        assert_eq!(texto[0], "• a");
-        assert_eq!(texto[1], "• b");
+        assert_eq!(texto[0], "- a");
+        assert_eq!(texto[1], "- b");
 
         let lineas = renderizar("1. a\n2. b\n", 80, &paleta, &mut resaltador);
         let texto = lineas_de_texto(&lineas);
@@ -588,7 +597,7 @@ mod tests {
         // Encabezado, separador, dos filas: "Edad" se ensancha a "10".
         assert!(texto[0].starts_with("Nombre"));
         assert!(texto[0].contains("Edad"));
-        assert!(texto[1].chars().all(|c| c == '─' || c == '┼'));
+        assert!(texto[1].chars().all(|c| c == '-' || c == '+'));
         assert!(texto[2].starts_with("Ana  "));
         assert!(lineas[0].spans[0].style.add_modifier.contains(Modifier::BOLD));
     }
@@ -632,7 +641,7 @@ mod tests {
         let paleta = Paleta::basica();
         let lineas = renderizar("texto\n\n---\n", 20, &paleta, &mut resaltador);
         let texto = lineas_de_texto(&lineas);
-        assert!(texto.iter().any(|l| l == &"─".repeat(20)));
+        assert!(texto.iter().any(|l| l == &"-".repeat(20)));
     }
 
     #[test]
@@ -641,7 +650,7 @@ mod tests {
         let paleta = Paleta::basica();
         let lineas = renderizar("- [x] hecho\n- [ ] pendiente\n", 80, &paleta, &mut resaltador);
         let texto = lineas_de_texto(&lineas);
-        assert_eq!(texto[0], "• [x] hecho");
-        assert_eq!(texto[1], "• [ ] pendiente");
+        assert_eq!(texto[0], "- [x] hecho");
+        assert_eq!(texto[1], "- [ ] pendiente");
     }
 }

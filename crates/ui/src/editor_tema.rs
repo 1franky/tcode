@@ -74,7 +74,11 @@ fn dibujar_lista(frame: &mut Frame, area: Rect, estado: &EstadoEditorTema, palet
     estado_lista.select(Some(estado.campo()));
 
     let lista = List::new(items).block(
-        Block::default().borders(Borders::ALL).title(" Editor visual de tema — colores por código hex ").style(estilo_base),
+        Block::default()
+            .borders(Borders::ALL)
+            .border_set(crate::BORDE_ASCII)
+            .title(" Editor visual de tema — colores por código hex ")
+            .style(estilo_base),
     );
     frame.render_stateful_widget(lista, area, &mut estado_lista);
 }
@@ -107,7 +111,13 @@ fn dibujar_paleta(frame: &mut Frame, area: Rect, estado: &EstadoEditorTema, pale
     estado_lista.select(Some(seleccion));
 
     let lista = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(" Elegir de la paleta predefinida ").style(estilo_base));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_set(crate::BORDE_ASCII)
+                .title(" Elegir de la paleta predefinida ")
+                .style(estilo_base),
+        );
     frame.render_stateful_widget(lista, area, &mut estado_lista);
 }
 
@@ -132,7 +142,13 @@ fn dibujar_hsl(frame: &mut Frame, area: Rect, estado: &EstadoEditorTema, paleta:
     let texto_swatch = if l > 55 { Color::Black } else { Color::White };
     let swatch = Paragraph::new(format!(" Color resultante: {hex} "))
         .style(Style::default().bg(Color::Rgb(r, g, b)).fg(texto_swatch))
-        .block(Block::default().borders(Borders::ALL).title(" Ajustar HSL con flechas ").style(estilo_base));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_set(crate::BORDE_ASCII)
+                .title(" Ajustar HSL con flechas ")
+                .style(estilo_base),
+        );
     frame.render_widget(swatch, filas[0]);
 
     let fila_componente = |nombre: &str, valor: String, es_foco: bool| {

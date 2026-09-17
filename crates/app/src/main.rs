@@ -104,14 +104,25 @@ fn crear_explorador(ruta_arg: Option<&str>) -> Explorador {
 
 /// La consola clásica de Windows (`conhost.exe`: `cmd.exe` y
 /// `powershell.exe` sin Windows Terminal) no usa UTF-8 por defecto —
-/// interpreta cada byte de los caracteres especiales de tcode (`│`, `▾`,
-/// `▸`, `●`) como un glifo separado del codepage regional del sistema,
-/// descuadrando el ancho de columna que `ratatui` calculó. Al redibujar
-/// (p. ej. al mover el cursor) eso se ve como texto "faltante" o con
-/// artefactos — reportado y confirmado en Windows (CMD y PowerShell
-/// clásico) el 2026-09-11: el archivo en disco quedaba intacto, solo la
-/// pantalla se veía mal. Forzar el codepage de salida/entrada a UTF-8
-/// (65001) antes de dibujar nada lo soluciona.
+/// interpreta cada byte de los caracteres especiales de tcode como un
+/// glifo separado del codepage regional del sistema, descuadrando el
+/// ancho de columna que `ratatui` calculó. Al redibujar (p. ej. al mover
+/// el cursor) eso se ve como texto "faltante" o con artefactos —
+/// reportado y confirmado en Windows (CMD y PowerShell clásico) el
+/// 2026-09-11: el archivo en disco quedaba intacto, solo la pantalla se
+/// veía mal. Forzar el codepage de salida/entrada a UTF-8 (65001) antes
+/// de dibujar nada lo soluciona.
+///
+/// Nota aparte, para **Windows Terminal** (que sí usa UTF-8 sin este
+/// fix): un bug de desalineación distinto, reportado después y sin
+/// resolver por 3 intentos previos, resultó tener la misma raíz —
+/// caracteres decorativos (`▾`/`▸`/`●`/`│`/`─` y similares) con ancho
+/// "ambiguo" en Unicode que esa terminal en particular podía renderizar
+/// distinto a como `ratatui` lo calculaba internamente, desalineando su
+/// buffer de diffing de forma permanente. Se reemplazaron por ASCII en
+/// los widgets donde se repiten estructuralmente (panel del explorador,
+/// separador de la statusbar, vista Markdown) — ver el historial de
+/// commits de esa pieza para el detalle completo.
 #[cfg(windows)]
 fn configurar_consola_utf8() {
     unsafe {

@@ -37,6 +37,26 @@ pub use panel_admin::FilaLenguajeLsp;
 /// visible.
 const ANCHO_PANEL_LATERAL: u16 = 30;
 
+/// Conjunto de caracteres de borde ASCII (`+`/`-`/`|`), en vez del
+/// `border::PLAIN` por defecto de `ratatui` (`┌┐└┘│─`) que usa todo
+/// `Block` con bordes si no se le pasa `.border_set(...)` explícito.
+/// Esos caracteres de box-drawing tienen ancho "ambiguo" en Unicode —
+/// sospechosos de un bug de desalineación persistente reportado en
+/// Windows Terminal (ver el resto de reemplazos ASCII de esta misma
+/// pieza: `panel_archivos`, `statusbar`, `vista_markdown`). Como TODOS
+/// los paneles con recuadro de la app pasan por `Block`, este único
+/// conjunto compartido cubre la superficie más grande de una sola vez.
+pub(crate) const BORDE_ASCII: ratatui::symbols::border::Set = ratatui::symbols::border::Set {
+    top_left: "+",
+    top_right: "+",
+    bottom_left: "+",
+    bottom_right: "+",
+    vertical_left: "|",
+    vertical_right: "|",
+    horizontal_top: "-",
+    horizontal_bottom: "-",
+};
+
 /// Estado propio de la UI que no pertenece al `core` — por ahora, solo el
 /// desplazamiento vertical del viewport (uno por [`PanelEditor`]).
 #[derive(Default)]

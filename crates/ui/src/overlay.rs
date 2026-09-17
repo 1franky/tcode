@@ -32,7 +32,7 @@ pub fn dibujar(
     let estilo_base = Style::default().bg(paleta.fondo).fg(paleta.texto);
 
     let campo = Paragraph::new(Line::from(format!("> {consulta}")))
-        .block(Block::default().borders(Borders::ALL).title(format!(" {titulo} ")))
+        .block(Block::default().borders(Borders::ALL).border_set(crate::BORDE_ASCII).title(format!(" {titulo} ")))
         .style(estilo_base);
     frame.render_widget(campo, partes[0]);
 
@@ -54,8 +54,12 @@ pub fn dibujar(
         })
         .collect();
 
-    let lista = List::new(items)
-        .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM).style(estilo_base));
+    let lista = List::new(items).block(
+        Block::default()
+            .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+            .border_set(crate::BORDE_ASCII)
+            .style(estilo_base),
+    );
     frame.render_widget(lista, partes[1]);
 }
 

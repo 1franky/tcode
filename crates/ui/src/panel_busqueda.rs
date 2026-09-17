@@ -56,7 +56,7 @@ pub fn dibujar(frame: &mut Frame, area_editor: Rect, estado: &EstadoBusqueda, pa
     let titulo = if estado.modo_reemplazar() { " Reemplazar (Ctrl+H) " } else { " Buscar (Ctrl+F) " };
     let widget = Paragraph::new(lineas)
         .style(estilo_base)
-        .block(Block::default().borders(Borders::ALL).title(titulo));
+        .block(Block::default().borders(Borders::ALL).border_set(crate::BORDE_ASCII).title(titulo));
     frame.render_widget(widget, area);
 
     // Posiciona el cursor real de la terminal al final del texto del

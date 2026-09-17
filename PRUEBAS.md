@@ -290,16 +290,29 @@ abajo, es donde más problemas aparecieron).
 - [ ] `tcode --version` (o `-v`): imprime `tcode vX.Y.Z` con el tag real de la release instalada (no `-dev`) y termina sin abrir el editor — sirve para confirmar que `install/linux.sh`/`install/windows.ps1` dejaron el binario esperado. Con un binario compilado localmente (`cargo build`, sin pasar por el workflow de release), muestra en cambio `vX.Y.Z-dev` — confirma que no es "una release real" por accidente.
 - [ ] Los binarios de Linux (`tcode-linux-x86_64.tar.gz` y `tcode-linux-arm64.tar.gz`) son ahora estáticos (target musl, no gnu) — `file tcode` en Linux debe decir "statically linked" (o no listar ningún intérprete/`.so` dinámico de libc); `ldd tcode` responde "not a dynamic executable". Correrlo en cualquier distro Linux, sin importar qué tan vieja sea su glibc (o directamente sin glibc, como Alpine), no debe dar ningún error `version 'GLIBC_2.XX' not found` — es justamente el problema que este cambio elimina de raíz (dos intentos previos fijando una versión de Ubuntu más vieja en el runner de CI no alcanzaron: siempre hay una VPS con una glibc todavía más vieja que la elegida).
 
-## ⚠️ Bug conocido en Windows — todavía sin resolver
+## ⚠️ Bug conocido en Windows — 4º intento (símbolos Unicode → ASCII)
 
 Ver detalle técnico completo (diagnóstico, intentos de fix ya probados y
 descartados) en la memoria del proyecto / historial de PRs de
-`fix(windows)`. Resumen para volver a probar tras cualquier cambio que
-toque el render (`crates/app/src/main.rs`, `crates/ui/**`):
+`fix(windows)`. **Hipótesis de este intento** (distinta a las 3
+anteriores, que tocaban codepage/`clear()`): varios caracteres
+decorativos usados en toda la UI (`▾`/`▸`/`●`/`↺`/`⇩`/`⇧`/`•` y, sobre
+todo, los bordes por defecto de `ratatui` — `┌┐└┘│─` — que usa
+prácticamente todo panel con recuadro) tienen ancho "ambiguo" en
+Unicode: distintas terminales los renderizan a 1 o 2 columnas según
+fuente/configuración regional. Si Windows Terminal los renderiza con un
+ancho distinto al que `ratatui` calculó internamente para su buffer de
+diffing, todo lo que sigue en esa fila queda corrido de forma
+permanente (no se autocorrige sola) — coincide con el síntoma exacto
+reportado. Se reemplazaron todos por ASCII (`v`/`>`/`*`/`+`/`-`/`|`),
+incluido un conjunto de borde ASCII global (`crates/ui/src/lib.rs`,
+`BORDE_ASCII`) aplicado a los ~13 recuadros de toda la app.
 
-- [ ] En Windows (PowerShell o CMD, con y sin Windows Terminal), abrir el explorador con `Ctrl+B`, seleccionar "abrir archivo": verificar que el contenido del archivo y el árbol del explorador se dibujan completos, sin caracteres faltantes ni artefactos.
+- [ ] En Windows con **Windows Terminal** (el caso que seguía roto en el intento anterior): abrir el explorador con `Ctrl+B`, seleccionar "abrir archivo": verificar que el contenido del archivo y el árbol del explorador se dibujan completos, sin caracteres faltantes ni artefactos — el ícono de carpeta debe verse como `v`/`>` (no un triángulo), y el borde del panel como `|` (no una línea fina).
 - [ ] Repetir la prueba anterior en una ventana angosta (~120x30) y en una ancha (~209x51) — el ancho de la ventana fue un factor real en versiones anteriores.
-- [ ] Si el problema reaparece: anotar versión de Windows Terminal (`$env:WT_SESSION`, y su versión desde el menú "Acerca de"), versión de PowerShell (`$PSVersionTable`), tamaño exacto de ventana, y en qué momento exacto se ve mal (¿ya al abrir el archivo, o recién al desplazarse con las flechas?).
+- [ ] Abrir el panel de administración (`Ctrl+K A`), la paleta de comandos (`F1`), el buscador de archivos (`Ctrl+P`) y el editor visual de tema (`Ctrl+K Ctrl+P`): todos los recuadros deben verse con esquinas `+` y bordes `-`/`|`, sin desalineación al moverse dentro de ellos.
+- [ ] En PowerShell/CMD **sin** Windows Terminal (consola clásica): confirmar que el fix de codepage UTF-8 de v0.1.2 sigue funcionando igual que antes (este intento no lo toca).
+- [ ] Si el problema reaparece pese a esto: anotar versión de Windows Terminal (`$env:WT_SESSION`, y su versión desde el menú "Acerca de"), versión de PowerShell (`$PSVersionTable`), tamaño exacto de ventana, fuente configurada en Windows Terminal, y en qué momento exacto se ve mal (¿ya al abrir el archivo, o recién al desplazarse con las flechas?) — en ese caso, la hipótesis de ancho ambiguo quedaría descartada también y haría falta un video/captura paso a paso para el próximo intento.
 
 ---
 
