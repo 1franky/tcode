@@ -1268,13 +1268,44 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
 }
 
 /// Búsqueda simple del ejecutable `comando` en el `PATH` — suficiente
-/// para el indicador "¿está instalado?" de PLAN.md §5.3 (`which`/`where`
-/// completo, con `PATHEXT` en Windows, queda para cuando haga falta más
-/// precisión). No confirma que el binario funcione, solo que existe un
-/// archivo con ese nombre en algún directorio del `PATH`.
+/// para el indicador "¿está instalado?" de la sección "Lenguajes / LSP"
+/// del panel de administración (PLAN.md §5.3; un `which`/`where`
+/// completo queda para cuando haga falta más precisión). No confirma que
+/// el binario funcione, solo que existe un archivo con ese nombre (o, en
+/// Windows, ese nombre más alguna extensión de `PATHEXT`) en algún
+/// directorio del `PATH`.
 fn ruta_en_path(comando: &str) -> bool {
     let Some(path) = std::env::var_os("PATH") else { return false };
-    std::env::split_paths(&path).any(|dir| dir.join(comando).is_file())
+    let extensiones = if cfg!(windows) { Some(extensiones_pathext()) } else { None };
+    std::env::split_paths(&path).any(|dir| existe_ejecutable(&dir, comando, extensiones.as_deref()))
+}
+
+/// Contenido de la variable de entorno `PATHEXT` de Windows
+/// (`.COM;.EXE;.BAT;.CMD;...`), o un valor de respaldo razonable si no
+/// está definida — no debería pasar en un Windows real (el sistema
+/// siempre la fija), pero un valor vacío dejaría `ruta_en_path` sin
+/// encontrar nada nunca en ese caso límite.
+fn extensiones_pathext() -> String {
+    std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+}
+
+/// Si `dir/comando` (probado tal cual, y si `extensiones` trae algo,
+/// también `dir/comando<ext>` por cada extensión de esa lista separada
+/// por `;`) existe como archivo. En Windows, a diferencia de Unix, casi
+/// nunca se invoca un ejecutable con su extensión puesta (`npm`, no
+/// `npm.cmd`) — probar solo el nombre pelado (lo único que hacía esta
+/// función antes) daba un falso negativo para casi cualquier LSP
+/// instalado ahí, aunque estuviera perfectamente disponible.
+/// `extensiones` es un parámetro (no `PATHEXT` leída acá adentro) para
+/// que los tests puedan fijar un valor conocido sin depender de en qué
+/// sistema operativo corren de verdad — `ruta_en_path` es quien decide
+/// con `cfg!(windows)` al llamarla.
+fn existe_ejecutable(dir: &std::path::Path, comando: &str, extensiones: Option<&str>) -> bool {
+    if dir.join(comando).is_file() {
+        return true;
+    }
+    let Some(extensiones) = extensiones else { return false };
+    extensiones.split(';').filter(|ext| !ext.is_empty()).any(|ext| dir.join(format!("{comando}{ext}")).is_file())
 }
 
 /// `Enter`/`←`/`→` sobre una fila de "Lenguajes / LSP": alterna si el
@@ -1487,4 +1518,74 @@ fn reemplazar_todas_las_coincidencias(editor: &mut Editor, estado_busqueda: &mut
         editor.reemplazar_rango_bytes(coincidencia.inicio, coincidencia.fin, &reemplazo);
     }
     estado_busqueda.recalcular(&editor.buffer().a_texto());
+}
+
+#[cfg(test)]
+mod tests_ruta_en_path {
+    use super::*;
+
+    /// Directorio temporal único por test, borrado al final — mismo
+    /// patrón que `tcode_core::tests::guardar_y_recargar_archivo`.
+    struct DirTemporal(std::path::PathBuf);
+
+    impl DirTemporal {
+        fn nuevo(nombre: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("tcode-test-ruta-en-path-{nombre}-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn crear_archivo(&self, nombre: &str) {
+            std::fs::write(self.0.join(nombre), "").unwrap();
+        }
+    }
+
+    impl Drop for DirTemporal {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).ok();
+        }
+    }
+
+    #[test]
+    fn sin_extensiones_solo_encuentra_el_nombre_exacto() {
+        let dir = DirTemporal::nuevo("sin-ext");
+        dir.crear_archivo("clangd");
+        assert!(existe_ejecutable(&dir.0, "clangd", None));
+        assert!(!existe_ejecutable(&dir.0, "clangd.exe", None));
+        assert!(!existe_ejecutable(&dir.0, "no-existe", None));
+    }
+
+    #[test]
+    fn con_extensiones_encuentra_el_nombre_pelado_mas_cualquier_extension() {
+        let dir = DirTemporal::nuevo("con-ext");
+        dir.crear_archivo("pyright-langserver.cmd");
+        // El caso real que motiva esta pieza: en Windows casi nunca se
+        // invoca (ni se busca) un ejecutable con su extensión puesta.
+        assert!(existe_ejecutable(&dir.0, "pyright-langserver", Some(".COM;.EXE;.BAT;.CMD")));
+    }
+
+    #[test]
+    fn con_extensiones_sigue_encontrando_el_nombre_exacto_sin_extension() {
+        // Un ejecutable sin extensión (poco común en Windows, pero
+        // válido) no debería dejar de encontrarse solo porque se pasó
+        // una lista de extensiones para probar además.
+        let dir = DirTemporal::nuevo("exacto-con-lista");
+        dir.crear_archivo("script");
+        assert!(existe_ejecutable(&dir.0, "script", Some(".COM;.EXE;.BAT;.CMD")));
+    }
+
+    #[test]
+    fn no_encuentra_nada_si_ninguna_extension_matchea() {
+        let dir = DirTemporal::nuevo("ninguna-matchea");
+        dir.crear_archivo("otracosa.dll");
+        assert!(!existe_ejecutable(&dir.0, "comando", Some(".COM;.EXE;.BAT;.CMD")));
+    }
+
+    #[test]
+    fn lista_de_extensiones_vacia_o_con_segmentos_vacios_no_hace_fallar_nada() {
+        let dir = DirTemporal::nuevo("lista-rara");
+        dir.crear_archivo("comando.exe");
+        assert!(!existe_ejecutable(&dir.0, "comando", Some("")));
+        assert!(existe_ejecutable(&dir.0, "comando", Some(";;.EXE;;")));
+    }
 }
