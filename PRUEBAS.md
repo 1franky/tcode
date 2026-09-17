@@ -98,6 +98,21 @@ abajo, es donde más problemas aparecieron).
 - [ ] Guardar (`Ctrl+S`) tras editar una celda y volver a abrir el archivo (o revisarlo con otro editor/`cat`): el resto de las filas quedó intacto, byte a byte.
 - [ ] `Ctrl+K T`: alterna a texto plano (para arreglar algo a mano) y de vuelta a tabla.
 
+### Scroll horizontal con muchas columnas
+
+Antes, un CSV con más columnas de las que entraban en el ancho de la
+terminal hacía que `ratatui` encogiera TODAS las columnas
+proporcionalmente hasta dejarlas de 1-2 caracteres, ilegibles (detectado
+en capturas de Windows durante el diagnóstico del bug de renderizado,
+`imagesWindows/image-4.png` en su momento). Ahora se muestra una ventana
+de columnas completas que sí entran, siguiendo a la selección.
+
+- [ ] Abrir un CSV/TSV con más columnas de las que entran en el ancho de la terminal (o angostar la ventana hasta lograrlo): se ven columnas completas y legibles desde la primera, no todas comprimidas a 1-2 caracteres.
+- [ ] Mover la selección con `→` más allá de la última columna visible: la ventana se desplaza para mostrarla, sin saltos ni columnas a medias.
+- [ ] Volver con `←` hasta la primera columna: la ventana vuelve a mostrar la columna 0 (no se queda scrolleada a la mitad).
+- [ ] El encabezado (fila congelada) se desplaza junto con el cuerpo — nunca queda desalineado con las columnas que se ven abajo.
+- [ ] Editar una celda de una columna fuera de la ventana original: el cursor de edición aparece en la posición correcta de pantalla tras el scroll (no en la posición "vieja" antes de desplazarse).
+
 ## M3 — Multi-cursor (`Ctrl+D` / `Ctrl+Shift+L` / `Ctrl+Alt+↑↓`)
 
 - [ ] Poner el cursor sobre una palabra y `Ctrl+D`: selecciona esa palabra (sin agregar un cursor nuevo todavía).
@@ -329,17 +344,10 @@ muestra el fin de línea real (`LF`/`CRLF`) en vez de un `"LF"` fijo.
 - [ ] Repetir la prueba del 4º intento (explorador `Ctrl+B`, panel de administración, paleta de comandos, editor de tema) para confirmar que los bordes ASCII se mantienen bien sin este cambio haber tocado nada ahí.
 - [ ] Si el problema reaparece pese a esto: guardar el archivo exacto que falla (no solo una captura) para poder reproducirlo aquí directamente — hasta ahora el diagnóstico se hizo por captura de pantalla, sin poder correr el archivo real.
 
-### Pendiente aparte (no bloquea lo anterior): tabla CSV con muchas columnas
-
-Una de las capturas de este intento (`imagesWindows/image-4.png`) mostró
-la vista CSV (`Ctrl+K T`) con columnas comprimidas a 1-2 caracteres cada
-una en un archivo con muchas columnas — probablemente porque
-`vista_csv::anchos_por_columna` usa `Constraint::Length` fijo por
-columna sin considerar que la suma puede superar el ancho de la
-terminal (`ratatui` los encoge proporcionalmente al no entrar, sin
-scroll horizontal). No parece relacionado al bug de CRLF de arriba;
-queda como una limitación aparte para una próxima pieza (scroll
-horizontal en la tabla, o priorizar columnas visibles).
+Nota: una de las capturas de este bug mostró de paso otro problema no
+relacionado (tabla CSV con muchas columnas comprimida a 1-2 caracteres
+por falta de scroll horizontal) — ya arreglado, ver la sección "Scroll
+horizontal con muchas columnas" en M3 — Vista CSV/TSV más arriba.
 
 ---
 
