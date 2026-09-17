@@ -244,6 +244,18 @@ abajo, es donde más problemas aparecieron).
 - [ ] HSL: `Esc` a mitad de un ajuste revierte el campo exactamente al color que tenía antes de entrar a HSL (confirmar que `<tema>-mio.toml` no cambió). `Enter` en cambio persiste el color ya aplicado y muestra "Guardado".
 - [ ] Un color de sintaxis con `bold`/`italic`: aplicar un color nuevo por paleta o por HSL también conserva el estilo (mismo comportamiento ya confirmado con hex).
 
+## Guardar como (`Ctrl+Shift+S` / `Ctrl+K S`)
+
+- [ ] Abrir `tcode` sin argumentos (buffer nuevo, "[Sin nombre]"), escribir algo y `Ctrl+S`: en vez de no hacer nada, se abre el prompt "Guardar como" — un recuadro centrado con un campo de ruta vacío y "Enter guarda · Esc cancela" debajo.
+- [ ] Escribir una ruta (relativa o absoluta) y `Enter`: el archivo se crea en esa ruta con el contenido del buffer, el prompt se cierra, y la statusbar/pestaña pasa a mostrar esa ruta (ya no "[Sin nombre]").
+- [ ] Con un archivo ya abierto (con ruta real): `Ctrl+Shift+S` (o `Ctrl+K S` si esa combinación no llega en la terminal usada) abre el mismo prompt, esta vez **precargado con la ruta actual** — cambiarla y `Enter` guarda una copia en la ruta nueva sin tocar ni borrar el archivo original, y la statusbar pasa a mostrar la ruta nueva.
+- [ ] También aparece en la paleta de comandos (`Ctrl+Shift+P`/`F1`) como "Archivo: Guardar como...".
+- [ ] Dejar el campo vacío y `Enter`: no guarda nada, muestra "la ruta no puede estar vacía" en el prompt (que sigue abierto) en vez de cerrarse o fallar en silencio.
+- [ ] Escribir una ruta con un directorio inexistente (ej. `/carpeta-que-no-existe/archivo.txt`) y `Enter`: muestra el error real del sistema de archivos ("no se pudo crear...") sin perder lo escrito ni cerrar el prompt — se puede corregir la ruta ahí mismo.
+- [ ] Escribir cualquier cosa después de un error (o `Backspace`): el mensaje de error desaparece del prompt.
+- [ ] `Esc` en cualquier momento: cierra el prompt sin guardar nada y sin modificar el archivo/buffer.
+- [ ] `Ctrl+S` normal (no `Shift`) sobre un archivo que **ya tiene ruta** sigue guardando directo, sin abrir ningún prompt — el cambio solo afecta al caso "buffer sin nombre" de antes.
+
 ## Distribución / instaladores
 
 - [ ] `install/linux.sh` en una máquina Linux limpia (o `install/windows.ps1` en Windows): instala sin pedir contraseña/administrador, y `tcode` queda disponible en cualquier carpeta después de abrir una terminal nueva.

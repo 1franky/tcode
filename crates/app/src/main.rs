@@ -37,7 +37,9 @@ use tcode_config::{
     CampoTemas, Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin, ModoEdicion,
     ResultadoDuplicarTema, Seccion,
 };
-use tcode_core::{analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda};
+use tcode_core::{
+    analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo,
+};
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_syntax::{Lenguaje, Resaltador};
@@ -224,6 +226,7 @@ struct EstadoApp {
     paleta_comandos: EstadoPaleta,
     buscador_archivos: BuscadorArchivos,
     estado_busqueda: EstadoBusqueda,
+    guardar_como: EstadoGuardarComo,
     selector_tema: EstadoSelectorTema,
     panel_admin: EstadoPanelAdmin,
     editor_tema: EstadoEditorTema,
@@ -289,6 +292,7 @@ async fn ejecutar(
         paleta_comandos: EstadoPaleta::nueva(),
         buscador_archivos: BuscadorArchivos::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
         estado_busqueda: EstadoBusqueda::nueva(),
+        guardar_como: EstadoGuardarComo::nueva(),
         selector_tema: EstadoSelectorTema::nueva(),
         panel_admin,
         editor_tema: EstadoEditorTema::nueva(),
@@ -327,6 +331,7 @@ async fn ejecutar(
                 &estado.paleta_comandos,
                 &estado.buscador_archivos,
                 &estado.estado_busqueda,
+                &estado.guardar_como,
                 &estado.selector_tema,
                 &estado.panel_admin,
                 &estado.config,
@@ -684,6 +689,26 @@ async fn ejecutar(
             continue;
         }
 
+        // Prompt "Guardar como" (`Ctrl+Shift+S`/`Ctrl+K S`, o `Ctrl+S`
+        // sobre un buffer sin ruta): campo de texto de una sola línea con
+        // la ruta destino, sin selector de archivos (misma limitación que
+        // el resto de la UI). `Enter` intenta guardar; si falla (permiso
+        // denegado, directorio inexistente...) el prompt queda abierto
+        // con el error en vez de cerrarse como si nada.
+        if estado.guardar_como.activa() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => estado.guardar_como.cerrar(),
+                KeyCode::Backspace => estado.guardar_como.borrar(),
+                KeyCode::Enter => guardar_como_confirmar(layout, &mut estado.guardar_como),
+                KeyCode::Char(c) if sin_modificadores(key) => estado.guardar_como.escribir(c),
+                _ => {}
+            }
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
         // Edición de una celda de la vista CSV/TSV (`Enter`/`F2` sobre
         // una celda, PLAN.md §9): captura el teclado por completo igual
         // que los bloques anteriores, mientras dura la edición de esa
@@ -760,10 +785,11 @@ async fn sincronizar_lsp(layout: &PanelLayout, lsp: &mut lsp::EstadoLsp, config:
 
 /// Punto de entrada único para ejecutar un id de comando, venga de un
 /// atajo de teclado o de confirmar un resultado en la paleta de comandos.
-/// `config.recargar`, `paleta.comandos` y `buscar.archivos` necesitan
-/// estado que no le corresponde a `ejecutar_comando` (la paleta de
-/// colores, los propios overlays), así que se interceptan aquí antes de
-/// delegar.
+/// `config.recargar`, `paleta.comandos`, `buscar.archivos` y
+/// `archivo.guardar`/`archivo.guardar_como` necesitan estado que no le
+/// corresponde a `ejecutar_comando` (la paleta de colores, los propios
+/// overlays, el prompt de "Guardar como"), así que se interceptan aquí
+/// antes de delegar.
 fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, resolvedor: &mut Resolvedor) -> Accion {
     match id {
         "config.recargar" => {
@@ -824,6 +850,27 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             estado.estado_busqueda.alternar_palabra(&texto);
             Accion::Continuar
         }
+        // `Ctrl+S` sobre un buffer sin ruta asociada (archivo nuevo,
+        // "[Sin nombre]") no tiene dónde escribir — en vez de fallar en
+        // silencio como antes, abre el mismo prompt que "Guardar como".
+        "archivo.guardar" => {
+            if layout.editor_activo().buffer().ruta().is_none() {
+                estado.guardar_como.abrir("");
+            } else {
+                let _ = layout.editor_activo_mut().guardar();
+            }
+            Accion::Continuar
+        }
+        "archivo.guardar_como" => {
+            // Precargado con la ruta actual (si ya tenía una) para poder
+            // "guardar como" un archivo existente con otro nombre/ruta
+            // sin reescribirla entera — no solo para ponerle nombre a uno
+            // nuevo.
+            let ruta_inicial =
+                layout.editor_activo().buffer().ruta().map(|r| r.display().to_string()).unwrap_or_default();
+            estado.guardar_como.abrir(&ruta_inicial);
+            Accion::Continuar
+        }
         _ => ejecutar_comando(
             id,
             layout,
@@ -853,13 +900,6 @@ fn ejecutar_comando(
             } else {
                 return Accion::Salir;
             }
-            return Accion::Continuar;
-        }
-        // M1 no tiene "guardar como" todavía (llega con la paleta de
-        // comandos en M2): si el buffer no tiene ruta, Ctrl+S no hace nada
-        // en vez de hacer fallar el editor entero.
-        "archivo.guardar" => {
-            let _ = layout.editor_activo_mut().guardar();
             return Accion::Continuar;
         }
         "editor.deshacer" => {
@@ -1020,6 +1060,30 @@ fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
         _ => {}
     }
     Accion::Continuar
+}
+
+/// `Enter` con el prompt "Guardar como" abierto: intenta escribir el
+/// archivo en la ruta escrita. Una línea vacía no se intenta guardar (no
+/// tiene sentido un archivo sin nombre) — deja el error visible en vez de
+/// nada, para que quede claro por qué no pasó nada. Si el guardado
+/// funciona, actualiza `ruta_mostrada` del panel activo (statusbar,
+/// pestaña, detección de lenguaje) y cierra el prompt; si falla (permiso
+/// denegado, directorio inexistente...) el prompt queda abierto con el
+/// motivo, para poder corregir la ruta sin perder lo ya escrito.
+fn guardar_como_confirmar(layout: &mut PanelLayout, guardar_como: &mut EstadoGuardarComo) {
+    let ruta = guardar_como.ruta().trim();
+    if ruta.is_empty() {
+        guardar_como.establecer_error("la ruta no puede estar vacía".to_string());
+        return;
+    }
+    let ruta = ruta.to_string();
+    match layout.editor_activo_mut().guardar_como(ruta.clone()) {
+        Ok(()) => {
+            layout.panel_activo_mut().ruta_mostrada = ruta;
+            guardar_como.cerrar();
+        }
+        Err(e) => guardar_como.establecer_error(e.to_string()),
+    }
 }
 
 /// `Enter` con una celda de la vista CSV/TSV en edición: reemplaza la

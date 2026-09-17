@@ -60,8 +60,10 @@ pub fn dibujar(
 }
 
 /// Recorta `area` a un rectángulo centrado que ocupa `porcentaje_ancho`% x
-/// `porcentaje_alto`% del total.
-fn area_centrada(area: Rect, porcentaje_ancho: u16, porcentaje_alto: u16) -> Rect {
+/// `porcentaje_alto`% del total. `pub(crate)` porque `panel_guardar_como`
+/// también la usa para su prompt centrado, más chico que este overlay de
+/// "escribir para buscar" pero con la misma idea de recuadro en el medio.
+pub(crate) fn area_centrada(area: Rect, porcentaje_ancho: u16, porcentaje_alto: u16) -> Rect {
     let margen_vertical = (100 - porcentaje_alto) / 2;
     let vertical = Layout::default()
         .direction(Direction::Vertical)

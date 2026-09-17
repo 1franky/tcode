@@ -8,6 +8,11 @@
 
 [global]
 "Ctrl+S"        = "archivo.guardar"
+"Ctrl+Shift+S"  = "archivo.guardar_como"
+# Alternativa: mismo problema de siempre con Ctrl+Shift+<letra> en
+# terminales sin protocolo Kitty (confirmado repetidas veces en tmux a lo
+# largo de este proyecto) — chord con Ctrl+K, sin esa ambigüedad.
+"Ctrl+K S"      = "archivo.guardar_como"
 "Ctrl+Q"        = "app.salir"
 "Ctrl+Z"        = "editor.deshacer"
 "Ctrl+Y"        = "editor.rehacer"
