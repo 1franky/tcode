@@ -140,6 +140,15 @@ pub struct Tema {
     pub name: String,
     #[serde(rename = "type")]
     pub tipo: String,
+    /// Eje independiente de `type` (PLAN.md §7: "Filtro claro/oscuro/alto
+    /// contraste" — los tres son filtros distintos, no un tercer valor de
+    /// `type`): un tema de alto contraste sigue siendo "dark" o "light"
+    /// para ese otro filtro, además de "alto contraste" para este.
+    /// `false` por defecto — ningún tema existente antes de esta pieza lo
+    /// declara, y no habría forma de distinguir "no es de alto contraste"
+    /// de "todavía no se actualizó el archivo" sin un default explícito.
+    #[serde(default)]
+    pub alto_contraste: bool,
     pub ui: TemaUi,
     pub statusbar: TemaStatusbar,
     #[serde(default)]
@@ -164,6 +173,7 @@ const TEMA_CATPPUCCIN_MOCHA: &str = include_str!("../../../runtime/themes/catppu
 const TEMA_SOLARIZED_DARK: &str = include_str!("../../../runtime/themes/solarized-dark.toml");
 const TEMA_SOLARIZED_LIGHT: &str = include_str!("../../../runtime/themes/solarized-light.toml");
 const TEMA_GITHUB_LIGHT: &str = include_str!("../../../runtime/themes/github-light.toml");
+const TEMA_ALTO_CONTRASTE: &str = include_str!("../../../runtime/themes/alto-contraste.toml");
 
 /// Nombre del tema usado si la config no especifica uno, o si el
 /// especificado no se encuentra.
@@ -183,6 +193,7 @@ fn tema_embebido(nombre: &str) -> Option<&'static str> {
         "solarized-dark" => Some(TEMA_SOLARIZED_DARK),
         "solarized-light" => Some(TEMA_SOLARIZED_LIGHT),
         "github-light" => Some(TEMA_GITHUB_LIGHT),
+        "alto-contraste" => Some(TEMA_ALTO_CONTRASTE),
         _ => None,
     }
 }
@@ -190,32 +201,37 @@ fn tema_embebido(nombre: &str) -> Option<&'static str> {
 /// Metadatos de un tema embebido para mostrar en el selector (`Ctrl+K
 /// Ctrl+T`, PLAN.md §7) sin tener que parsear el TOML solo para listar
 /// nombres. `tipo` es `"dark"` o `"light"`, igual que el campo `type` del
-/// propio archivo — duplicado aquí a propósito para poder filtrar la lista
-/// sin cargar cada tema.
+/// propio archivo; `alto_contraste` es un eje independiente (ver doc de
+/// `Tema::alto_contraste`) — ambos duplicados aquí a propósito para poder
+/// filtrar la lista sin cargar cada tema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InfoTema {
     pub id: &'static str,
     pub nombre: &'static str,
     pub tipo: &'static str,
+    pub alto_contraste: bool,
 }
 
 /// Los 10 temas por defecto de PLAN.md §7 (Dracula primero, orden de la
-/// tabla) más los dos temas genéricos "oscuro"/"claro" que ya existían
-/// desde M0/M1 como fallback simple. El resto de temas *bonus* del plan
+/// tabla), los dos temas genéricos "oscuro"/"claro" que ya existían desde
+/// M0/M1 como fallback simple, y "Alto contraste" (M5) — el tercer filtro
+/// de PLAN.md §7 que quedó pendiente hasta que existiera un tema
+/// realmente diseñado para eso. El resto de temas *bonus* del plan
 /// (Gruvbox Light, GitHub Dark, familia Ayu) queda fuera de esta pieza.
 pub const TEMAS_EMBEBIDOS: &[InfoTema] = &[
-    InfoTema { id: "dracula", nombre: "Dracula", tipo: "dark" },
-    InfoTema { id: "monokai", nombre: "Monokai", tipo: "dark" },
-    InfoTema { id: "one-dark", nombre: "One Dark", tipo: "dark" },
-    InfoTema { id: "nord", nombre: "Nord", tipo: "dark" },
-    InfoTema { id: "gruvbox-dark", nombre: "Gruvbox Dark", tipo: "dark" },
-    InfoTema { id: "tokyo-night", nombre: "Tokyo Night", tipo: "dark" },
-    InfoTema { id: "catppuccin-mocha", nombre: "Catppuccin Mocha", tipo: "dark" },
-    InfoTema { id: "solarized-dark", nombre: "Solarized Dark", tipo: "dark" },
-    InfoTema { id: "solarized-light", nombre: "Solarized Light", tipo: "light" },
-    InfoTema { id: "github-light", nombre: "GitHub Light", tipo: "light" },
-    InfoTema { id: "oscuro", nombre: "Oscuro", tipo: "dark" },
-    InfoTema { id: "claro", nombre: "Claro", tipo: "light" },
+    InfoTema { id: "dracula", nombre: "Dracula", tipo: "dark", alto_contraste: false },
+    InfoTema { id: "monokai", nombre: "Monokai", tipo: "dark", alto_contraste: false },
+    InfoTema { id: "one-dark", nombre: "One Dark", tipo: "dark", alto_contraste: false },
+    InfoTema { id: "nord", nombre: "Nord", tipo: "dark", alto_contraste: false },
+    InfoTema { id: "gruvbox-dark", nombre: "Gruvbox Dark", tipo: "dark", alto_contraste: false },
+    InfoTema { id: "tokyo-night", nombre: "Tokyo Night", tipo: "dark", alto_contraste: false },
+    InfoTema { id: "catppuccin-mocha", nombre: "Catppuccin Mocha", tipo: "dark", alto_contraste: false },
+    InfoTema { id: "solarized-dark", nombre: "Solarized Dark", tipo: "dark", alto_contraste: false },
+    InfoTema { id: "solarized-light", nombre: "Solarized Light", tipo: "light", alto_contraste: false },
+    InfoTema { id: "github-light", nombre: "GitHub Light", tipo: "light", alto_contraste: false },
+    InfoTema { id: "oscuro", nombre: "Oscuro", tipo: "dark", alto_contraste: false },
+    InfoTema { id: "claro", nombre: "Claro", tipo: "light", alto_contraste: false },
+    InfoTema { id: "alto-contraste", nombre: "Alto contraste", tipo: "dark", alto_contraste: true },
 ];
 
 /// El TOML crudo de un tema, sin parsear: primero busca un archivo de
@@ -309,7 +325,19 @@ mod tests {
             tema.statusbar.background_rgb().unwrap_or_else(|e| panic!("tema '{}': {e}", info.id));
             tema.statusbar.foreground_rgb().unwrap_or_else(|e| panic!("tema '{}': {e}", info.id));
             assert_eq!(tema.tipo, info.tipo, "tipo declarado en {}.toml no coincide con InfoTema", info.id);
+            assert_eq!(
+                tema.alto_contraste, info.alto_contraste,
+                "alto_contraste declarado en {}.toml no coincide con InfoTema",
+                info.id
+            );
         }
+    }
+
+    #[test]
+    fn solo_el_tema_alto_contraste_declara_esa_bandera() {
+        let con_bandera: Vec<&str> =
+            TEMAS_EMBEBIDOS.iter().filter(|t| t.alto_contraste).map(|t| t.id).collect();
+        assert_eq!(con_bandera, vec!["alto-contraste"]);
     }
 
     #[test]
@@ -349,7 +377,8 @@ mod tests {
     fn todos_los_temas_embebidos_sobreviven_un_round_trip_de_serializacion() {
         // El editor visual de tema (Ctrl+K Ctrl+P, M4) reserializa el
         // Tema completo tras cada cambio — confirmar que ninguno de los
-        // 12 temas embebidos pierde información al ir y volver.
+        // temas embebidos (13, ver TEMAS_EMBEBIDOS) pierde información
+        // al ir y volver.
         for info in TEMAS_EMBEBIDOS {
             let original = cargar_tema(info.id).unwrap();
             let texto = toml::to_string_pretty(&original).unwrap_or_else(|e| panic!("tema '{}': {e}", info.id));
