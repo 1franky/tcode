@@ -106,6 +106,12 @@ fn fila_de_cursor(lineas: &[String], idx_linea: usize, columna: usize, ajuste_li
 /// antes de esta pieza: reinterpretarlos como movimiento "visual" queda
 /// fuera de alcance por ahora (tocaría el cursor del `core`, compartido
 /// con multi-cursor y demás, no solo el renderizado).
+/// `columna_regla` es `config.editor.columna_regla` (BACKLOG.md P1 #5,
+/// `None` = apagada): marca esa columna de CADA fila visual con un fondo
+/// distinto (`Paleta::regla_vertical`) — relativa a la fila de pantalla,
+/// no a la línea lógica, así que con ajuste de línea activo se ve en la
+/// misma columna de pantalla en todas las filas de una línea partida,
+/// consistente con cómo se ve en cualquier otro editor.
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -121,6 +127,7 @@ pub fn dibujar(
     indice_coincidencia_actual: Option<usize>,
     mostrar_numeros: bool,
     ajuste_linea: bool,
+    columna_regla: Option<usize>,
 ) {
     let lineas = editor.buffer().lineas_texto();
     let (area_gutter, area) = dividir_gutter(area, lineas.len(), mostrar_numeros);
@@ -194,6 +201,31 @@ pub fn dibujar(
                 });
             }
 
+            // Regla vertical (BACKLOG.md P1 #5): entre selección/búsqueda
+            // (que ya corrieron arriba y ganan si coinciden en la misma
+            // columna — `transformar_rango` de acá abajo no pisa un
+            // fondo que ya esté puesto) y el resaltado de "línea actual"
+            // de más abajo (que rellena todo lo que siga sin fondo,
+            // incluida esta columna si la regla no llegó a pintarla
+            // antes) — por eso va ACÁ, no después: si fuera después de
+            // "línea actual" nunca se vería en la línea con el cursor,
+            // que es precisamente donde más sirve verla mientras se
+            // escribe.
+            if let Some(columna_regla) = columna_regla {
+                if columna_regla >= 1 && columna_regla <= ancho_visible {
+                    let indice_char = columna_regla - 1;
+                    let ancho_actual: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                    if ancho_actual <= indice_char {
+                        spans.push(Span::raw(" ".repeat(indice_char + 1 - ancho_actual)));
+                    }
+                    if let Some((inicio, fin)) = rango_char_en_spans(&spans, indice_char) {
+                        spans = transformar_rango(spans, inicio, fin, |estilo| {
+                            if estilo.bg.is_none() { estilo.bg(paleta.regla_vertical) } else { estilo }
+                        });
+                    }
+                }
+            }
+
             // Marcador de los cursores adicionales (todo menos el
             // principal, índice 0, que usa el cursor real de la terminal
             // — ver doc de esta función). Con ajuste de línea, una
@@ -225,8 +257,13 @@ pub fn dibujar(
 
             if lineas_con_cursor.contains(&fila.idx_linea) {
                 // Se añade un span final de relleno para que el resaltado
-                // de la línea actual cubra todo el ancho, no solo el texto.
-                let ocupado = texto_fila.chars().count();
+                // de la línea actual cubra todo el ancho, no solo el
+                // texto. `ocupado` se calcula sobre `spans`, no sobre
+                // `texto_fila`: la regla vertical de más arriba puede
+                // haber agregado ya su propio padding si la línea era
+                // más corta que su columna — contar desde `texto_fila`
+                // acá subestimaría cuánto falta y duplicaría relleno.
+                let ocupado: usize = spans.iter().map(|s| s.content.chars().count()).sum();
                 if ancho_visible > ocupado {
                     spans.push(Span::raw(" ".repeat(ancho_visible - ocupado)));
                 }
@@ -445,6 +482,30 @@ fn spans_de_linea<'a>(
 /// spans que caen a mitad del rango. Usado para pintar selecciones y
 /// marcar cursores secundarios (multi-cursor, PLAN.md §11 M3) sin
 /// duplicar la lógica de partir spans en cada caso.
+/// Rango de bytes, dentro del contenido concatenado de `spans` (el mismo
+/// espacio de coordenadas que usa [`transformar_rango`] — sus posiciones
+/// son acumuladas a través de todos los spans, no relativas a uno solo),
+/// que ocupa el carácter en el índice `indice_char` (0-indexado). `None`
+/// si `spans` tiene menos caracteres que `indice_char + 1` — quien llama
+/// (`dibujar`) ya se asegura de que no pase agregando el padding que
+/// haga falta antes de pedir este rango, así que en la práctica esto no
+/// debería devolver `None`, pero no hay motivo para entrar en pánico si
+/// pasara.
+fn rango_char_en_spans(spans: &[Span], indice_char: usize) -> Option<(usize, usize)> {
+    let mut char_actual = 0usize;
+    let mut byte_actual = 0usize;
+    for span in spans {
+        for c in span.content.chars() {
+            if char_actual == indice_char {
+                return Some((byte_actual, byte_actual + c.len_utf8()));
+            }
+            char_actual += 1;
+            byte_actual += c.len_utf8();
+        }
+    }
+    None
+}
+
 fn transformar_rango<'a>(
     spans: Vec<Span<'a>>,
     inicio_local: usize,
@@ -547,6 +608,34 @@ mod tests {
         let resultado = transformar_rango(spans.clone(), 2, 2, |e| e.bg(ratatui::style::Color::Red));
         assert_eq!(texto(&resultado), texto(&spans));
         assert!(resultado[0].style.bg.is_none());
+    }
+
+    #[test]
+    fn rango_char_en_spans_encuentra_el_byte_del_indice_pedido() {
+        let spans = vec![Span::raw("hola "), Span::raw("mundo")];
+        // Índice de carácter 6 = la 'u' de "mundo" (0-indexado: h-o-l-a-
+        // espacio-m-u...).
+        assert_eq!(rango_char_en_spans(&spans, 6), Some((6, 7)));
+    }
+
+    #[test]
+    fn rango_char_en_spans_respeta_caracteres_multibyte() {
+        // "á" ocupa 2 bytes en UTF-8: el índice de carácter 1 ('é') debe
+        // caer en el byte 2, no en el 1.
+        let spans = vec![Span::raw("áé")];
+        assert_eq!(rango_char_en_spans(&spans, 0), Some((0, 2)));
+        assert_eq!(rango_char_en_spans(&spans, 1), Some((2, 4)));
+    }
+
+    #[test]
+    fn rango_char_en_spans_mas_alla_del_contenido_da_none() {
+        let spans = vec![Span::raw("hi")];
+        assert_eq!(rango_char_en_spans(&spans, 5), None);
+    }
+
+    #[test]
+    fn rango_char_en_spans_con_spans_vacio_da_none() {
+        assert_eq!(rango_char_en_spans(&[], 0), None);
     }
 
     fn textos_de_filas<'a>(linea: &'a str, filas: &[FilaVisual]) -> Vec<&'a str> {

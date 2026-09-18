@@ -246,7 +246,7 @@ opción por nombre):
 | **Atajos de teclado** | Ver/rebindear cualquier atajo (`Enter` sobre un comando y presionar la nueva combinación), con detección de conflictos resaltada en rojo. `Backspace` restablece uno solo al valor por defecto; hay una fila para restablecer todos. También exportar/importar el `keymap.toml` activo a/desde un archivo fijo (ver [Personalizar atajos](#personalizar-atajos)). |
 | **Temas** | Elegir tema (abre el selector con preview) y duplicar el activo para editarlo. |
 | **Lenguajes / LSP** | Habilitar/deshabilitar el servidor LSP de cada lenguaje, ver si el binario está en el `PATH` y el estado de la sesión activa (Conectado/Iniciando/Inactivo). `c` sobre una fila edita el comando+argumentos a mano (ver [LSP](#lsp-autocompletado-y-diagnósticos)); `Backspace` quita ese override. |
-| **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea. |
+| **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, modo VIM, regla vertical. |
 | **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo). |
 
 Todos los cambios se aplican y persisten al instante en `config.toml`, sin
@@ -261,6 +261,15 @@ mitad "fuente" de la vista Markdown dividida (`Ctrl+K V`) — esa mitad
 comparte el desplazamiento vertical con el preview de al lado, que no
 sabe de filas partidas; funciona normal viendo el mismo archivo sin
 dividir.
+
+**Regla vertical** (sección "Editor"): marca una columna fija del código
+con un fondo distinto — la guía de ancho de línea de siempre (80/100/
+120...). Apagada por defecto; `→`/`Enter` sobre la fila la prende en la
+columna 80, `←`/`→` la ajustan de a uno (entre 20 y 300), y bajarla por
+debajo de 20 la apaga de nuevo. Es relativa a la fila de pantalla, no a
+la línea lógica: con ajuste de línea activo se ve en la misma columna en
+todas las filas de una línea partida. El color se calcula a partir del
+tema activo (no hace falta que un tema lo declare para que se vea bien).
 
 ## LSP: autocompletado y diagnósticos
 
