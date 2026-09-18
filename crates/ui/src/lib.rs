@@ -138,6 +138,7 @@ pub fn dibujar(
         estado_busqueda,
         config.editor.numeros_de_linea,
         config.editor.ajuste_linea,
+        config.editor.columna_regla,
         &config.interfaz,
     );
     panel_busqueda::dibujar(frame, area_principal, estado_busqueda, paleta);

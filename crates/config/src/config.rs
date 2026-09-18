@@ -32,6 +32,14 @@ pub struct ConfigEditor {
     /// comportamiento de nadie que no lo prenda a propósito, ni acá ni en
     /// la sección "Editor" del panel de administración.
     pub modo_vim: bool,
+    /// Regla vertical / guía de columna (BACKLOG.md P1 #5): marca una
+    /// columna fija de la vista de código con un fondo distinto, para
+    /// usarla como guía de ancho de línea (80/100/120...). `None` =
+    /// apagada (default) — un solo campo en vez de un booleano +
+    /// número separados porque el propio valor ya expresa "prendida en
+    /// esta columna" o "apagada" sin un segundo estado que pueda quedar
+    /// inconsistente (p. ej. "prendida" pero con la columna en 0).
+    pub columna_regla: Option<usize>,
 }
 
 impl Default for ConfigEditor {
@@ -42,6 +50,7 @@ impl Default for ConfigEditor {
             ajuste_linea: false,
             numeros_de_linea: true,
             modo_vim: false,
+            columna_regla: None,
         }
     }
 }
@@ -219,6 +228,7 @@ mod tests {
                 ajuste_linea: true,
                 numeros_de_linea: false,
                 modo_vim: true,
+                columna_regla: Some(80),
             },
             interfaz: ConfigInterfaz {
                 tema: "claro".into(),

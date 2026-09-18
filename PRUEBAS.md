@@ -198,6 +198,26 @@ los temas "High Contrast" de VS Code/Windows).
 - [ ] Vista Markdown dividida (`Ctrl+K V`): el ajuste de línea NO tiene efecto en la mitad "fuente" de esa vista en particular (queda como estaba, líneas recortadas) — es una limitación conocida y documentada (esa mitad comparte el scroll con la vista de preview de al lado, que no sabe de filas visuales). El ajuste sí funciona normal en "solo fuente" (sin dividir) del mismo archivo Markdown.
 - [ ] Reiniciar `tcode`: el valor de "Ajuste de línea" persiste entre sesiones (queda guardado en `config.toml`).
 
+### Regla vertical / guía de columna (BACKLOG.md P1 #5)
+
+Marca una columna fija de la vista de código con un fondo distinto —
+guía de ancho de línea (80/100/120...), como en cualquier otro editor.
+Apagada por defecto. El color no es un campo nuevo de cada tema: se
+deriva de `background`/`foreground` del tema activo (88% fondo + 12%
+texto), así se adapta solo a temas oscuros y claros sin que ningún
+archivo de tema haya tenido que tocarse.
+
+- [ ] Sección "Editor" del panel de administración (`Ctrl+K A`): fila "Regla vertical (columna)" muestra "Apagada" por defecto.
+- [ ] `→` o `Enter` sobre esa fila estando "Apagada": la prende en la columna 80 — confirmar en `config.toml` (`columna_regla = 80`) y que aparece la línea vertical en el código a esa columna.
+- [ ] Con la regla prendida, `←`/`→` decrementan/incrementan la columna de a uno; subir más allá de 300 o bajar de 20 se recorta (no sigue subiendo/bajando).
+- [ ] Bajar la columna repetidamente con `←` hasta cruzar 20: en vez de quedar clavada en 20, la fila vuelve a "Apagada" (un solo gesto para apagarla, sin necesitar otra tecla).
+- [ ] En un archivo con líneas más cortas Y más largas que la columna configurada: la regla se ve en TODAS las filas (incluidas las líneas vacías/cortas, como una columna "fantasma" más allá del texto), no solo donde hay texto real.
+- [ ] La regla se ve tanto en la línea con el cursor (fondo de "línea actual") como en el resto — no desaparece al posicionarse ahí.
+- [ ] Con "Ajuste de línea" activado y una línea partida en varias filas de pantalla: la regla se ve en la MISMA columna de pantalla en todas las filas de esa línea (es relativa a la fila visual, no a la línea lógica completa).
+- [ ] Con el explorador abierto (`Ctrl+B`): la columna de la regla sigue siendo relativa al área de código (que ahora es más angosta), no a toda la pantalla.
+- [ ] Probar con un tema oscuro y uno claro (`Ctrl+K Ctrl+T`): en ambos la regla se distingue del fondo liso sin verse chillona ni invisible.
+- [ ] Reiniciar `tcode`: el valor de la regla persiste entre sesiones.
+
 ## M4 — Sección "Temas" del panel de administración
 
 - [ ] Dentro del panel (`Ctrl+K A`), la sección "Temas" ya NO dice "(próximamente)" y al entrar muestra 2 filas: "Elegir tema (con preview en vivo)" y "Duplicar tema activo para editar/exportar (<Nombre del tema activo>)".

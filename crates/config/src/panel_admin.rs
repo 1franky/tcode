@@ -59,15 +59,28 @@ pub enum CampoEditor {
     AjusteLinea,
     NumerosDeLinea,
     ModoVim,
+    ColumnaRegla,
 }
 
+/// Columna con la que arranca la regla vertical (BACKLOG.md P1 #5) al
+/// activarla desde "Apagada" — 80 es la guía de ancho de línea más
+/// común (Rust/Python/etc. la usan como convención de estilo).
+const COLUMNA_REGLA_POR_DEFECTO: usize = 80;
+/// Rango recortado para la columna de la regla, mismo criterio que el
+/// 1..=16 de tamaño de tabulación: por debajo de 20 casi cualquier línea
+/// la cruzaría (deja de servir como guía), por encima de 300 no tiene
+/// sentido práctico en una terminal.
+const COLUMNA_REGLA_MIN: i32 = 20;
+const COLUMNA_REGLA_MAX: i32 = 300;
+
 impl CampoEditor {
-    pub const TODOS: [CampoEditor; 5] = [
+    pub const TODOS: [CampoEditor; 6] = [
         CampoEditor::TamanoTabulacion,
         CampoEditor::UsarEspacios,
         CampoEditor::AjusteLinea,
         CampoEditor::NumerosDeLinea,
         CampoEditor::ModoVim,
+        CampoEditor::ColumnaRegla,
     ];
 
     pub fn nombre(&self) -> &'static str {
@@ -77,6 +90,7 @@ impl CampoEditor {
             CampoEditor::AjusteLinea => "Ajuste de línea (wrap)",
             CampoEditor::NumerosDeLinea => "Números de línea",
             CampoEditor::ModoVim => "Modo VIM (hjkl, Normal/Insertar)",
+            CampoEditor::ColumnaRegla => "Regla vertical (columna)",
         }
     }
 
@@ -85,6 +99,7 @@ impl CampoEditor {
     pub fn nota(&self) -> Option<&'static str> {
         match self {
             CampoEditor::ModoVim => Some("Alcance inicial: sin operadores combinables (dw, d$), sin conteos (3dd), sin :"),
+            CampoEditor::ColumnaRegla => Some("← en 'Apagada' no hace nada; → o Enter la prende en 80"),
             _ => None,
         }
     }
@@ -97,6 +112,9 @@ impl CampoEditor {
             CampoEditor::AjusteLinea => etiqueta_bool(config.editor.ajuste_linea),
             CampoEditor::NumerosDeLinea => etiqueta_bool(config.editor.numeros_de_linea),
             CampoEditor::ModoVim => etiqueta_bool(config.editor.modo_vim),
+            CampoEditor::ColumnaRegla => {
+                config.editor.columna_regla.map(|c| c.to_string()).unwrap_or_else(|| "Apagada".to_string())
+            }
         }
     }
 
@@ -114,6 +132,27 @@ impl CampoEditor {
             CampoEditor::AjusteLinea => config.editor.ajuste_linea = !config.editor.ajuste_linea,
             CampoEditor::NumerosDeLinea => config.editor.numeros_de_linea = !config.editor.numeros_de_linea,
             CampoEditor::ModoVim => config.editor.modo_vim = !config.editor.modo_vim,
+            // Un solo campo (`Option<usize>`, no un booleano + un número
+            // separados) para que "apagada" y "prendida en la columna
+            // X" sean el único estado posible, sin un segundo booleano
+            // que pudiera quedar inconsistente (p. ej. "prendida" con
+            // columna en 0). `→`/`Enter` (delta > 0) desde "Apagada" la
+            // prende en el valor por defecto; `←` no hace nada desde ahí
+            // (ya está en el piso). Estando prendida, bajar del mínimo
+            // la apaga en vez de dejarla clavada en 20 — un solo gesto
+            // (`←` sostenido) para apagarla, sin necesitar otra tecla.
+            CampoEditor::ColumnaRegla => match config.editor.columna_regla {
+                None => {
+                    if delta > 0 {
+                        config.editor.columna_regla = Some(COLUMNA_REGLA_POR_DEFECTO);
+                    }
+                }
+                Some(actual) => {
+                    let nuevo = actual as i32 + delta;
+                    config.editor.columna_regla =
+                        if nuevo < COLUMNA_REGLA_MIN { None } else { Some(nuevo.min(COLUMNA_REGLA_MAX) as usize) };
+                }
+            },
         }
     }
 }
@@ -911,6 +950,54 @@ mod tests {
         config.editor.tamano_tabulacion = 16;
         CampoEditor::TamanoTabulacion.aplicar(&mut config, 1);
         assert_eq!(config.editor.tamano_tabulacion, 16);
+    }
+
+    #[test]
+    fn campo_columna_regla_arranca_apagada() {
+        let config = Config::default();
+        assert_eq!(config.editor.columna_regla, None);
+        assert_eq!(CampoEditor::ColumnaRegla.valor_actual(&config), "Apagada");
+    }
+
+    #[test]
+    fn campo_columna_regla_se_prende_en_80_desde_apagada() {
+        let mut config = Config::default();
+        CampoEditor::ColumnaRegla.aplicar(&mut config, 1);
+        assert_eq!(config.editor.columna_regla, Some(80));
+        assert_eq!(CampoEditor::ColumnaRegla.valor_actual(&config), "80");
+    }
+
+    #[test]
+    fn campo_columna_regla_izquierda_no_hace_nada_estando_apagada() {
+        let mut config = Config::default();
+        CampoEditor::ColumnaRegla.aplicar(&mut config, -1);
+        assert_eq!(config.editor.columna_regla, None);
+    }
+
+    #[test]
+    fn campo_columna_regla_incrementa_y_decrementa_estando_prendida() {
+        let mut config = Config::default();
+        config.editor.columna_regla = Some(80);
+        CampoEditor::ColumnaRegla.aplicar(&mut config, 1);
+        assert_eq!(config.editor.columna_regla, Some(81));
+        CampoEditor::ColumnaRegla.aplicar(&mut config, -1);
+        assert_eq!(config.editor.columna_regla, Some(80));
+    }
+
+    #[test]
+    fn campo_columna_regla_se_recorta_al_maximo() {
+        let mut config = Config::default();
+        config.editor.columna_regla = Some(300);
+        CampoEditor::ColumnaRegla.aplicar(&mut config, 1);
+        assert_eq!(config.editor.columna_regla, Some(300));
+    }
+
+    #[test]
+    fn campo_columna_regla_se_apaga_al_bajar_del_minimo() {
+        let mut config = Config::default();
+        config.editor.columna_regla = Some(20);
+        CampoEditor::ColumnaRegla.aplicar(&mut config, -1);
+        assert_eq!(config.editor.columna_regla, None, "bajar de 20 apaga la regla en vez de clavarla ahí");
     }
 
     #[test]
