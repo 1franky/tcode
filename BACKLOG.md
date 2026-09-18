@@ -44,32 +44,7 @@ Cuatro niveles:
 
 ## P0 — Gaps sorprendentes
 
-### 1. No existe selección de texto con `Shift`+flechas
-
-**El mecanismo de selección más básico de cualquier editor no existe.**
-Revisado `runtime/keymaps/default.toml` completo: cero atajos
-`Shift+Left/Right/Up/Down/Home/End`. Hoy la única forma de seleccionar
-texto es multi-cursor (`Ctrl+D` por palabra, `Ctrl+Shift+L` todas las
-ocurrencias) — no hay forma de seleccionar un rango arbitrario a mano.
-
-**Por qué no es trivial pero tampoco es rearquitectura**:
-`Editor::mover_cada_cursor` (`crates/core/src/editor.rs`) es el punto de
-paso de TODOS los movimientos de cursor, y siempre hace
-`c.ancla = c.cursor` después de mover — colapsa cualquier selección en
-cada movimiento, a propósito (así funciona hoy "mover sin Shift
-deselecciona todo"). Hace falta una segunda función hermana que NO
-toque `ancla`, más comandos nuevos (`cursor.seleccionar_izquierda`,
-`..._derecha`, `..._arriba`, `..._abajo`, `..._inicio_linea`,
-`..._fin_linea`, y probablemente `..._inicio_archivo`/`..._fin_archivo`)
-y sus entradas en `default.toml` con `Shift+<tecla>`.
-
-**Alcance sugerido para una primera entrega**: `Shift+flechas`,
-`Shift+Home/End`. Dejar `Shift+Ctrl+Home/End` (selección hasta
-inicio/fin de archivo) para una vuelta siguiente si hace falta.
-
-**Prioridad**: la más alta de este documento.
-
-### 2. El explorador de archivos es de solo lectura
+### 1. El explorador de archivos es de solo lectura
 
 `crates/fs/src/explorador.rs` no tiene ningún método para crear,
 renombrar, borrar o mover un archivo/carpeta — solo navegar (`Enter`
@@ -89,7 +64,7 @@ delicado, mejor no apurarlo).
 
 ## P1 — Gaps reales de alcance acotado
 
-### 3. El selector de temas no puede importar un tema de tercero
+### 2. El selector de temas no puede importar un tema de tercero
 
 `TEMAS_EMBEBIDOS` (`crates/config/src/tema.rs`) es un array fijo de 13
 entradas — nada escanea `directorio_temas_usuario()`
@@ -112,7 +87,7 @@ encarar esto). Compatibilidad con el formato Helix (mencionada en el
 mismo punto del plan) es un problema aparte y más grande; no incluirla
 acá.
 
-### 4. LSP: sin variables de entorno por comando
+### 3. LSP: sin variables de entorno por comando
 
 `ComandoLsp` (`crates/config/src/config.rs`) tiene `comando` +
 `argumentos`, nada de `env` — PLAN.md §5.3 pedía las tres. Sirve para
@@ -127,17 +102,7 @@ pasarlo a `Command::envs(...)` en `Cliente::lanzar`
 editar un mapa clave-valor (no un string plano) es la parte con más
 decisiones de diseño.
 
-### 5. Regla vertical en columna N
-
-`PLAN.md` §5 sección "Editor" la pedía. No existe. Es una línea (o
-resaltado de esa columna) en `vista_codigo` a una columna fija
-configurable (típico: 80/100/120). Bastante mecánico: un color de tema
-nuevo (`ui.regla_vertical` o similar) + un campo de config
-(`ConfigEditor::columna_regla: Option<usize>`) + dibujar un span de
-fondo distinto en esa columna de cada fila visible. Buen candidato para
-una pieza chica y autocontenida.
-
-### 6. "Ver logs del LSP" (`Ctrl+K R`, ya implementado) es una foto, no en vivo
+### 4. "Ver logs del LSP" (`Ctrl+K R`, ya implementado) es una foto, no en vivo
 
 Nota, no gap nuevo: `PLAN.md` §5.3 pedía "logs en tiempo real"; lo que
 hay (PR #78) es un snapshot al momento de abrir — cerrar y volver a
@@ -148,7 +113,7 @@ usuario está tipeando un filtro). Si en algún momento hace falta de
 verdad ver un log mientras se reproduce un problema en curso, esta es
 la pieza para revisarla — hasta entonces, cerrar/reabrir alcanza.
 
-### 7. Scroll-follow real en overlays y en el explorador
+### 5. Scroll-follow real en overlays y en el explorador
 
 Bug latente compartido por varios lugares, notado en piezas anteriores
 pero nunca resuelto de raíz:
@@ -175,7 +140,7 @@ rompa el resaltado de fila actual que ya funciona.
 
 ## P2 — Del plan original, alcance grande o valor dudoso
 
-### 8. Guardado automático
+### 6. Guardado automático
 
 `PLAN.md` §5 "Editor": nunca / al perder foco / cada N segundos. No
 implementado. Alcance mediano: un campo de config + lógica de timer
@@ -184,7 +149,7 @@ implementado. Alcance mediano: un campo de config + lógica de timer
 hoy es puramente reactivo a `tokio::select!` entre teclado y LSP —
 agregar un `tokio::time::interval` al select).
 
-### 9. Formatear al guardar (vía LSP)
+### 7. Formatear al guardar (vía LSP)
 
 `PLAN.md` §5 "Editor": on/off por lenguaje. No implementado — no hay
 ninguna llamada a `textDocument/formatting` en `crates/lsp`/`app/src/
@@ -192,7 +157,7 @@ lsp.rs` hoy. Alcance grande: nuevo método LSP, aplicar el `TextEdit[]`
 resultante al buffer antes de escribir a disco, manejar el caso "el LSP
 no soporta formatting" o "tardó demasiado" sin bloquear el guardado.
 
-### 10. Indicadores de git en el gutter
+### 8. Indicadores de git en el gutter
 
 Colores `TemaGit` (`added`/`modified`/`deleted`) ya existen en cada
 tema, sin conectar a nada (confirmado: cero integración con git en todo
@@ -200,7 +165,7 @@ el repo). Implica correr `git diff`/leer el índice para saber qué
 líneas cambiaron respecto al último commit — trabajo real, y una
 dependencia nueva (`git2` o invocar el binario `git`). Grande.
 
-### 11. Code folding (plegado de bloques)
+### 9. Code folding (plegado de bloques)
 
 `PLAN.md` §4 lo lista con atajos propios (`Ctrl+Shift+[`/`]`, `Ctrl+K
 Ctrl+0`/`Ctrl+K Ctrl+J`) — cero implementación. Necesita: queries de
@@ -212,7 +177,7 @@ piezas más grandes de todo este documento — considerar dividirla en
 sub-piezas (soporte para 2-3 lenguajes primero, resto incremental, como
 se hizo con LSP).
 
-### 12. Config por proyecto (`.tcode/config.toml` con override)
+### 10. Config por proyecto (`.tcode/config.toml` con override)
 
 `PLAN.md` §12, decisión abierta #5: "sí a ambas, con override" — nunca
 se implementó, solo existe config global de usuario. Alcance: al
@@ -222,7 +187,7 @@ mezclarlo sobre la config global (probablemente campo por campo, no
 todo-o-nada). Mediano — la parte de "mezclar dos `Config` parciales"
 requiere pensar bien las reglas de merge.
 
-### 13. CSV: funciones que quedaron fuera de M3
+### 11. CSV: funciones que quedaron fuera de M3
 
 Ya documentado en `PRUEBAS.md` (sección "M3 — Vista CSV/TSV"), sigue
 pendiente: ordenar por columna, filtrar por columna, insertar/eliminar
@@ -234,7 +199,7 @@ urgente; se usan mucho menos que ver/editar celdas, que ya funciona.
 
 ## P3 — Bloqueado o reconsiderar si debería estar en el plan
 
-### 14. Densidad de UI / tabs / breadcrumbs
+### 12. Densidad de UI / tabs / breadcrumbs
 
 `PLAN.md` §5 "Interfaz". Genuinamente bloqueado: tcode no tiene ningún
 concepto de "pestaña de archivo abierto" (solo splits) ni de
@@ -244,7 +209,7 @@ falta diseñar y construir esos widgets desde cero antes de que
 camuflada de toggle; es un feature nuevo con ese toggle como
 consecuencia menor.
 
-### 15. Zoom (`Ctrl++`/`Ctrl+-`/`Ctrl+0`) y pantalla completa (`F11`)
+### 13. Zoom (`Ctrl++`/`Ctrl+-`/`Ctrl+0`) y pantalla completa (`F11`)
 
 `PLAN.md` §4 "Zoom y vista". Sospecha fuerte de que **no aplica a una
 TUI**: el tamaño de fuente en una terminal lo controla el emulador de
@@ -258,7 +223,7 @@ interpretación razonable para una terminal (¿"zoom" como ajustar
 cuántas columnas/filas usa el layout interno, sin tocar la fuente
 real?) que valga la pena.
 
-### 16. Modo zen
+### 14. Modo zen
 
 `PLAN.md` §4, `Ctrl+K Z`. Distinto de "Mostrar barra de estado" (ya
 existe, pero es un toggle persistente en config, no un atajo rápido
@@ -267,7 +232,7 @@ mostrarlo de nuevo igual de rápido). Factible y chico si se quiere: un
 booleano de sesión (no persistido) que la UI consulta para saltearse
 explorador/statusbar sin importar su config normal.
 
-### 17. Compatibilidad de temas con formato Helix
+### 15. Compatibilidad de temas con formato Helix
 
 `PLAN.md` §7 "Compartir temas": "parser tolerante que acepta temas en
 formato Helix". No implementado. Depende de qué tan distinto es el
@@ -278,6 +243,20 @@ formatos campo por campo.
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-18, dos piezas en paralelo (agentes en worktrees aislados,
+revisadas y mergeadas después de verificación independiente contra el
+`develop` combinado):**
+- **Selección de texto con `Shift+flechas`/`Home`/`End`** (PR #80) — era
+  el P0 #1 de este documento. `Editor::extender_cada_cursor` (hermana de
+  `mover_cada_cursor` que no colapsa `ancla`), 6 comandos
+  `cursor.seleccionar_*` nuevos. `Shift+Ctrl+Home/End` (selección hasta
+  inicio/fin de archivo) sigue sin implementar, era alcance
+  deliberadamente afuera de esta entrega.
+- **Regla vertical / guía de columna** (PR #81) — era el P1 #5.
+  `config.editor.columna_regla: Option<usize>` + fila en el panel de
+  administración; color derivado del tema activo (`background`/
+  `foreground`), sin tocar los 13 archivos de tema existentes.
 
 Referencia rápida de lo que esta misma revisión confirmó que SÍ está
 resuelto, para no re-preguntarse "¿esto ya existe?": los 13 lenguajes
