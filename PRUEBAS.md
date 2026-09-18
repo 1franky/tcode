@@ -143,13 +143,25 @@ de columnas completas que sí entran, siguiendo a la selección.
 
 ## M4 — Selector de temas con preview en vivo (`Ctrl+K Ctrl+T`)
 
-- [ ] `Ctrl+K Ctrl+T` (o "Tema: Seleccionar" desde la paleta de comandos, `Ctrl+Shift+P`/`F1`): abre el selector con los 12 temas embebidos, marcando con `●` el que está activo en ese momento.
+- [ ] `Ctrl+K Ctrl+T` (o "Tema: Seleccionar" desde la paleta de comandos, `Ctrl+Shift+P`/`F1`): abre el selector con los 13 temas embebidos, marcando con `*` (ASCII) el que está activo en ese momento.
 - [ ] `↑`/`↓`: el editor de fondo cambia de tema en vivo con cada movimiento, sin tocar `config.toml` todavía (revisar el archivo mientras el selector sigue abierto: no debería haber cambiado).
-- [ ] `Tab`: cicla el filtro `Todos` → `Oscuro` → `Claro` → `Todos`; la lista se recorta a los temas de ese tipo (los `light` son solo Solarized Light, GitHub Light y Claro).
+- [ ] `Tab`: cicla el filtro `Todos` → `Oscuro` → `Claro` → `Alto contraste` → `Todos`; la lista se recorta a los temas de ese tipo (los `light` son solo Solarized Light, GitHub Light y Claro; "Alto contraste" es un único tema, `alto-contraste`).
 - [ ] `Enter` sobre un tema: cierra el selector, el tema queda aplicado, y persiste en `config.toml` — reabrir `tcode` y confirmar que arranca con ese mismo tema.
 - [ ] `Esc`: cierra el selector y vuelve exactamente al tema que estaba activo antes de abrirlo (no al primero de la lista ni al último visto en el preview), sin modificar `config.toml`.
 - [ ] Revisar de pasada que los 10 temas nuevos (Monokai, One Dark, Nord, Gruvbox Dark, Tokyo Night, Catppuccin Mocha, Solarized Dark, Solarized Light, GitHub Light) se ven con colores razonables y texto legible, no solo Dracula/oscuro/claro.
 - [ ] Como esta pieza agrega una ruta modal nueva al loop de dibujado (`crates/app/src/main.rs`): re-correr al menos la prueba básica de la sección de Windows más abajo, aunque no toque directamente el explorador.
+
+### Tema "Alto contraste" (M5, tercer filtro del selector)
+
+Negro puro + colores primarios saturados (amarillo/cian/verde/magenta/
+naranja/rojo), sin tonos intermedios en ningún lado — pensado para
+máxima diferencia perceptible, no para verse "lindo" (mismo criterio que
+los temas "High Contrast" de VS Code/Windows).
+
+- [ ] Filtrar por "Alto contraste" (`Tab` x3 desde "Todos"): muestra un único tema, `Alto contraste (oscuro, alto contraste)` — la etiqueta indica ambos ejes (oscuro/claro Y alto contraste, son independientes).
+- [ ] Aplicarlo sobre un archivo con sintaxis resaltada (`.rs`/`.py`/etc.): palabras clave en amarillo negrita, strings en naranja, números y constantes en verde, funciones en cian, tipos en magenta — todo sobre fondo negro puro, sin ningún color apagado/pastel.
+- [ ] La barra de estado se ve invertida (fondo blanco, texto negro) — a propósito, para marcar un límite visual inequívoco con el resto de la pantalla.
+- [ ] Buscar algo con `Ctrl+F`: la coincidencia actual se ve en naranja bien visible, las demás en azul — ninguna se pierde contra el fondo negro.
 
 ## M4 — Panel de administración (`Ctrl+,` / `Ctrl+K A`) y números de línea
 

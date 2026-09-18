@@ -201,14 +201,19 @@ Ambos se cierran con `Esc` y se navegan con `↑`/`↓` + `Enter`.
 
 ## Temas
 
-`tcode` trae 12 temas incluidos (Dracula, Monokai, One Dark, Nord,
+`tcode` trae 13 temas incluidos (Dracula, Monokai, One Dark, Nord,
 Gruvbox Dark, Tokyo Night, Catppuccin Mocha, Solarized Dark/Light,
-GitHub Light, más dos temas simples "Oscuro"/"Claro" de las primeras
-versiones).
+GitHub Light, "Alto contraste", más dos temas simples "Oscuro"/"Claro"
+de las primeras versiones).
 
 - **`Ctrl+K Ctrl+T`**: selector de temas con **preview en vivo** —
   navegá la lista con `↑`/`↓` y el editor se recolorea al instante;
-  `Enter` confirma, `Esc` vuelve al tema anterior.
+  `Enter` confirma, `Esc` vuelve al tema anterior. `Tab` cicla el filtro
+  `Todos` → `Oscuro` → `Claro` → `Alto contraste` → `Todos`.
+- **"Alto contraste"**: negro puro + colores primarios saturados, sin
+  tonos intermedios en ningún lado — pensado para quien necesita la
+  máxima diferencia perceptible entre elementos (al estilo de los temas
+  "High Contrast" de VS Code/Windows), no para verse "lindo".
 - **`Ctrl+K Ctrl+P`** (o `Ctrl+K P`): editor visual de tema — ajustá
   cualquiera de los ~29 colores del tema activo por código hex, eligiendo
   de una paleta predefinida, o afinando tono/saturación/luminosidad

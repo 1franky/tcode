@@ -1,0 +1,56 @@
+# Tema de alto contraste (PLAN.md §7: el tercer filtro del selector,
+# "claro/oscuro/alto contraste", que quedó pendiente hasta que existiera
+# un tema realmente diseñado para eso). Negro puro + colores primarios
+# saturados sobre él, sin tonos apagados/intermedios en ningún lado — al
+# estilo de los temas "High Contrast" de VS Code/Windows, pensado para
+# quien necesita la máxima diferencia perceptible entre elementos, no
+# para verse "lindo". `type = "dark"` (fondo oscuro) es un eje aparte de
+# `alto_contraste` — un tema puede ser de alto contraste sobre fondo
+# claro también, pero esta primera entrega solo cubre la variante oscura.
+name = "Alto contraste"
+type = "dark"
+alto_contraste = true
+
+[ui]
+background         = "#000000"
+foreground         = "#ffffff"
+cursor             = "#ffff00"
+selection          = "#0000ff"
+line_number        = "#00ffff"
+line_number_active = "#ffff00"
+current_line       = "#202020"
+
+[statusbar]
+# Invertida (fondo claro, texto negro) a propósito: marca un límite
+# visual inequívoco entre la barra de estado y el resto de la pantalla,
+# el mismo criterio que usan los temas de alto contraste de sistema.
+background     = "#ffffff"
+foreground     = "#000000"
+modo_insertar  = "#00ff00"
+modo_seleccion = "#ff00ff"
+
+[syntax]
+keyword  = { fg = "#ffff00", style = "bold" }
+string   = "#ff8000"
+number   = "#00ff00"
+comment  = { fg = "#a0a0a0", style = "italic" }
+function = "#00ffff"
+type     = "#ff00ff"
+variable = "#ffffff"
+constant = "#00ff00"
+operator = "#ffffff"
+
+[diagnostics]
+error   = "#ff0000"
+warning = "#ffff00"
+info    = "#00ffff"
+hint    = "#a0a0a0"
+
+[git]
+added    = "#00ff00"
+modified = "#ffff00"
+deleted  = "#ff0000"
+
+[search]
+coincidencia_actual = "#ff8000"
+otras_coincidencias = "#0000ff"

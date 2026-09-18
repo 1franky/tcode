@@ -1,14 +1,19 @@
 use crate::tema::{InfoTema, TEMAS_EMBEBIDOS};
 
-/// Filtro de tipo de tema del selector (`Ctrl+K Ctrl+T`, PLAN.md §7). El
-/// plan también menciona "alto contraste", pero ningún tema embebido está
-/// etiquetado así todavía — se suma cuando exista uno.
+/// Filtro de tipo de tema del selector (`Ctrl+K Ctrl+T`, PLAN.md §7): los
+/// tres que menciona el plan — "alto contraste" quedó pendiente hasta que
+/// existiera un tema realmente etiquetado así (`Tema::alto_contraste`,
+/// M5), ya lo hay (`alto-contraste.toml`). Es un eje independiente de
+/// Oscuro/Claro (`InfoTema::tipo`): un tema de alto contraste también es
+/// "dark" o "light" para ESE otro filtro, pero acá se filtra por la
+/// bandera, no por `tipo`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FiltroTipoTema {
     #[default]
     Todos,
     Oscuro,
     Claro,
+    AltoContraste,
 }
 
 impl FiltroTipoTema {
@@ -18,6 +23,7 @@ impl FiltroTipoTema {
             FiltroTipoTema::Todos => "Todos",
             FiltroTipoTema::Oscuro => "Oscuro",
             FiltroTipoTema::Claro => "Claro",
+            FiltroTipoTema::AltoContraste => "Alto contraste",
         }
     }
 
@@ -25,15 +31,17 @@ impl FiltroTipoTema {
         match self {
             FiltroTipoTema::Todos => FiltroTipoTema::Oscuro,
             FiltroTipoTema::Oscuro => FiltroTipoTema::Claro,
-            FiltroTipoTema::Claro => FiltroTipoTema::Todos,
+            FiltroTipoTema::Claro => FiltroTipoTema::AltoContraste,
+            FiltroTipoTema::AltoContraste => FiltroTipoTema::Todos,
         }
     }
 
-    fn coincide(&self, tipo: &str) -> bool {
+    fn coincide(&self, info: &InfoTema) -> bool {
         match self {
             FiltroTipoTema::Todos => true,
-            FiltroTipoTema::Oscuro => tipo == "dark",
-            FiltroTipoTema::Claro => tipo == "light",
+            FiltroTipoTema::Oscuro => info.tipo == "dark",
+            FiltroTipoTema::Claro => info.tipo == "light",
+            FiltroTipoTema::AltoContraste => info.alto_contraste,
         }
     }
 }
@@ -93,7 +101,7 @@ impl EstadoSelectorTema {
     /// Temas embebidos que pasan el filtro actual, en el orden de
     /// [`TEMAS_EMBEBIDOS`].
     pub fn temas_filtrados(&self) -> Vec<InfoTema> {
-        TEMAS_EMBEBIDOS.iter().filter(|t| self.filtro.coincide(t.tipo)).copied().collect()
+        TEMAS_EMBEBIDOS.iter().filter(|t| self.filtro.coincide(t)).copied().collect()
     }
 
     pub fn mover_abajo(&mut self) {
@@ -108,8 +116,9 @@ impl EstadoSelectorTema {
         self.seleccion = self.seleccion.saturating_sub(1);
     }
 
-    /// Cambia al siguiente filtro (Todos -> Oscuro -> Claro -> Todos),
-    /// reseteando la selección a la primera fila del nuevo subconjunto.
+    /// Cambia al siguiente filtro (Todos -> Oscuro -> Claro -> Alto
+    /// contraste -> Todos), reseteando la selección a la primera fila del
+    /// nuevo subconjunto.
     pub fn alternar_filtro(&mut self) {
         self.filtro = self.filtro.siguiente();
         self.seleccion = 0;
@@ -173,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn alternar_filtro_recorre_todos_oscuro_claro_y_vuelve() {
+    fn alternar_filtro_recorre_todos_oscuro_claro_alto_contraste_y_vuelve() {
         let mut selector = EstadoSelectorTema::nueva();
         selector.abrir("dracula");
         assert_eq!(selector.filtro(), FiltroTipoTema::Todos);
@@ -185,6 +194,12 @@ mod tests {
         selector.alternar_filtro();
         assert_eq!(selector.filtro(), FiltroTipoTema::Claro);
         assert!(selector.temas_filtrados().iter().all(|t| t.tipo == "light"));
+
+        selector.alternar_filtro();
+        assert_eq!(selector.filtro(), FiltroTipoTema::AltoContraste);
+        let alto_contraste = selector.temas_filtrados();
+        assert!(alto_contraste.iter().all(|t| t.alto_contraste));
+        assert!(alto_contraste.iter().any(|t| t.id == "alto-contraste"));
 
         selector.alternar_filtro();
         assert_eq!(selector.filtro(), FiltroTipoTema::Todos);
