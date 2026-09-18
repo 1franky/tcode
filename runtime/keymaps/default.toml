@@ -24,6 +24,16 @@
 "End"           = "cursor.fin_linea"
 "Ctrl+Home"     = "cursor.inicio_archivo"
 "Ctrl+End"      = "cursor.fin_archivo"
+# Selección de texto de toda la vida (PLAN.md §4) — extiende en vez de
+# mover, sin colapsar lo ya seleccionado (a diferencia de la flecha
+# sola). Selección hasta inicio/fin de archivo (Shift+Ctrl+Home/End)
+# queda fuera de esta primera entrega.
+"Shift+Up"      = "cursor.seleccionar_arriba"
+"Shift+Down"    = "cursor.seleccionar_abajo"
+"Shift+Left"    = "cursor.seleccionar_izquierda"
+"Shift+Right"   = "cursor.seleccionar_derecha"
+"Shift+Home"    = "cursor.seleccionar_inicio_linea"
+"Shift+End"     = "cursor.seleccionar_fin_linea"
 "Backspace"     = "editor.borrar_atras"
 "Delete"        = "editor.borrar_adelante"
 "Enter"         = "editor.nueva_linea"
