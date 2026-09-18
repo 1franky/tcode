@@ -51,6 +51,7 @@ confirmación pendiente.
 | `Ctrl+Shift+P` o `F1` | Paleta de comandos (buscar cualquier acción por nombre) |
 | `Ctrl+F` / `Ctrl+H` | Buscar / Buscar y reemplazar en el archivo |
 | `Ctrl+,` o `Ctrl+K A` | Panel de administración |
+| `Ctrl+K R` | Ver logs de la sesión LSP activa |
 | `Ctrl+K Ctrl+T` | Selector de temas (con preview en vivo) |
 | `Ctrl+K Ctrl+L` | Recargar `config.toml`/`keymap.toml` sin reiniciar |
 
@@ -286,6 +287,15 @@ sección "Lenguajes / LSP" del panel de administración, `c` sobre la fila
 del lenguaje, escribí el comando completo con sus argumentos y `Enter`.
 Si ya hay una sesión activa para ese lenguaje, se relanza sola con el
 comando nuevo.
+
+**`Ctrl+K R`** ("LSP: Ver logs de la sesión activa" en la paleta):
+muestra lo que el servidor escribió en su stderr — útil para entender
+por qué no conecta o se comporta raro, más allá del estado "Conectado"/
+"Iniciando…"/"Inactivo". Es una foto del momento en que se abre (no en
+vivo); escribir en el campo de arriba filtra las líneas por texto. La
+mayoría de los servidores reales se quedan en silencio mientras todo
+funciona bien, así que ver "sin logs" con una sesión conectada es lo
+normal, no un signo de que algo esté mal.
 
 ## Personalizar atajos
 

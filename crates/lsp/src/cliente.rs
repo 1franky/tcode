@@ -1,14 +1,26 @@
+use std::collections::VecDeque;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
-use tokio::io::BufReader;
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::mpsc;
 
 use crate::protocolo::{escribir_mensaje, leer_mensaje};
+
+/// Cuántas líneas de stderr se recuerdan como mucho por sesión (PLAN.md
+/// §5.3, "ver logs") — un servidor real no debería ser tan hablador como
+/// para que 200 líneas no alcancen para diagnosticar qué está pasando
+/// ahora mismo, y evita que una sesión larga y ruidosa crezca sin límite
+/// en memoria. Las más viejas se van descartando a medida que entran
+/// nuevas (FIFO).
+const MAX_LINEAS_LOG: usize = 200;
+
+type BufferLogs = Arc<Mutex<VecDeque<String>>>;
 
 /// Un mensaje que llega desde el servidor LSP, ya distinguido entre
 /// notificación (sin id, como `textDocument/publishDiagnostics`) y
@@ -29,30 +41,51 @@ pub struct Cliente {
     stdin: ChildStdin,
     siguiente_id: i64,
     pub receptor: mpsc::UnboundedReceiver<MensajeEntrante>,
+    /// Últimas líneas que el proceso escribió en su stderr — la mayoría
+    /// de los servidores reales lo usan para sus propios logs/errores
+    /// internos (no forman parte del protocolo LSP en sí, que va todo
+    /// por stdout). Compartido con la tarea de fondo que lo llena
+    /// (`leer_stderr_en_bucle`); `logs()` devuelve una copia del
+    /// contenido actual, en el mismo orden en que llegaron.
+    logs: BufferLogs,
 }
 
 impl Cliente {
-    /// Lanza `comando` como proceso hijo y arranca la tarea de fondo que
-    /// lee su stdout continuamente, reenviando cada mensaje por
-    /// `receptor`. El proceso se mata solo si el `Cliente` se dropea sin
-    /// pasar por `cerrar` (`kill_on_drop`).
+    /// Lanza `comando` como proceso hijo y arranca las tareas de fondo
+    /// que leen su stdout (reenviando cada mensaje por `receptor`) y su
+    /// stderr (acumulando líneas en `logs`) continuamente. El proceso se
+    /// mata solo si el `Cliente` se dropea sin pasar por `cerrar`
+    /// (`kill_on_drop`).
     pub async fn lanzar(comando: &str, args: &[&str]) -> Result<Self> {
         let mut proceso = Command::new(comando)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .with_context(|| format!("no se pudo lanzar '{comando}': ¿está instalado y en el PATH?"))?;
 
         let stdin = proceso.stdin.take().context("el proceso no expuso stdin")?;
         let stdout = proceso.stdout.take().context("el proceso no expuso stdout")?;
+        let stderr = proceso.stderr.take().context("el proceso no expuso stderr")?;
 
         let (tx, rx) = mpsc::unbounded_channel();
         tokio::spawn(leer_en_bucle(BufReader::new(stdout), tx));
 
-        Ok(Self { proceso, stdin, siguiente_id: 1, receptor: rx })
+        let logs: BufferLogs = Arc::new(Mutex::new(VecDeque::new()));
+        tokio::spawn(leer_stderr_en_bucle(BufReader::new(stderr), logs.clone()));
+
+        Ok(Self { proceso, stdin, siguiente_id: 1, receptor: rx, logs })
+    }
+
+    /// Copia de las líneas de stderr acumuladas hasta ahora, de la más
+    /// vieja a la más nueva (hasta [`MAX_LINEAS_LOG`], las anteriores ya
+    /// se descartaron). Vacío si el servidor todavía no escribió nada, o
+    /// nunca escribe nada — muchos LSP reales se quedan en silencio
+    /// mientras todo funciona bien.
+    pub fn logs(&self) -> Vec<String> {
+        self.logs.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
     }
 
     /// Envía un request identificado; la respuesta llega por `receptor`
@@ -164,6 +197,21 @@ async fn leer_en_bucle(mut reader: BufReader<ChildStdout>, tx: mpsc::UnboundedSe
 
         if tx.send(mensaje).is_err() {
             break;
+        }
+    }
+}
+
+/// Acumula línea por línea el stderr del proceso en `logs`, descartando
+/// las más viejas una vez superado [`MAX_LINEAS_LOG`] — nunca falla ni
+/// interrumpe nada más si el stream se corta (proceso muerto), termina
+/// sola.
+async fn leer_stderr_en_bucle(reader: BufReader<ChildStderr>, logs: BufferLogs) {
+    let mut lineas = reader.lines();
+    while let Ok(Some(linea)) = lineas.next_line().await {
+        let mut buffer = logs.lock().unwrap_or_else(|e| e.into_inner());
+        buffer.push_back(linea);
+        if buffer.len() > MAX_LINEAS_LOG {
+            buffer.pop_front();
         }
     }
 }
@@ -322,5 +370,54 @@ mod tests {
         tokio::time::timeout(TIMEOUT_CIERRE_EDUCADO + Duration::from_millis(500), cliente.cerrar())
             .await
             .expect("cerrar() no debería tardar más que su propio timeout interno");
+    }
+
+    #[test]
+    fn logs_arranca_vacio_antes_de_lanzar_nada() {
+        // No hace falta un proceso real para esto: `logs` solo lee el
+        // buffer compartido, que empieza vacío. Se prueba acá en vez de
+        // como parte del test async de más abajo para no depender de un
+        // timing exacto de cuántas líneas ya llegaron.
+        let logs: BufferLogs = Arc::new(Mutex::new(VecDeque::new()));
+        assert!(logs.lock().unwrap().is_empty());
+    }
+
+    /// `sh -c 'echo ... >&2'` escribe directo a stderr sin depender de
+    /// tener ningún LSP real instalado — confirma que `Cliente::lanzar`
+    /// conecta el pipe de stderr (no solo el de stdout) y que
+    /// `leer_stderr_en_bucle` lo acumula en `logs()`, línea por línea y
+    /// en orden. Específico de Unix, como el resto de los tests con
+    /// procesos reales de este archivo.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn logs_acumula_lo_que_el_proceso_escribe_en_stderr() {
+        let cliente = Cliente::lanzar("sh", &["-c", "echo primera >&2; echo segunda >&2"])
+            .await
+            .expect("sh debería existir en cualquier Unix");
+
+        // El proceso corre y termina casi al instante; darle un margen
+        // chico a la tarea de fondo para que alcance a leer ambas líneas
+        // antes de pedir el snapshot.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert_eq!(cliente.logs(), vec!["primera".to_string(), "segunda".to_string()]);
+        cliente.matar().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn logs_descarta_las_lineas_mas_viejas_al_superar_el_maximo() {
+        // Genera MAX_LINEAS_LOG + 10 líneas numeradas; las primeras 10
+        // deberían quedar afuera del snapshot final.
+        let script = (0..MAX_LINEAS_LOG + 10).map(|i| format!("echo {i} >&2")).collect::<Vec<_>>().join("; ");
+        let cliente = Cliente::lanzar("sh", &["-c", &script]).await.expect("sh debería existir en cualquier Unix");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let logs = cliente.logs();
+        assert_eq!(logs.len(), MAX_LINEAS_LOG);
+        assert_eq!(logs.first().unwrap(), "10"); // se descartaron 0..10
+        assert_eq!(logs.last().unwrap(), &(MAX_LINEAS_LOG + 9).to_string());
+        cliente.matar().await;
     }
 }

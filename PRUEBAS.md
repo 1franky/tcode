@@ -281,6 +281,24 @@ los temas "High Contrast" de VS Code/Windows).
 - [ ] Con `vscode-langservers-extracted` instalado (trae los binarios de HTML y CSS) y un `.html`/`.css` abierto: el estado pasa de "Iniciando…" a "Conectado" solo.
 - [ ] Un bloque de código Markdown con etiqueta ` ```html `, ` ```css ` o ` ```sql ` se resalta con la vista de preview (`Ctrl+K V`).
 
+### Ver logs de la sesión LSP activa (`Ctrl+K R`)
+
+El stderr de la mayoría de los servidores LSP reales (no forma parte del
+protocolo LSP en sí, que va todo por stdout) se descartaba antes por
+completo (`Stdio::null()`) — no había forma de ver por qué un servidor no
+conectaba o se comportaba raro más allá de "Conectado"/"Iniciando…"/
+"Inactivo". Es un snapshot al abrir, no en vivo: cerrar y volver a abrir
+muestra lo más nuevo. Sin scroll más allá de lo que entra en pantalla
+(mismo overlay que la paleta de comandos) — el filtro es la forma de
+encontrar algo que quedó afuera de esa primera pantalla.
+
+- [ ] `Ctrl+K R` (o "LSP: Ver logs de la sesión activa" desde la paleta) sin ninguna sesión LSP activa: muestra "(sin logs — no hay ninguna sesión LSP activa, o no escribió nada en stderr)" en vez de una lista vacía sin explicación.
+- [ ] Configurar un comando personalizado que escriba algo a stderr (por ejemplo un script `sh` de una línea con `echo ... >&2; cat`, vía `c` en "Lenguajes / LSP") y abrir un archivo de ese lenguaje: `Ctrl+K R` muestra esas líneas, la más reciente primero (arriba).
+- [ ] Escribir texto en el campo de filtro: recorta la lista a las líneas que contienen ese texto (sin distinguir mayúsculas/minúsculas), con la parte que coincidió resaltada en negrita.
+- [ ] `Backspace` en el filtro funciona como en cualquier otro campo de texto de la app.
+- [ ] `Esc`: cierra el visor sin afectar la sesión LSP activa (no la reinicia ni la corta).
+- [ ] Con un `.py` real y `pyright` conectado: la mayoría de los servidores reales se quedan en silencio mientras todo funciona bien — `Ctrl+K R` mostrando el mensaje de "sin logs" con una sesión "Conectado" activa es un resultado esperado, no un bug.
+
 ## M4 — Sección "Interfaz" del panel de administración
 
 - [ ] Dentro del panel (`Ctrl+K A`), la sección "Interfaz" ya NO dice "(próximamente)": lista 7 filas — "Mostrar barra de estado" y 6 elementos de la statusbar (posición del cursor, codificación, fin de línea, lenguaje detectado, resumen de diagnósticos LSP, modo), todas en "Sí" por defecto.
