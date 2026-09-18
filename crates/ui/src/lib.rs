@@ -12,6 +12,7 @@ mod panel_archivos;
 mod panel_buscador;
 mod panel_busqueda;
 mod panel_guardar_como;
+mod panel_logs_lsp;
 mod panel_paleta;
 mod panel_selector_tema;
 mod statusbar;
@@ -27,6 +28,7 @@ use tcode_config::{Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTem
 use tcode_core::{EstadoBusqueda, EstadoGuardarComo};
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::Keymap;
+use tcode_lsp::EstadoLogsLsp;
 use tcode_syntax::Resaltador;
 
 pub use paleta::Paleta;
@@ -83,8 +85,9 @@ pub struct EstadoUi {
 /// de edición si está abierta, y la paleta de comandos
 /// (`Ctrl+Shift+P`/`F1`), el buscador de archivos (`Ctrl+P`), el
 /// selector de temas (`Ctrl+K Ctrl+T`) o el prompt de "Guardar como"
-/// (`Ctrl+Shift+S`) encima de todo cuando alguno de los cuatro está
-/// abierto (son mutuamente excluyentes — nunca dos a la vez).
+/// (`Ctrl+Shift+S`) o el visor de logs del LSP activo (`Ctrl+K R`)
+/// encima de todo cuando alguno de los cinco está abierto (son
+/// mutuamente excluyentes — nunca dos a la vez).
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -102,6 +105,7 @@ pub fn dibujar(
     keymap: &Keymap,
     filas_lenguajes: &[FilaLenguajeLsp],
     editor_tema: &EstadoEditorTema,
+    logs_lsp: &EstadoLogsLsp,
 ) {
     let area_total = frame.area();
 
@@ -146,5 +150,7 @@ pub fn dibujar(
         panel_selector_tema::dibujar(frame, area_total, selector_tema, paleta);
     } else if guardar_como.activa() {
         panel_guardar_como::dibujar(frame, area_total, guardar_como, paleta);
+    } else if logs_lsp.activo() {
+        panel_logs_lsp::dibujar(frame, area_total, logs_lsp, paleta);
     }
 }

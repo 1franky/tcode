@@ -223,6 +223,14 @@ impl EstadoLsp {
         self.sesion.as_ref().map(|s| s.lenguaje)
     }
 
+    /// Líneas de stderr acumuladas por la sesión activa, de la más
+    /// vieja a la más nueva — vacío si no hay sesión, o si la hay pero
+    /// nunca escribió nada (PLAN.md §5.3, "ver logs"; `Ctrl+K R`,
+    /// `crates/app/src/main.rs`).
+    pub fn logs(&self) -> Vec<String> {
+        self.sesion.as_ref().map(|s| s.cliente.logs()).unwrap_or_default()
+    }
+
     /// Texto legible en español del estado de la sesión activa —
     /// `None` si no hay ninguna (el panel muestra "Inactivo" en ese
     /// caso, decidido ahí en vez de acá para no acoplar este módulo a

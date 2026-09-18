@@ -44,6 +44,7 @@ use tcode_core::{
 };
 use tcode_fs::{BuscadorArchivos, Explorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
+use tcode_lsp::EstadoLogsLsp;
 use tcode_syntax::{Lenguaje, Resaltador};
 use tcode_ui::{DireccionSplit, FilaLenguajeLsp, Layout as PanelLayout, ModoCsv, Paleta};
 
@@ -269,6 +270,9 @@ struct EstadoApp {
     /// panel (ver `tcode_core::EstadoVim`). Sin efecto mientras ningún
     /// `Editor` llegue a `Modo::Normal`.
     vim: EstadoVim,
+    /// Visor de logs de stderr de la sesión LSP activa (`Ctrl+K R`,
+    /// PLAN.md §5.3).
+    logs_lsp: EstadoLogsLsp,
 }
 
 fn sin_modificadores(key: KeyEvent) -> bool {
@@ -329,6 +333,7 @@ async fn ejecutar(
         keymap,
         lsp: lsp::EstadoLsp::nuevo(),
         vim: EstadoVim::nuevo(),
+        logs_lsp: EstadoLogsLsp::nuevo(),
     };
 
     // El archivo abierto al arrancar también dispara el LSP si su
@@ -369,6 +374,7 @@ async fn ejecutar(
                 &estado.keymap,
                 &filas_lenguajes,
                 &estado.editor_tema,
+                &estado.logs_lsp,
             )
         })?;
 
@@ -749,6 +755,22 @@ async fn ejecutar(
             continue;
         }
 
+        // Visor de logs del LSP activo (`Ctrl+K R`): snapshot tomado al
+        // abrir, no en vivo — no hace falta reaccionar a nada más que el
+        // filtro de texto y `Esc` para cerrar.
+        if estado.logs_lsp.activo() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => estado.logs_lsp.cerrar(),
+                KeyCode::Backspace => estado.logs_lsp.borrar(),
+                KeyCode::Char(c) if sin_modificadores(key) => estado.logs_lsp.escribir(c),
+                _ => {}
+            }
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
         // "Salto rápido" del explorador (`Ctrl+K J`): mientras está
         // activo, cualquier tecla asignada como etiqueta
         // (`Explorador::etiqueta_para_fila`) abre ese archivo o expande
@@ -925,6 +947,13 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         }
         "admin.abrir_panel" => {
             estado.panel_admin.abrir();
+            Accion::Continuar
+        }
+        "lsp.ver_logs" => {
+            // Snapshot, no en vivo (PLAN.md §5.3): abre con lo que haya
+            // AHORA — vacío y con el mensaje correspondiente si no hay
+            // sesión LSP activa, en vez de no hacer nada en silencio.
+            estado.logs_lsp.abrir(estado.lsp.logs());
             Accion::Continuar
         }
         "buscar.en_archivo" | "buscar.reemplazar" => {
