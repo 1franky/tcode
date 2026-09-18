@@ -23,6 +23,7 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "editor.deshacer", descripcion: "Editor: Deshacer" },
         Comando { id: "editor.rehacer", descripcion: "Editor: Rehacer" },
         Comando { id: "panel.alternar_lateral", descripcion: "Ver: Alternar explorador de archivos" },
+        Comando { id: "explorador.saltar", descripcion: "Ver: Saltar a un archivo (etiquetas de una tecla)" },
         Comando { id: "config.recargar", descripcion: "Configuración: Recargar" },
         Comando { id: "tema.seleccionar", descripcion: "Tema: Seleccionar (con preview en vivo)" },
         Comando { id: "tema.editor_visual", descripcion: "Tema: Editor visual (colores por código hex)" },

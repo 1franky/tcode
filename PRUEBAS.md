@@ -47,6 +47,22 @@ abajo, es donde más problemas aparecieron).
 - [ ] Con el explorador enfocado: `↑`/`↓` mueve la selección, `Enter` sobre una carpeta la expande/colapsa, `Enter` sobre un archivo lo abre en el editor y devuelve el foco a este último.
 - [ ] `Esc` con el explorador visible: devuelve el foco al editor sin cerrar el explorador.
 
+### Salto rápido en el explorador (`Ctrl+K J`)
+
+No se puede detectar de forma confiable sostener Alt/Cmd solos en
+ninguna terminal (ninguna combinación de solo modificadores llega a la
+aplicación — ni siquiera `Windows+Alt` o `Option+Command`, ver la
+discusión en el PR): por eso el trigger es un atajo normal, al estilo
+Vimium/`vim-easymotion`, no una tecla sostenida.
+
+- [ ] Con el explorador visible y varios archivos/carpetas listados, `Ctrl+K J`: aparece una etiqueta de una tecla (`1`, `2`, `3`... y después `a`, `b`, `c`...) junto a cada fila, con fondo resaltado.
+- [ ] Tipear la etiqueta de un archivo: lo abre directamente en el editor y devuelve el foco a este — sin haber navegado ahí con las flechas.
+- [ ] Tipear la etiqueta de una carpeta: la expande/colapsa (igual que `Enter`) y sale del modo salto, sin abrir nada.
+- [ ] Tipear una tecla que no le toca a ninguna fila visible (p. ej. `z` con solo 3 archivos): no pasa nada, las etiquetas se quedan mostradas esperando una válida.
+- [ ] `Esc` en modo salto: cierra el modo sin saltar a ningún lado, las filas vuelven a verse normales.
+- [ ] Invocar "Ver: Saltar a un archivo" desde la paleta de comandos (`F1`) con el explorador **oculto**: lo muestra, le da el foco y activa el modo salto directamente — no hace falta abrirlo a mano primero.
+- [ ] Con más archivos visibles que letras del alfabeto (36 — dígitos + minúsculas, poco común pero posible con una terminal muy alta): las filas de más allá de la 36 quedan sin etiqueta, pero se pueden seguir navegando con las flechas como siempre.
+
 ## M2 — Paleta de comandos, buscador de archivos, splits, LSP
 
 - [ ] `Ctrl+Shift+P` o `F1`: abre la paleta de comandos.
