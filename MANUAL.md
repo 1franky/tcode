@@ -45,6 +45,7 @@ confirmación pendiente.
 | `Ctrl+Q` | Salir |
 | `Tab` / `Shift+Tab` | Indentar / desindentar |
 | `Ctrl+B` | Mostrar/ocultar el explorador de archivos lateral |
+| `Ctrl+K J` | Salto rápido en el explorador (etiquetas de una tecla) |
 | `Ctrl+P` | Buscar archivo por nombre (difuso) |
 | `Ctrl+Shift+P` o `F1` | Paleta de comandos (buscar cualquier acción por nombre) |
 | `Ctrl+F` / `Ctrl+H` | Buscar / Buscar y reemplazar en el archivo |
@@ -111,6 +112,21 @@ Cada panel tiene su propio archivo abierto, cursor y estado de vista
 la selección, `Enter` sobre una carpeta la expande/colapsa, `Enter` sobre
 un archivo lo abre y devuelve el foco al editor. `Esc` devuelve el foco al
 editor sin cerrar el explorador.
+
+### Salto rápido (`Ctrl+K J`)
+
+Con muchos archivos visibles, `Ctrl+K J` muestra una etiqueta de una sola
+tecla (`1`, `2`, `3`... y después `a`, `b`, `c`...) junto a cada fila:
+tipear la que corresponde abre ese archivo directamente (o expande esa
+carpeta), sin navegar con las flechas — funciona incluso con el
+explorador oculto (lo muestra y le da el foco solo). `Esc` cancela sin
+saltar a ningún lado.
+
+No existe una versión "mantener Alt/Cmd presionado" al estilo de una app
+nativa: ninguna terminal entrega un evento cuando se sostiene solo una
+tecla modificadora (sin otra tecla acompañándola), sin importar cuál se
+elija — es una limitación del protocolo de teclado de cualquier
+terminal, no algo particular de `tcode`.
 
 ## Paleta de comandos y buscador de archivos
 

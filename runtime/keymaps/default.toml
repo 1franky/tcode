@@ -46,6 +46,11 @@
 # suelta, sin modificador. `Ctrl+K A` ("Admin") no depende de eso.
 "Ctrl+K A"      = "admin.abrir_panel"
 "Ctrl+B"        = "panel.alternar_lateral"
+# "Salto rápido": muestra una etiqueta de una tecla junto a cada archivo
+# visible del explorador (lo abre/expande sin navegar con las flechas) —
+# funciona sin importar dónde esté el foco: si el explorador está oculto,
+# lo muestra y le da el foco antes de activar el modo.
+"Ctrl+K J"      = "explorador.saltar"
 "Esc"           = "explorador.enfocar_editor"
 "Ctrl+Shift+P"  = "paleta.comandos"
 # Alternativa universal: en terminales sin el protocolo de teclado

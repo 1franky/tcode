@@ -720,6 +720,30 @@ async fn ejecutar(
             continue;
         }
 
+        // "Salto rápido" del explorador (`Ctrl+K J`): mientras está
+        // activo, cualquier tecla asignada como etiqueta
+        // (`Explorador::etiqueta_para_fila`) abre ese archivo o expande
+        // esa carpeta directamente, sin pasar por la navegación normal
+        // con flechas — captura el teclado por completo igual que los
+        // bloques anteriores. Una tecla sin etiqueta asignada no hace
+        // nada (se sigue esperando una válida); solo `Esc` cancela sin
+        // saltar.
+        if estado.explorador.modo_salto() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => estado.explorador.salir_modo_salto(),
+                KeyCode::Char(c) if sin_modificadores(key) => {
+                    if let Ok(Some(ruta)) = estado.explorador.saltar_a_etiqueta(c) {
+                        abrir_ruta_desde_explorador(layout, &mut estado.foco, ruta);
+                    }
+                }
+                _ => {}
+            }
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
         // Edición de una celda de la vista CSV/TSV (`Enter`/`F2` sobre
         // una celda, PLAN.md §9): captura el teclado por completo igual
         // que los bloques anteriores, mientras dura la edición de esa
@@ -926,6 +950,17 @@ fn ejecutar_comando(
             *foco = if explorador.visible() { Foco::Explorador } else { Foco::Editor };
             return Accion::Continuar;
         }
+        "explorador.saltar" => {
+            // Global (no gated por foco, a diferencia de `cursor.arriba`
+            // reinterpretado en `ejecutar_comando_explorador`): invocable
+            // desde la paleta de comandos sin tener el explorador abierto
+            // todavía — lo muestra y le da el foco antes de activar el
+            // modo, en vez de no hacer nada en silencio.
+            explorador.mostrar();
+            *foco = Foco::Explorador;
+            explorador.activar_modo_salto();
+            return Accion::Continuar;
+        }
         "explorador.enfocar_editor" => {
             // `Esc` siempre significa "volver a un solo cursor" también
             // (PLAN.md §11 M3, `cursor.una_seleccion`) — no hace falta un
@@ -1029,18 +1064,25 @@ fn ejecutar_comando_explorador(comando: &str, layout: &mut PanelLayout, explorad
         "cursor.abajo" => explorador.mover_abajo(),
         "editor.nueva_linea" => {
             if let Ok(Some(ruta)) = explorador.activar_seleccion() {
-                if let Ok(nuevo_editor) = Editor::abrir(&ruta) {
-                    layout.abrir_en_activo(nuevo_editor, ruta.display().to_string());
-                    // Abrir un archivo devuelve el foco al editor: el
-                    // usuario ya eligió qué quería, tiene sentido poder
-                    // escribir de inmediato en vez de seguir en el árbol.
-                    *foco = Foco::Editor;
-                }
+                abrir_ruta_desde_explorador(layout, foco, ruta);
             }
         }
         _ => {}
     }
     Accion::Continuar
+}
+
+/// Abre `ruta` en el panel activo y devuelve el foco al editor — el
+/// usuario ya eligió qué quería, tiene sentido poder escribir de
+/// inmediato en vez de seguir en el árbol. Comparten esto tanto `Enter`
+/// sobre una fila del explorador (`ejecutar_comando_explorador`) como
+/// acertar una etiqueta en modo "salto rápido" (`Ctrl+K J`, en el bucle
+/// principal de eventos).
+fn abrir_ruta_desde_explorador(layout: &mut PanelLayout, foco: &mut Foco, ruta: std::path::PathBuf) {
+    if let Ok(nuevo_editor) = Editor::abrir(&ruta) {
+        layout.abrir_en_activo(nuevo_editor, ruta.display().to_string());
+        *foco = Foco::Editor;
+    }
 }
 
 /// Comandos genéricos de navegación reinterpretados para la vista de
