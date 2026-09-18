@@ -1,10 +1,13 @@
 # Plan de pruebas manuales — tcode
 
 Checklist para probar `tcode` de punta a punta antes de liberar una nueva
-versión. Cubre todo lo implementado hasta la fecha: M0, M1, M2 y M3
-completos, y M4 en progreso (ver [PLAN.md](./PLAN.md) §11 para el detalle
-de cada milestone). Las secciones de M4 se van agregando pieza por pieza,
-a medida que cada una se mergea a `develop`.
+versión. Cubre todo lo implementado hasta la fecha: M0-M4 completos y
+liberados, más piezas post-M4 (Guardar como, LSP robusto, ajuste de
+línea, manual de uso, fixes de Windows, salto rápido del explorador,
+scroll horizontal en CSV, modo VIM opcional, tema de alto contraste —
+ver [PLAN.md](./PLAN.md) §11 para el detalle de cada milestone). Cada
+sección se va agregando/actualizando pieza por pieza, a medida que se
+mergea a `develop` — no es un documento que se escribe una sola vez.
 
 No hace falta correrlo entero en cada versión — como mínimo, correr la
 sección de la pieza que cambió más el bug conocido de Windows. Antes de
@@ -34,7 +37,7 @@ abajo, es donde más problemas aparecieron).
 - [ ] `Ctrl+Z`/`Ctrl+Y` (deshacer/rehacer) varias veces seguidas, en ambas direcciones.
 - [ ] `Ctrl+S` guarda; volver a abrir el archivo y confirmar que el contenido persistió.
 - [ ] Escribir caracteres UTF-8 (acentos, ñ, emoji) y guardar — no se corrompen.
-- [ ] Barra de estado inferior: `Ln`/`Col` correctos, cuenta total de líneas, marca `●` cuando hay cambios sin guardar.
+- [ ] Barra de estado inferior: `Ln`/`Col` correctos, cuenta total de líneas, marca `*` cuando hay cambios sin guardar.
 
 ## M1 — Configuración, temas, atajos, sintaxis, explorador
 
@@ -166,11 +169,11 @@ los temas "High Contrast" de VS Code/Windows).
 ## M4 — Panel de administración (`Ctrl+,` / `Ctrl+K A`) y números de línea
 
 - [ ] `Ctrl+,` para abrir el panel: en terminales sin protocolo Kitty puede llegar como una `,` suelta insertada en el texto en vez de abrir el panel (ambigüedad conocida, igual que otras de este proyecto) — si pasa, deshacer con `Ctrl+Z` y usar `Ctrl+K A` en su lugar.
-- [ ] `Ctrl+K A` abre el panel a pantalla completa (no se ve el editor detrás): barra lateral a la izquierda con las 5 secciones, área central a la derecha, barra de contexto abajo.
-- [ ] Barra lateral: `↑`/`↓` mueve la selección entre las 5 secciones; las que todavía no tienen contenido real (Atajos, Temas, Lenguajes/LSP, Interfaz) se marcan "(próximamente)" y su área central muestra un resumen de qué van a traer, en vez de quedar vacía.
-- [ ] `Enter` o `→` sobre "Editor" (la única sección implementada por ahora): entra al área central; sobre cualquier sección "(próximamente)" no hace nada.
-- [ ] Dentro de "Editor": 4 filas (Tamaño de tabulación, Usar espacios en vez de tabs, Ajuste de línea, Números de línea). `↑`/`↓` mueve la selección entre filas.
-- [ ] Sobre una fila booleana (Usar espacios / Ajuste de línea / Números de línea): `Enter`, `←` o `→` alternan Sí/No, y el cambio se persiste en `config.toml` al instante (revisar el archivo sin cerrar el panel).
+- [ ] `Ctrl+K A` abre el panel a pantalla completa (no se ve el editor detrás): barra lateral a la izquierda con las 5 secciones (Atajos de teclado, Temas, Lenguajes/LSP, Editor, Interfaz), área central a la derecha, barra de contexto abajo.
+- [ ] Barra lateral: `↑`/`↓` mueve la selección entre las 5 secciones — todas tienen contenido real hoy (ver las secciones dedicadas más abajo para cada una); "(próximamente)" ya no debería verse en ningún lado del panel.
+- [ ] `Enter` o `→` sobre cualquier sección: entra al área central con las filas de esa sección.
+- [ ] Dentro de "Editor": 5 filas (Tamaño de tabulación, Usar espacios en vez de tabs, Ajuste de línea, Números de línea, Modo VIM — ver la sección dedicada al modo VIM más abajo). `↑`/`↓` mueve la selección entre filas.
+- [ ] Sobre una fila booleana (Usar espacios / Ajuste de línea / Números de línea / Modo VIM): `Enter`, `←` o `→` alternan Sí/No, y el cambio se persiste en `config.toml` al instante (revisar el archivo sin cerrar el panel).
 - [ ] Sobre "Tamaño de tabulación": `←`/`→` decrementan/incrementan de 1 en 1, recortado entre 1 y 16 (no baja de 1 ni sube de 16 aunque se siga presionando).
 - [ ] `Tab` alterna entre la barra lateral y el área central; `Esc` primero vuelve del área central a la barra, y un segundo `Esc` (ya en la barra) cierra el panel entero y devuelve el foco al editor.
 - [ ] `Ctrl+F` dentro del panel (con foco en la barra o en el área central): abre la búsqueda global de opciones. Escribir una palabra sin tildes de un nombre de campo (p. ej. "tabula", "espacios", "ajuste") filtra la lista con las letras coincidentes en negrita; `Enter` salta directo a esa fila en el área central y cierra la búsqueda; `Esc` cancela sin saltar a ningún lado.
@@ -206,7 +209,7 @@ los temas "High Contrast" de VS Code/Windows).
 
 ## M4 — Sección "Atajos" del panel de administración
 
-- [ ] Dentro del panel (`Ctrl+K A`), la sección "Atajos de teclado" ya NO dice "(próximamente)": al entrar se ven 3 filas especiales — "↺ Restablecer TODOS los atajos por defecto", "⇩ Exportar atajos a archivo", "⇧ Importar atajos desde archivo" — seguidas de una fila por cada comando de la paleta, con su combinación actual a la derecha (o varias separadas por coma, como "Panel de administración: Abrir" que tiene `Ctrl+,` y `Ctrl+K A`).
+- [ ] Dentro del panel (`Ctrl+K A`), la sección "Atajos de teclado" ya NO dice "(próximamente)": al entrar se ven 3 filas especiales — "Restablecer TODOS los atajos por defecto", "Exportar atajos a archivo", "Importar atajos desde archivo" (sin íconos decorativos, a propósito — ver el bug de Windows más abajo) — seguidas de una fila por cada comando de la paleta, con su combinación actual a la derecha (o varias separadas por coma, como "Panel de administración: Abrir" que tiene `Ctrl+,` y `Ctrl+K A`).
 - [ ] `Enter` sobre un comando: la fila muestra "‹ presioná la nueva combinación… ›" y la barra inferior cambia a "Presioná la nueva combinación · Esc cancela". Presionar cualquier tecla/combinación (probar una simple como `Ctrl+Alt+U`) la asigna de inmediato: la fila se actualiza, aparece el mensaje "Nuevo atajo: …", y **sin reiniciar el editor**, la tecla vieja deja de funcionar y la nueva sí.
 - [ ] Repetir lo anterior pero presionando `Esc` en vez de una combinación: cancela sin cambiar nada (ni el mensaje ni el atajo).
 - [ ] Intentar asignarle a un comando una combinación que ya usa OTRO comando distinto (p. ej. `Ctrl+S`, que ya es "Archivo: Guardar"): no se aplica el cambio, aparece "Ya usado por: Archivo: Guardar — no se cambió nada", y el atajo original de "Archivo: Guardar" sigue intacto.
@@ -220,8 +223,8 @@ los temas "High Contrast" de VS Code/Windows).
 
 ### Exportar/importar keymap desde archivo
 
-- [ ] `Enter` sobre "⇩ Exportar atajos a archivo": crea `keymap-exportado.toml` en el mismo directorio que `keymap.toml` (o el portable en Windows) con el keymap completo activo, y muestra "Exportado a …" con la ruta exacta.
-- [ ] `Enter` sobre "⇧ Importar atajos desde archivo" SIN haber dejado ningún archivo antes: muestra "No hay nada para importar — dejá el archivo en …", sin romper nada.
+- [ ] `Enter` sobre "Exportar atajos a archivo": crea `keymap-exportado.toml` en el mismo directorio que `keymap.toml` (o el portable en Windows) con el keymap completo activo, y muestra "Exportado a …" con la ruta exacta.
+- [ ] `Enter` sobre "Importar atajos desde archivo" SIN haber dejado ningún archivo antes: muestra "No hay nada para importar — dejá el archivo en …", sin romper nada.
 - [ ] Copiar el `keymap-exportado.toml` a `keymap-importar.toml` (mismo directorio), editar a mano un atajo dentro (por ejemplo, cambiar `"Ctrl+S" = "archivo.guardar"` a otra combinación), y volver a `Enter` sobre "Importar": muestra "Importado desde …" y **el cambio se aplica en caliente sin reiniciar** — probar que la combinación vieja deja de funcionar y la nueva del archivo importado sí.
 - [ ] El keymap importado también queda persistido como el `keymap.toml` activo: cerrar y volver a abrir `tcode` mantiene los atajos importados.
 - [ ] Un `keymap-importar.toml` con TOML inválido (por ejemplo, una línea rota a mano): el mensaje muestra el error de parseo en vez de romper el editor o dejarlo con un keymap a medio aplicar.
