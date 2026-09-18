@@ -11,6 +11,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Búsqueda y reemplazo](#búsqueda-y-reemplazo)
 - [Paneles divididos (splits)](#paneles-divididos-splits)
 - [Explorador de archivos](#explorador-de-archivos)
+- [Modo VIM opcional](#modo-vim-opcional)
 - [Paleta de comandos y buscador de archivos](#paleta-de-comandos-y-buscador-de-archivos)
 - [Vistas especiales: Markdown y CSV](#vistas-especiales-markdown-y-csv)
 - [Temas](#temas)
@@ -45,6 +46,7 @@ confirmación pendiente.
 | `Ctrl+Q` | Salir |
 | `Tab` / `Shift+Tab` | Indentar / desindentar |
 | `Ctrl+B` | Mostrar/ocultar el explorador de archivos lateral |
+| `Ctrl+K J` | Salto rápido en el explorador (etiquetas de una tecla) |
 | `Ctrl+P` | Buscar archivo por nombre (difuso) |
 | `Ctrl+Shift+P` o `F1` | Paleta de comandos (buscar cualquier acción por nombre) |
 | `Ctrl+F` / `Ctrl+H` | Buscar / Buscar y reemplazar en el archivo |
@@ -112,6 +114,67 @@ la selección, `Enter` sobre una carpeta la expande/colapsa, `Enter` sobre
 un archivo lo abre y devuelve el foco al editor. `Esc` devuelve el foco al
 editor sin cerrar el explorador.
 
+### Salto rápido (`Ctrl+K J`)
+
+Con muchos archivos visibles, `Ctrl+K J` muestra una etiqueta de una sola
+tecla (`1`, `2`, `3`... y después `a`, `b`, `c`...) junto a cada fila:
+tipear la que corresponde abre ese archivo directamente (o expande esa
+carpeta), sin navegar con las flechas — funciona incluso con el
+explorador oculto (lo muestra y le da el foco solo). `Esc` cancela sin
+saltar a ningún lado.
+
+No existe una versión "mantener Alt/Cmd presionado" al estilo de una app
+nativa: ninguna terminal entrega un evento cuando se sostiene solo una
+tecla modificadora (sin otra tecla acompañándola), sin importar cuál se
+elija — es una limitación del protocolo de teclado de cualquier
+terminal, no algo particular de `tcode`.
+
+## Modo VIM opcional
+
+Apagado por defecto: `tcode` sigue funcionando exactamente igual que
+siempre (atajos estilo VSCode/Helix). Quien quiera movimientos al estilo
+VIM lo prende en el panel de administración (`Ctrl+K A`, sección
+"Editor" → "Modo VIM") o a mano en `config.toml`
+(`[editor]` / `modo_vim = true`) — el cambio surte efecto de inmediato
+sobre el panel activo, sin reiniciar ni reabrir el archivo.
+
+Alcance de esta primera entrega (se puede ampliar más adelante): modos
+Normal/Insertar, movimientos básicos y los comandos de una/dos teclas más
+usados. Sin operadores combinables (`dw`, `d$`), sin conteos numéricos
+(`3dd`), sin modo Visual, sin `:`.
+
+| Tecla (modo Normal) | Acción |
+|---|---|
+| `h` / `j` / `k` / `l` | Mover el cursor izquierda/abajo/arriba/derecha |
+| `0` / `$` | Inicio / fin de la línea |
+| `gg` / `G` | Inicio / fin del archivo |
+| `i` | Entrar a Insertar en la posición actual |
+| `a` | Entrar a Insertar una posición a la derecha (al final de línea, después del último carácter) |
+| `o` | Abrir una línea nueva debajo y entrar a Insertar ahí |
+| `x` | Borrar el carácter bajo el cursor |
+| `dd` | Borrar la línea completa (queda en el registro) |
+| `yy` | Copiar la línea completa al registro, sin borrar nada |
+| `p` | Pegar el registro como una línea nueva debajo de la actual |
+| `u` | Deshacer (comparte historial con `Ctrl+Z`) |
+| `Esc` (en Insertar) | Volver a Normal |
+
+El registro sin nombre (lo que dejan `dd`/`yy`, lo que pega `p`) es uno
+solo para toda la app, no por panel — yanquear en un archivo y pegar en
+otro funciona, igual que en VIM real. El resto de atajos de tcode
+(flechas, `Ctrl+S`, `Ctrl+B`, splits, etc.) siguen andando igual estando
+en cualquiera de los dos modos: el modo VIM solo cambia qué significa un
+carácter suelto sin modificador.
+
+Una diferencia con Insertar (y con el resto de editores no-VIM): en modo
+Normal el cursor nunca queda "después" del último carácter de una línea
+no vacía — como en VIM real, `$`/`l` se detienen justo sobre el último
+carácter, no después. `a`/`A` siguen permitiendo escribir al final,
+como es de esperar.
+
+Limitación conocida: un panel nuevo por `Ctrl+\` (split) siempre arranca
+en Insertar, incluso con el modo VIM prendido — abrir un archivo ahí (o
+en el explorador/buscador de archivos) sí respeta la config.
+
 ## Paleta de comandos y buscador de archivos
 
 - **`Ctrl+Shift+P`/`F1`**: paleta de comandos — buscá cualquier acción por
@@ -138,14 +201,19 @@ Ambos se cierran con `Esc` y se navegan con `↑`/`↓` + `Enter`.
 
 ## Temas
 
-`tcode` trae 12 temas incluidos (Dracula, Monokai, One Dark, Nord,
+`tcode` trae 13 temas incluidos (Dracula, Monokai, One Dark, Nord,
 Gruvbox Dark, Tokyo Night, Catppuccin Mocha, Solarized Dark/Light,
-GitHub Light, más dos temas simples "Oscuro"/"Claro" de las primeras
-versiones).
+GitHub Light, "Alto contraste", más dos temas simples "Oscuro"/"Claro"
+de las primeras versiones).
 
 - **`Ctrl+K Ctrl+T`**: selector de temas con **preview en vivo** —
   navegá la lista con `↑`/`↓` y el editor se recolorea al instante;
-  `Enter` confirma, `Esc` vuelve al tema anterior.
+  `Enter` confirma, `Esc` vuelve al tema anterior. `Tab` cicla el filtro
+  `Todos` → `Oscuro` → `Claro` → `Alto contraste` → `Todos`.
+- **"Alto contraste"**: negro puro + colores primarios saturados, sin
+  tonos intermedios en ningún lado — pensado para quien necesita la
+  máxima diferencia perceptible entre elementos (al estilo de los temas
+  "High Contrast" de VS Code/Windows), no para verse "lindo".
 - **`Ctrl+K Ctrl+P`** (o `Ctrl+K P`): editor visual de tema — ajustá
   cualquiera de los ~29 colores del tema activo por código hex, eligiendo
   de una paleta predefinida, o afinando tono/saturación/luminosidad

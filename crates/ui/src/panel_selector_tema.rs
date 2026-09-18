@@ -20,7 +20,8 @@ pub fn dibujar(frame: &mut Frame, area_total: Rect, selector: &EstadoSelectorTem
         .iter()
         .map(|tema| {
             let marca = if tema.id == selector.tema_original() { "* " } else { "  " };
-            (format!("{marca}{} ({})", tema.nombre, etiqueta_tipo(tema.tipo)), Vec::new())
+            let contraste = if tema.alto_contraste { ", alto contraste" } else { "" };
+            (format!("{marca}{} ({}{contraste})", tema.nombre, etiqueta_tipo(tema.tipo)), Vec::new())
         })
         .collect();
 

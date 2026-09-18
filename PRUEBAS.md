@@ -1,10 +1,13 @@
 # Plan de pruebas manuales — tcode
 
 Checklist para probar `tcode` de punta a punta antes de liberar una nueva
-versión. Cubre todo lo implementado hasta la fecha: M0, M1, M2 y M3
-completos, y M4 en progreso (ver [PLAN.md](./PLAN.md) §11 para el detalle
-de cada milestone). Las secciones de M4 se van agregando pieza por pieza,
-a medida que cada una se mergea a `develop`.
+versión. Cubre todo lo implementado hasta la fecha: M0-M4 completos y
+liberados, más piezas post-M4 (Guardar como, LSP robusto, ajuste de
+línea, manual de uso, fixes de Windows, salto rápido del explorador,
+scroll horizontal en CSV, modo VIM opcional, tema de alto contraste —
+ver [PLAN.md](./PLAN.md) §11 para el detalle de cada milestone). Cada
+sección se va agregando/actualizando pieza por pieza, a medida que se
+mergea a `develop` — no es un documento que se escribe una sola vez.
 
 No hace falta correrlo entero en cada versión — como mínimo, correr la
 sección de la pieza que cambió más el bug conocido de Windows. Antes de
@@ -34,7 +37,7 @@ abajo, es donde más problemas aparecieron).
 - [ ] `Ctrl+Z`/`Ctrl+Y` (deshacer/rehacer) varias veces seguidas, en ambas direcciones.
 - [ ] `Ctrl+S` guarda; volver a abrir el archivo y confirmar que el contenido persistió.
 - [ ] Escribir caracteres UTF-8 (acentos, ñ, emoji) y guardar — no se corrompen.
-- [ ] Barra de estado inferior: `Ln`/`Col` correctos, cuenta total de líneas, marca `●` cuando hay cambios sin guardar.
+- [ ] Barra de estado inferior: `Ln`/`Col` correctos, cuenta total de líneas, marca `*` cuando hay cambios sin guardar.
 
 ## M1 — Configuración, temas, atajos, sintaxis, explorador
 
@@ -46,6 +49,22 @@ abajo, es donde más problemas aparecieron).
 - [ ] `Ctrl+B`: abre/cierra el explorador de archivos lateral.
 - [ ] Con el explorador enfocado: `↑`/`↓` mueve la selección, `Enter` sobre una carpeta la expande/colapsa, `Enter` sobre un archivo lo abre en el editor y devuelve el foco a este último.
 - [ ] `Esc` con el explorador visible: devuelve el foco al editor sin cerrar el explorador.
+
+### Salto rápido en el explorador (`Ctrl+K J`)
+
+No se puede detectar de forma confiable sostener Alt/Cmd solos en
+ninguna terminal (ninguna combinación de solo modificadores llega a la
+aplicación — ni siquiera `Windows+Alt` o `Option+Command`, ver la
+discusión en el PR): por eso el trigger es un atajo normal, al estilo
+Vimium/`vim-easymotion`, no una tecla sostenida.
+
+- [ ] Con el explorador visible y varios archivos/carpetas listados, `Ctrl+K J`: aparece una etiqueta de una tecla (`1`, `2`, `3`... y después `a`, `b`, `c`...) junto a cada fila, con fondo resaltado.
+- [ ] Tipear la etiqueta de un archivo: lo abre directamente en el editor y devuelve el foco a este — sin haber navegado ahí con las flechas.
+- [ ] Tipear la etiqueta de una carpeta: la expande/colapsa (igual que `Enter`) y sale del modo salto, sin abrir nada.
+- [ ] Tipear una tecla que no le toca a ninguna fila visible (p. ej. `z` con solo 3 archivos): no pasa nada, las etiquetas se quedan mostradas esperando una válida.
+- [ ] `Esc` en modo salto: cierra el modo sin saltar a ningún lado, las filas vuelven a verse normales.
+- [ ] Invocar "Ver: Saltar a un archivo" desde la paleta de comandos (`F1`) con el explorador **oculto**: lo muestra, le da el foco y activa el modo salto directamente — no hace falta abrirlo a mano primero.
+- [ ] Con más archivos visibles que letras del alfabeto (36 — dígitos + minúsculas, poco común pero posible con una terminal muy alta): las filas de más allá de la 36 quedan sin etiqueta, pero se pueden seguir navegando con las flechas como siempre.
 
 ## M2 — Paleta de comandos, buscador de archivos, splits, LSP
 
@@ -98,6 +117,21 @@ abajo, es donde más problemas aparecieron).
 - [ ] Guardar (`Ctrl+S`) tras editar una celda y volver a abrir el archivo (o revisarlo con otro editor/`cat`): el resto de las filas quedó intacto, byte a byte.
 - [ ] `Ctrl+K T`: alterna a texto plano (para arreglar algo a mano) y de vuelta a tabla.
 
+### Scroll horizontal con muchas columnas
+
+Antes, un CSV con más columnas de las que entraban en el ancho de la
+terminal hacía que `ratatui` encogiera TODAS las columnas
+proporcionalmente hasta dejarlas de 1-2 caracteres, ilegibles (detectado
+en capturas de Windows durante el diagnóstico del bug de renderizado,
+`imagesWindows/image-4.png` en su momento). Ahora se muestra una ventana
+de columnas completas que sí entran, siguiendo a la selección.
+
+- [ ] Abrir un CSV/TSV con más columnas de las que entran en el ancho de la terminal (o angostar la ventana hasta lograrlo): se ven columnas completas y legibles desde la primera, no todas comprimidas a 1-2 caracteres.
+- [ ] Mover la selección con `→` más allá de la última columna visible: la ventana se desplaza para mostrarla, sin saltos ni columnas a medias.
+- [ ] Volver con `←` hasta la primera columna: la ventana vuelve a mostrar la columna 0 (no se queda scrolleada a la mitad).
+- [ ] El encabezado (fila congelada) se desplaza junto con el cuerpo — nunca queda desalineado con las columnas que se ven abajo.
+- [ ] Editar una celda de una columna fuera de la ventana original: el cursor de edición aparece en la posición correcta de pantalla tras el scroll (no en la posición "vieja" antes de desplazarse).
+
 ## M3 — Multi-cursor (`Ctrl+D` / `Ctrl+Shift+L` / `Ctrl+Alt+↑↓`)
 
 - [ ] Poner el cursor sobre una palabra y `Ctrl+D`: selecciona esa palabra (sin agregar un cursor nuevo todavía).
@@ -112,22 +146,34 @@ abajo, es donde más problemas aparecieron).
 
 ## M4 — Selector de temas con preview en vivo (`Ctrl+K Ctrl+T`)
 
-- [ ] `Ctrl+K Ctrl+T` (o "Tema: Seleccionar" desde la paleta de comandos, `Ctrl+Shift+P`/`F1`): abre el selector con los 12 temas embebidos, marcando con `●` el que está activo en ese momento.
+- [ ] `Ctrl+K Ctrl+T` (o "Tema: Seleccionar" desde la paleta de comandos, `Ctrl+Shift+P`/`F1`): abre el selector con los 13 temas embebidos, marcando con `*` (ASCII) el que está activo en ese momento.
 - [ ] `↑`/`↓`: el editor de fondo cambia de tema en vivo con cada movimiento, sin tocar `config.toml` todavía (revisar el archivo mientras el selector sigue abierto: no debería haber cambiado).
-- [ ] `Tab`: cicla el filtro `Todos` → `Oscuro` → `Claro` → `Todos`; la lista se recorta a los temas de ese tipo (los `light` son solo Solarized Light, GitHub Light y Claro).
+- [ ] `Tab`: cicla el filtro `Todos` → `Oscuro` → `Claro` → `Alto contraste` → `Todos`; la lista se recorta a los temas de ese tipo (los `light` son solo Solarized Light, GitHub Light y Claro; "Alto contraste" es un único tema, `alto-contraste`).
 - [ ] `Enter` sobre un tema: cierra el selector, el tema queda aplicado, y persiste en `config.toml` — reabrir `tcode` y confirmar que arranca con ese mismo tema.
 - [ ] `Esc`: cierra el selector y vuelve exactamente al tema que estaba activo antes de abrirlo (no al primero de la lista ni al último visto en el preview), sin modificar `config.toml`.
 - [ ] Revisar de pasada que los 10 temas nuevos (Monokai, One Dark, Nord, Gruvbox Dark, Tokyo Night, Catppuccin Mocha, Solarized Dark, Solarized Light, GitHub Light) se ven con colores razonables y texto legible, no solo Dracula/oscuro/claro.
 - [ ] Como esta pieza agrega una ruta modal nueva al loop de dibujado (`crates/app/src/main.rs`): re-correr al menos la prueba básica de la sección de Windows más abajo, aunque no toque directamente el explorador.
 
+### Tema "Alto contraste" (M5, tercer filtro del selector)
+
+Negro puro + colores primarios saturados (amarillo/cian/verde/magenta/
+naranja/rojo), sin tonos intermedios en ningún lado — pensado para
+máxima diferencia perceptible, no para verse "lindo" (mismo criterio que
+los temas "High Contrast" de VS Code/Windows).
+
+- [ ] Filtrar por "Alto contraste" (`Tab` x3 desde "Todos"): muestra un único tema, `Alto contraste (oscuro, alto contraste)` — la etiqueta indica ambos ejes (oscuro/claro Y alto contraste, son independientes).
+- [ ] Aplicarlo sobre un archivo con sintaxis resaltada (`.rs`/`.py`/etc.): palabras clave en amarillo negrita, strings en naranja, números y constantes en verde, funciones en cian, tipos en magenta — todo sobre fondo negro puro, sin ningún color apagado/pastel.
+- [ ] La barra de estado se ve invertida (fondo blanco, texto negro) — a propósito, para marcar un límite visual inequívoco con el resto de la pantalla.
+- [ ] Buscar algo con `Ctrl+F`: la coincidencia actual se ve en naranja bien visible, las demás en azul — ninguna se pierde contra el fondo negro.
+
 ## M4 — Panel de administración (`Ctrl+,` / `Ctrl+K A`) y números de línea
 
 - [ ] `Ctrl+,` para abrir el panel: en terminales sin protocolo Kitty puede llegar como una `,` suelta insertada en el texto en vez de abrir el panel (ambigüedad conocida, igual que otras de este proyecto) — si pasa, deshacer con `Ctrl+Z` y usar `Ctrl+K A` en su lugar.
-- [ ] `Ctrl+K A` abre el panel a pantalla completa (no se ve el editor detrás): barra lateral a la izquierda con las 5 secciones, área central a la derecha, barra de contexto abajo.
-- [ ] Barra lateral: `↑`/`↓` mueve la selección entre las 5 secciones; las que todavía no tienen contenido real (Atajos, Temas, Lenguajes/LSP, Interfaz) se marcan "(próximamente)" y su área central muestra un resumen de qué van a traer, en vez de quedar vacía.
-- [ ] `Enter` o `→` sobre "Editor" (la única sección implementada por ahora): entra al área central; sobre cualquier sección "(próximamente)" no hace nada.
-- [ ] Dentro de "Editor": 4 filas (Tamaño de tabulación, Usar espacios en vez de tabs, Ajuste de línea, Números de línea). `↑`/`↓` mueve la selección entre filas.
-- [ ] Sobre una fila booleana (Usar espacios / Ajuste de línea / Números de línea): `Enter`, `←` o `→` alternan Sí/No, y el cambio se persiste en `config.toml` al instante (revisar el archivo sin cerrar el panel).
+- [ ] `Ctrl+K A` abre el panel a pantalla completa (no se ve el editor detrás): barra lateral a la izquierda con las 5 secciones (Atajos de teclado, Temas, Lenguajes/LSP, Editor, Interfaz), área central a la derecha, barra de contexto abajo.
+- [ ] Barra lateral: `↑`/`↓` mueve la selección entre las 5 secciones — todas tienen contenido real hoy (ver las secciones dedicadas más abajo para cada una); "(próximamente)" ya no debería verse en ningún lado del panel.
+- [ ] `Enter` o `→` sobre cualquier sección: entra al área central con las filas de esa sección.
+- [ ] Dentro de "Editor": 5 filas (Tamaño de tabulación, Usar espacios en vez de tabs, Ajuste de línea, Números de línea, Modo VIM — ver la sección dedicada al modo VIM más abajo). `↑`/`↓` mueve la selección entre filas.
+- [ ] Sobre una fila booleana (Usar espacios / Ajuste de línea / Números de línea / Modo VIM): `Enter`, `←` o `→` alternan Sí/No, y el cambio se persiste en `config.toml` al instante (revisar el archivo sin cerrar el panel).
 - [ ] Sobre "Tamaño de tabulación": `←`/`→` decrementan/incrementan de 1 en 1, recortado entre 1 y 16 (no baja de 1 ni sube de 16 aunque se siga presionando).
 - [ ] `Tab` alterna entre la barra lateral y el área central; `Esc` primero vuelve del área central a la barra, y un segundo `Esc` (ya en la barra) cierra el panel entero y devuelve el foco al editor.
 - [ ] `Ctrl+F` dentro del panel (con foco en la barra o en el área central): abre la búsqueda global de opciones. Escribir una palabra sin tildes de un nombre de campo (p. ej. "tabula", "espacios", "ajuste") filtra la lista con las letras coincidentes en negrita; `Enter` salta directo a esa fila en el área central y cierra la búsqueda; `Esc` cancela sin saltar a ningún lado.
@@ -163,7 +209,7 @@ abajo, es donde más problemas aparecieron).
 
 ## M4 — Sección "Atajos" del panel de administración
 
-- [ ] Dentro del panel (`Ctrl+K A`), la sección "Atajos de teclado" ya NO dice "(próximamente)": al entrar se ven 3 filas especiales — "↺ Restablecer TODOS los atajos por defecto", "⇩ Exportar atajos a archivo", "⇧ Importar atajos desde archivo" — seguidas de una fila por cada comando de la paleta, con su combinación actual a la derecha (o varias separadas por coma, como "Panel de administración: Abrir" que tiene `Ctrl+,` y `Ctrl+K A`).
+- [ ] Dentro del panel (`Ctrl+K A`), la sección "Atajos de teclado" ya NO dice "(próximamente)": al entrar se ven 3 filas especiales — "Restablecer TODOS los atajos por defecto", "Exportar atajos a archivo", "Importar atajos desde archivo" (sin íconos decorativos, a propósito — ver el bug de Windows más abajo) — seguidas de una fila por cada comando de la paleta, con su combinación actual a la derecha (o varias separadas por coma, como "Panel de administración: Abrir" que tiene `Ctrl+,` y `Ctrl+K A`).
 - [ ] `Enter` sobre un comando: la fila muestra "‹ presioná la nueva combinación… ›" y la barra inferior cambia a "Presioná la nueva combinación · Esc cancela". Presionar cualquier tecla/combinación (probar una simple como `Ctrl+Alt+U`) la asigna de inmediato: la fila se actualiza, aparece el mensaje "Nuevo atajo: …", y **sin reiniciar el editor**, la tecla vieja deja de funcionar y la nueva sí.
 - [ ] Repetir lo anterior pero presionando `Esc` en vez de una combinación: cancela sin cambiar nada (ni el mensaje ni el atajo).
 - [ ] Intentar asignarle a un comando una combinación que ya usa OTRO comando distinto (p. ej. `Ctrl+S`, que ya es "Archivo: Guardar"): no se aplica el cambio, aparece "Ya usado por: Archivo: Guardar — no se cambió nada", y el atajo original de "Archivo: Guardar" sigue intacto.
@@ -177,8 +223,8 @@ abajo, es donde más problemas aparecieron).
 
 ### Exportar/importar keymap desde archivo
 
-- [ ] `Enter` sobre "⇩ Exportar atajos a archivo": crea `keymap-exportado.toml` en el mismo directorio que `keymap.toml` (o el portable en Windows) con el keymap completo activo, y muestra "Exportado a …" con la ruta exacta.
-- [ ] `Enter` sobre "⇧ Importar atajos desde archivo" SIN haber dejado ningún archivo antes: muestra "No hay nada para importar — dejá el archivo en …", sin romper nada.
+- [ ] `Enter` sobre "Exportar atajos a archivo": crea `keymap-exportado.toml` en el mismo directorio que `keymap.toml` (o el portable en Windows) con el keymap completo activo, y muestra "Exportado a …" con la ruta exacta.
+- [ ] `Enter` sobre "Importar atajos desde archivo" SIN haber dejado ningún archivo antes: muestra "No hay nada para importar — dejá el archivo en …", sin romper nada.
 - [ ] Copiar el `keymap-exportado.toml` a `keymap-importar.toml` (mismo directorio), editar a mano un atajo dentro (por ejemplo, cambiar `"Ctrl+S" = "archivo.guardar"` a otra combinación), y volver a `Enter` sobre "Importar": muestra "Importado desde …" y **el cambio se aplica en caliente sin reiniciar** — probar que la combinación vieja deja de funcionar y la nueva del archivo importado sí.
 - [ ] El keymap importado también queda persistido como el `keymap.toml` activo: cerrar y volver a abrir `tcode` mantiene los atajos importados.
 - [ ] Un `keymap-importar.toml` con TOML inválido (por ejemplo, una línea rota a mano): el mensaje muestra el error de parseo en vez de romper el editor o dejarlo con un keymap a medio aplicar.
@@ -290,6 +336,33 @@ abajo, es donde más problemas aparecieron).
 - [ ] `tcode --version` (o `-v`): imprime `tcode vX.Y.Z` con el tag real de la release instalada (no `-dev`) y termina sin abrir el editor — sirve para confirmar que `install/linux.sh`/`install/windows.ps1` dejaron el binario esperado. Con un binario compilado localmente (`cargo build`, sin pasar por el workflow de release), muestra en cambio `vX.Y.Z-dev` — confirma que no es "una release real" por accidente.
 - [ ] Los binarios de Linux (`tcode-linux-x86_64.tar.gz` y `tcode-linux-arm64.tar.gz`) son ahora estáticos (target musl, no gnu) — `file tcode` en Linux debe decir "statically linked" (o no listar ningún intérprete/`.so` dinámico de libc); `ldd tcode` responde "not a dynamic executable". Correrlo en cualquier distro Linux, sin importar qué tan vieja sea su glibc (o directamente sin glibc, como Alpine), no debe dar ningún error `version 'GLIBC_2.XX' not found` — es justamente el problema que este cambio elimina de raíz (dos intentos previos fijando una versión de Ubuntu más vieja en el runner de CI no alcanzaron: siempre hay una VPS con una glibc todavía más vieja que la elegida).
 
+## Modo VIM opcional (`config.editor.modo_vim`)
+
+Apagado por defecto — no cambia el comportamiento de nadie que no lo
+prenda a propósito (panel de administración, sección "Editor", o a mano
+en `config.toml`). Alcance deliberadamente acotado para esta primera
+entrega (decisión explícita del usuario, ver PR): sin operadores
+combinables con movimientos (`dw`, `d$`), sin conteos numéricos (`3dd`),
+sin `:`. El resto de atajos de tcode (flechas, `Ctrl+S`, `Ctrl+B`, splits,
+etc.) siguen funcionando igual estando en cualquiera de los dos modos —
+el modo VIM solo cambia qué significa un carácter suelto sin modificador.
+
+- [ ] Con el modo apagado (por defecto): abrir cualquier archivo, escribir texto normal con `hjkl` incluidos — se insertan como letras comunes, nada cambió.
+- [ ] Prender "Modo VIM" en el panel de administración (sección Editor): la barra de estado del panel activo pasa a `NORMAL` de inmediato, sin tener que reabrir el archivo.
+- [ ] En modo Normal: `h`/`j`/`k`/`l` mueven el cursor como las flechas; `0`/`$` van al inicio/fin de línea; `gg`/`G` van al inicio/fin del archivo.
+- [ ] `i` entra a Insertar en la posición actual; `a` entra a Insertar una posición a la derecha (al final de una línea, escribe justo después del último carácter); `o` abre una línea nueva debajo y entra a Insertar ahí.
+- [ ] Escribir texto en Insertar funciona exactamente igual que siempre; `Esc` vuelve a Normal (no a "explorador.enfocar_editor" como con el modo apagado).
+- [ ] `x` borra el carácter bajo el cursor; en el ÚLTIMO carácter de una línea no vacía sigue borrando ESE carácter (no fusiona con la línea siguiente) — el cursor en modo Normal nunca queda "después" del último carácter, a diferencia de Insertar.
+- [ ] `dd` borra la línea completa bajo el cursor (con su salto de línea); `yy` la copia sin borrar nada; `p` la pega como una línea nueva justo debajo de la actual. Yanquear/borrar en un archivo y pegar en otro panel funciona (el registro es uno solo para toda la app).
+- [ ] `u` deshace el último cambio (comparte historial con `Ctrl+Z`, no es un mecanismo aparte).
+- [ ] Un comando de dos teclas a medias (`d`, `y` o `g` sueltos) seguido de una tecla que no coincide: no hace nada raro, simplemente cancela y esa segunda tecla no dispara ningún movimiento.
+- [ ] Apagar "Modo VIM" desde el panel de administración: `i`/`Esc` siguen funcionando en el panel que ya estaba en Normal (queda ahí hasta salir de Insertar), pero un archivo nuevo que se abra después ya no entra en modo VIM.
+
+### Limitaciones conocidas de este alcance inicial
+
+- Un panel nuevo por `Ctrl+\` (split) siempre arranca en Insertar aunque el modo VIM esté prendido — reabrir el archivo en ese panel (o el buscador de archivos/explorador) sí respeta la config.
+- Sin operadores combinables (`dw`, `d$`, `ciw`, etc.), sin conteos numéricos (`3dd`, `5j`), sin modo Visual, sin `:` (comandos de línea de comandos de VIM) — quedan para una próxima pieza si hace falta.
+
 ## ⚠️ Bug conocido en Windows — 5º intento (CRLF sin normalizar)
 
 Ver detalle técnico completo (diagnóstico, intentos de fix ya probados y
@@ -329,17 +402,10 @@ muestra el fin de línea real (`LF`/`CRLF`) en vez de un `"LF"` fijo.
 - [ ] Repetir la prueba del 4º intento (explorador `Ctrl+B`, panel de administración, paleta de comandos, editor de tema) para confirmar que los bordes ASCII se mantienen bien sin este cambio haber tocado nada ahí.
 - [ ] Si el problema reaparece pese a esto: guardar el archivo exacto que falla (no solo una captura) para poder reproducirlo aquí directamente — hasta ahora el diagnóstico se hizo por captura de pantalla, sin poder correr el archivo real.
 
-### Pendiente aparte (no bloquea lo anterior): tabla CSV con muchas columnas
-
-Una de las capturas de este intento (`imagesWindows/image-4.png`) mostró
-la vista CSV (`Ctrl+K T`) con columnas comprimidas a 1-2 caracteres cada
-una en un archivo con muchas columnas — probablemente porque
-`vista_csv::anchos_por_columna` usa `Constraint::Length` fijo por
-columna sin considerar que la suma puede superar el ancho de la
-terminal (`ratatui` los encoge proporcionalmente al no entrar, sin
-scroll horizontal). No parece relacionado al bug de CRLF de arriba;
-queda como una limitación aparte para una próxima pieza (scroll
-horizontal en la tabla, o priorizar columnas visibles).
+Nota: una de las capturas de este bug mostró de paso otro problema no
+relacionado (tabla CSV con muchas columnas comprimida a 1-2 caracteres
+por falta de scroll horizontal) — ya arreglado, ver la sección "Scroll
+horizontal con muchas columnas" en M3 — Vista CSV/TSV más arriba.
 
 ---
 
