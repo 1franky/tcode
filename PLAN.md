@@ -571,6 +571,10 @@ deleted          = "#f38ba8"
 
 ## 11. Milestones y roadmap
 
+> Este plan es el diseño original; para el estado real y priorizado de
+> qué falta hoy (incluidos gaps encontrados después de escribir este
+> documento, no solo lo listado acá) ver [BACKLOG.md](./BACKLOG.md).
+
 ### M0 — Fundamentos (semanas 1–3)
 
 - Setup workspace Cargo.

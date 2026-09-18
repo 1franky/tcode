@@ -10,16 +10,20 @@ macOS). Ver [MANUAL.md](./MANUAL.md) para la guía de uso, o
 
 ## Estado
 
-M0 a M4 completos (última release: v0.4.2): fundamentos, temas/atajos/
-sintaxis/explorador, paleta de comandos/buscador difuso/splits/cliente
-LSP, búsqueda-reemplazo/vista Markdown/vista CSV/multi-cursor, y panel de
-administración completo — 10+ temas con selector y editor visual,
+M0 a M4 completos y liberados, más varias piezas post-M4 (última
+release: v0.6.0): fundamentos, temas/atajos/sintaxis/explorador, paleta
+de comandos/buscador difuso/splits/cliente LSP, búsqueda-reemplazo/vista
+Markdown/vista CSV/multi-cursor, panel de administración completo — 13+
+temas (incluido uno de alto contraste) con selector y editor visual,
 editor de atajos con detección de conflictos, LSP configurable desde la
-UI, y los **13 lenguajes objetivo** con resaltado de sintaxis (Rust,
-Python, JavaScript/TypeScript, Go, Java, Kotlin, C/C++, C#, Ruby, PHP,
-HTML/CSS, Markdown, SQL). Ver [PLAN.md](./PLAN.md) §11 para el roadmap
-completo, y [PRUEBAS.md](./PRUEBAS.md) para el checklist de pruebas
-manuales antes de cada release.
+UI con logs de la sesión activa, y los **13 lenguajes objetivo** con
+resaltado de sintaxis (Rust, Python, JavaScript/TypeScript, Go, Java,
+Kotlin, C/C++, C#, Ruby, PHP, HTML/CSS, Markdown, SQL). Además: "Guardar
+como", scroll horizontal en CSV, salto rápido en el explorador (`Ctrl+K
+J`) y un modo VIM opcional. Ver [PLAN.md](./PLAN.md) §11 para el roadmap
+original, [PRUEBAS.md](./PRUEBAS.md) para el checklist de pruebas
+manuales antes de cada release, y [BACKLOG.md](./BACKLOG.md) para lo que
+falta, priorizado.
 
 ## Instalación
 
