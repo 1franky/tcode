@@ -25,6 +25,13 @@ pub struct ConfigEditor {
     pub usar_espacios: bool,
     pub ajuste_linea: bool,
     pub numeros_de_linea: bool,
+    /// Modo VIM (M5, alcance "lo esencial" — sin operadores combinables
+    /// como `dw`, sin conteos numéricos, sin `:`): modos Normal/Insertar
+    /// con `Esc`/`i`/`a`/`o`, movimientos `hjkl`/`0`/`$`/`gg`/`G`, y
+    /// `x`/`dd`/`yy`/`p`/`u`. Apagado por defecto — no cambia el
+    /// comportamiento de nadie que no lo prenda a propósito, ni acá ni en
+    /// la sección "Editor" del panel de administración.
+    pub modo_vim: bool,
 }
 
 impl Default for ConfigEditor {
@@ -34,6 +41,7 @@ impl Default for ConfigEditor {
             usar_espacios: true,
             ajuste_linea: false,
             numeros_de_linea: true,
+            modo_vim: false,
         }
     }
 }
@@ -210,6 +218,7 @@ mod tests {
                 usar_espacios: false,
                 ajuste_linea: true,
                 numeros_de_linea: false,
+                modo_vim: true,
             },
             interfaz: ConfigInterfaz {
                 tema: "claro".into(),

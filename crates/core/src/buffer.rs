@@ -175,6 +175,37 @@ impl Buffer {
         self.rope.line_to_byte(linea)
     }
 
+    /// Texto de la línea `linea` INCLUYENDO su propio salto de línea si
+    /// lo tiene (a diferencia de `lineas_texto`, que lo recorta) —
+    /// vacío si `linea` no existe. Junto con `inicio_byte_linea`, es lo
+    /// que necesita el modo VIM (M5, `crates/app/src/vim.rs`) para que
+    /// `dd`/`yy` operen sobre la línea completa de una: el rango a
+    /// borrar/copiar es `[inicio_byte_linea(linea), inicio +
+    /// texto.len())`, sin tener que exponer el `Rope` interno fuera de
+    /// este crate para calcularlo.
+    pub fn linea_con_salto(&self, linea: usize) -> String {
+        if linea >= self.rope.len_lines() {
+            return String::new();
+        }
+        self.rope.line(linea).to_string()
+    }
+
+    /// Longitud en bytes (UTF-8) de todo el contenido — el mismo tipo de
+    /// offset que usa el resto de esta API, para poder pegar (`p` del
+    /// modo VIM) después de la última línea sin tener que exponer el
+    /// `Rope` interno fuera de este crate.
+    pub fn len_bytes(&self) -> usize {
+        self.rope.len_bytes()
+    }
+
+    /// Si el contenido termina con un salto de línea — hace falta para
+    /// pegar (`p` del modo VIM) después de la última línea sin fusionarla
+    /// con el texto pegado si no lo tenía.
+    pub fn termina_en_salto_de_linea(&self) -> bool {
+        let len = self.rope.len_chars();
+        len > 0 && self.rope.char(len - 1) == '\n'
+    }
+
     /// Longitud (en caracteres) de una línea sin contar el salto de línea.
     /// Es el límite de columna válido para el cursor en esa línea.
     pub fn longitud_visible_linea(&self, linea: usize) -> usize {
@@ -328,6 +359,31 @@ mod tests {
 
         std::fs::remove_file(origen).ok();
         std::fs::remove_file(destino).ok();
+    }
+
+    #[test]
+    fn linea_con_salto_incluye_el_salto_salvo_en_la_ultima_linea_sin_uno() {
+        let mut buffer = Buffer::nuevo();
+        buffer.insertar_str(0, 0, "uno\ndos\ntres");
+        assert_eq!(buffer.linea_con_salto(0), "uno\n");
+        assert_eq!(buffer.linea_con_salto(1), "dos\n");
+        assert_eq!(buffer.linea_con_salto(2), "tres"); // última línea, sin salto final
+        assert_eq!(buffer.linea_con_salto(99), ""); // fuera de rango
+    }
+
+    #[test]
+    fn len_bytes_y_termina_en_salto_de_linea() {
+        let mut sin_salto = Buffer::nuevo();
+        sin_salto.insertar_str(0, 0, "abc");
+        assert_eq!(sin_salto.len_bytes(), 3);
+        assert!(!sin_salto.termina_en_salto_de_linea());
+
+        let mut con_salto = Buffer::nuevo();
+        con_salto.insertar_str(0, 0, "abc\n");
+        assert_eq!(con_salto.len_bytes(), 4);
+        assert!(con_salto.termina_en_salto_de_linea());
+
+        assert!(!Buffer::nuevo().termina_en_salto_de_linea()); // buffer vacío
     }
 
     #[test]

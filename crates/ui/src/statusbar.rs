@@ -66,6 +66,7 @@ pub fn dibujar(
         partes.push(
             match editor.modo() {
                 Modo::Insertar => "INSERTAR",
+                Modo::Normal => "NORMAL",
             }
             .to_string(),
         );

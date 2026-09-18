@@ -8,13 +8,21 @@ use crate::busqueda::{buscar_coincidencias, OpcionesBusqueda};
 use crate::cursor::{Cursor, CursorMultiple};
 use crate::history::Historia;
 
-/// Modo de edición actual. `tcode` es no-modal por defecto (PLAN.md §4): en
-/// M0 solo existe `Insertar`. `Comando` se activa con la paleta de comandos
-/// (M2); la selección/multi-cursor (M3) no necesitó un modo propio — es
-/// simplemente más de un [`CursorMultiple`] en `Editor::cursores`.
+/// Modo de edición actual. `tcode` es no-modal por defecto (PLAN.md §4):
+/// hasta M4 solo existía `Insertar` — la paleta de comandos (M2) y la
+/// selección/multi-cursor (M3) no necesitaron un modo propio acá (la
+/// paleta es un overlay aparte, `tcode_commands::EstadoPaleta`; el
+/// multi-cursor es simplemente más de un [`CursorMultiple`] en
+/// `Editor::cursores`). `Normal` llega en M5 con el modo VIM opcional
+/// (`config.editor.modo_vim`, ver `tcode_core::vim`): `Editor` no sabe
+/// nada de esa config, solo expone `entrar_modo_normal`/
+/// `entrar_modo_insertar` para que quien sí la conoce (`app`) decida
+/// cuándo alcanzar este modo — si el modo VIM está apagado, `Normal`
+/// simplemente nunca se alcanza.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modo {
     Insertar,
+    Normal,
 }
 
 /// Estado de edición de un archivo: buffer + cursor(es) + historial de
@@ -79,6 +87,47 @@ impl Editor {
 
     pub fn modo(&self) -> Modo {
         self.modo
+    }
+
+    /// `i`/`a`/`o` en modo Normal, o volver de "Guardar como"/etc. sin
+    /// haber cancelado la edición — entra a `Modo::Insertar`.
+    pub fn entrar_modo_insertar(&mut self) {
+        self.modo = Modo::Insertar;
+    }
+
+    /// `Esc` en modo Insertar (VIM, `config.editor.modo_vim`) — entra a
+    /// `Modo::Normal`. No hace nada por sí sola si el modo VIM está
+    /// apagado: `app` es quien decide si llamarla o no según esa config.
+    ///
+    /// También recorta el cursor si hacía falta (ver
+    /// `recortar_cursor_para_normal`) — `crates/app/src/vim.rs` la llama
+    /// de nuevo (siendo un no-op sobre `modo`, ya se está en `Normal`)
+    /// después de cada movimiento en modo Normal, precisamente para
+    /// reaplicar ese recorte en cada tecla, no solo al cambiar de modo.
+    pub fn entrar_modo_normal(&mut self) {
+        self.modo = Modo::Normal;
+        self.recortar_cursor_para_normal();
+    }
+
+    /// VIM real nunca deja el cursor "después" del último carácter de una
+    /// línea no vacía en modo Normal (a diferencia de Insertar, donde esa
+    /// posición es la normal para escribir al final de la línea). Los
+    /// movimientos que reutiliza el modo Normal (`mover_izquierda`,
+    /// `fin_linea`, etc. — los mismos que usa el resto del editor, que sí
+    /// permiten esa posición) no conocen esta regla, así que hay que
+    /// recortar la columna después del hecho en vez de cambiarles el
+    /// comportamiento compartido.
+    fn recortar_cursor_para_normal(&mut self) {
+        let cursor = self.cursor();
+        let longitud = self.buffer.longitud_visible_linea(cursor.linea);
+        if longitud == 0 {
+            return;
+        }
+        let maximo = longitud - 1;
+        if cursor.columna > maximo {
+            let offset = self.buffer.offset_byte(cursor.linea, maximo);
+            self.mover_cursor_a_byte(offset);
+        }
     }
 
     pub fn guardar(&mut self) -> Result<()> {
@@ -698,5 +747,45 @@ mod tests {
         editor.borrar_atras();
         editor.borrar_atras();
         assert_eq!(editor.buffer().a_texto(), "aa bb cc");
+    }
+
+    #[test]
+    fn entrar_modo_normal_recorta_el_cursor_al_ultimo_caracter_si_hacia_falta() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "hola");
+        // Al escribir, el cursor queda al final ("después" de la 'a',
+        // columna 4) — la posición normal en Insertar.
+        assert_eq!(editor.cursor().columna, 4);
+
+        editor.entrar_modo_normal();
+        assert_eq!(editor.modo(), Modo::Normal);
+        // VIM real nunca deja el cursor ahí en modo Normal: se recorta al
+        // último carácter real (columna 3, la 'a').
+        assert_eq!(editor.cursor().columna, 3);
+    }
+
+    #[test]
+    fn entrar_modo_normal_no_recorta_si_el_cursor_ya_esta_dentro_de_rango() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "hola");
+        editor.inicio_linea();
+        editor.entrar_modo_normal();
+        assert_eq!(editor.cursor().columna, 0);
+    }
+
+    #[test]
+    fn entrar_modo_normal_en_una_linea_vacia_deja_la_columna_en_cero() {
+        let editor = &mut Editor::nuevo();
+        editor.entrar_modo_normal();
+        assert_eq!(editor.cursor().columna, 0);
+    }
+
+    #[test]
+    fn entrar_modo_insertar_vuelve_a_insertar() {
+        let mut editor = Editor::nuevo();
+        editor.entrar_modo_normal();
+        assert_eq!(editor.modo(), Modo::Normal);
+        editor.entrar_modo_insertar();
+        assert_eq!(editor.modo(), Modo::Insertar);
     }
 }

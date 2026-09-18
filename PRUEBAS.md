@@ -321,6 +321,33 @@ de columnas completas que sí entran, siguiendo a la selección.
 - [ ] `tcode --version` (o `-v`): imprime `tcode vX.Y.Z` con el tag real de la release instalada (no `-dev`) y termina sin abrir el editor — sirve para confirmar que `install/linux.sh`/`install/windows.ps1` dejaron el binario esperado. Con un binario compilado localmente (`cargo build`, sin pasar por el workflow de release), muestra en cambio `vX.Y.Z-dev` — confirma que no es "una release real" por accidente.
 - [ ] Los binarios de Linux (`tcode-linux-x86_64.tar.gz` y `tcode-linux-arm64.tar.gz`) son ahora estáticos (target musl, no gnu) — `file tcode` en Linux debe decir "statically linked" (o no listar ningún intérprete/`.so` dinámico de libc); `ldd tcode` responde "not a dynamic executable". Correrlo en cualquier distro Linux, sin importar qué tan vieja sea su glibc (o directamente sin glibc, como Alpine), no debe dar ningún error `version 'GLIBC_2.XX' not found` — es justamente el problema que este cambio elimina de raíz (dos intentos previos fijando una versión de Ubuntu más vieja en el runner de CI no alcanzaron: siempre hay una VPS con una glibc todavía más vieja que la elegida).
 
+## Modo VIM opcional (`config.editor.modo_vim`)
+
+Apagado por defecto — no cambia el comportamiento de nadie que no lo
+prenda a propósito (panel de administración, sección "Editor", o a mano
+en `config.toml`). Alcance deliberadamente acotado para esta primera
+entrega (decisión explícita del usuario, ver PR): sin operadores
+combinables con movimientos (`dw`, `d$`), sin conteos numéricos (`3dd`),
+sin `:`. El resto de atajos de tcode (flechas, `Ctrl+S`, `Ctrl+B`, splits,
+etc.) siguen funcionando igual estando en cualquiera de los dos modos —
+el modo VIM solo cambia qué significa un carácter suelto sin modificador.
+
+- [ ] Con el modo apagado (por defecto): abrir cualquier archivo, escribir texto normal con `hjkl` incluidos — se insertan como letras comunes, nada cambió.
+- [ ] Prender "Modo VIM" en el panel de administración (sección Editor): la barra de estado del panel activo pasa a `NORMAL` de inmediato, sin tener que reabrir el archivo.
+- [ ] En modo Normal: `h`/`j`/`k`/`l` mueven el cursor como las flechas; `0`/`$` van al inicio/fin de línea; `gg`/`G` van al inicio/fin del archivo.
+- [ ] `i` entra a Insertar en la posición actual; `a` entra a Insertar una posición a la derecha (al final de una línea, escribe justo después del último carácter); `o` abre una línea nueva debajo y entra a Insertar ahí.
+- [ ] Escribir texto en Insertar funciona exactamente igual que siempre; `Esc` vuelve a Normal (no a "explorador.enfocar_editor" como con el modo apagado).
+- [ ] `x` borra el carácter bajo el cursor; en el ÚLTIMO carácter de una línea no vacía sigue borrando ESE carácter (no fusiona con la línea siguiente) — el cursor en modo Normal nunca queda "después" del último carácter, a diferencia de Insertar.
+- [ ] `dd` borra la línea completa bajo el cursor (con su salto de línea); `yy` la copia sin borrar nada; `p` la pega como una línea nueva justo debajo de la actual. Yanquear/borrar en un archivo y pegar en otro panel funciona (el registro es uno solo para toda la app).
+- [ ] `u` deshace el último cambio (comparte historial con `Ctrl+Z`, no es un mecanismo aparte).
+- [ ] Un comando de dos teclas a medias (`d`, `y` o `g` sueltos) seguido de una tecla que no coincide: no hace nada raro, simplemente cancela y esa segunda tecla no dispara ningún movimiento.
+- [ ] Apagar "Modo VIM" desde el panel de administración: `i`/`Esc` siguen funcionando en el panel que ya estaba en Normal (queda ahí hasta salir de Insertar), pero un archivo nuevo que se abra después ya no entra en modo VIM.
+
+### Limitaciones conocidas de este alcance inicial
+
+- Un panel nuevo por `Ctrl+\` (split) siempre arranca en Insertar aunque el modo VIM esté prendido — reabrir el archivo en ese panel (o el buscador de archivos/explorador) sí respeta la config.
+- Sin operadores combinables (`dw`, `d$`, `ciw`, etc.), sin conteos numéricos (`3dd`, `5j`), sin modo Visual, sin `:` (comandos de línea de comandos de VIM) — quedan para una próxima pieza si hace falta.
+
 ## ⚠️ Bug conocido en Windows — 5º intento (CRLF sin normalizar)
 
 Ver detalle técnico completo (diagnóstico, intentos de fix ya probados y
