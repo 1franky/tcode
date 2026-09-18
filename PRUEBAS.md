@@ -39,6 +39,22 @@ abajo, es donde más problemas aparecieron).
 - [ ] Escribir caracteres UTF-8 (acentos, ñ, emoji) y guardar — no se corrompen.
 - [ ] Barra de estado inferior: `Ln`/`Col` correctos, cuenta total de líneas, marca `*` cuando hay cambios sin guardar.
 
+### Selección de texto con `Shift`+flechas
+
+Mecanismo de selección básico que faltaba por completo (`BACKLOG.md`
+P0): hasta esta pieza la única forma de seleccionar texto era
+multi-cursor (`Ctrl+D`/`Ctrl+Shift+L`). `Shift+Ctrl+Home`/`Shift+Ctrl+End`
+(selección hasta inicio/fin de archivo) quedan fuera de esta entrega a
+propósito.
+
+- [ ] `Shift+Right`/`Shift+Left` repetido: extiende la selección un carácter a la vez, sin importar cuántas veces se presione — el fondo de selección (color `ui.selection` del tema activo) cubre el rango correcto.
+- [ ] `Shift+Down`/`Shift+Up`: extiende la selección por línea completa, respetando dónde arrancó (el "ancla" no se mueve nunca, solo el extremo activo).
+- [ ] `Shift+End` y `Shift+Home` desde el medio de una línea: seleccionan hasta el fin/inicio de esa línea respectivamente.
+- [ ] Mover el cursor SIN `Shift` (una flecha sola) inmediatamente después de una selección con `Shift`: la colapsa por completo, igual que en cualquier editor — no debe quedar ningún resto de selección.
+- [ ] Escribir un carácter (o `Backspace`) con una selección hecha con `Shift` activa: reemplaza/borra todo el rango seleccionado, mismo comportamiento que ya existía para selecciones de multi-cursor.
+- [ ] Con más de un cursor activo (`Ctrl+D` dos veces para tener 2): `Shift+Right` extiende la selección de AMBOS cursores a la vez, cada uno de forma independiente desde su propia posición.
+- [ ] Repetir la prueba visual con el tema "oscuro" (no Dracula — ahí `selection` y `current_line` comparten color, puede parecer que no pasa nada aunque esté funcionando).
+
 ## M1 — Configuración, temas, atajos, sintaxis, explorador
 
 - [ ] `~/.config/tcode/config.toml` (o el equivalente portable en Windows) se crea solo la primera vez, con valores razonables.

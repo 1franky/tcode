@@ -71,6 +71,13 @@ todas las combinaciones activas).
 
 ## Multi-cursor y selección
 
+`Shift`+flechas (`Left`/`Right`/`Up`/`Down`/`Home`/`End`) selecciona
+texto de la forma de toda la vida: extiende la selección desde donde
+estaba el cursor al primer `Shift`+movimiento, sin colapsarla en cada
+tecla — mover el cursor sin `Shift` después sí la colapsa, como en
+cualquier editor. Funciona igual con varios cursores activos a la vez,
+cada uno extendiendo su propia selección de forma independiente.
+
 | Atajo | Acción |
 |---|---|
 | `Ctrl+D` | Agrega la siguiente ocurrencia de la palabra/selección actual como otro cursor |
