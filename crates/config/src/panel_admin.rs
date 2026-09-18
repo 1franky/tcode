@@ -58,14 +58,16 @@ pub enum CampoEditor {
     UsarEspacios,
     AjusteLinea,
     NumerosDeLinea,
+    ModoVim,
 }
 
 impl CampoEditor {
-    pub const TODOS: [CampoEditor; 4] = [
+    pub const TODOS: [CampoEditor; 5] = [
         CampoEditor::TamanoTabulacion,
         CampoEditor::UsarEspacios,
         CampoEditor::AjusteLinea,
         CampoEditor::NumerosDeLinea,
+        CampoEditor::ModoVim,
     ];
 
     pub fn nombre(&self) -> &'static str {
@@ -74,17 +76,17 @@ impl CampoEditor {
             CampoEditor::UsarEspacios => "Usar espacios en vez de tabs",
             CampoEditor::AjusteLinea => "Ajuste de línea (wrap)",
             CampoEditor::NumerosDeLinea => "Números de línea",
+            CampoEditor::ModoVim => "Modo VIM (hjkl, Normal/Insertar)",
         }
     }
 
     /// Nota aparte de un campo, si hace falta aclarar algo sobre su
-    /// estado actual. Ninguno de los 4 campos la necesita hoy — queda el
-    /// método (en vez de borrarlo) porque "ajuste de línea" ya usó este
-    /// mecanismo mientras el reflow real todavía no estaba implementado,
-    /// y el siguiente campo que llegue a medio terminar probablemente lo
-    /// vuelva a necesitar.
+    /// estado actual.
     pub fn nota(&self) -> Option<&'static str> {
-        None
+        match self {
+            CampoEditor::ModoVim => Some("Alcance inicial: sin operadores combinables (dw, d$), sin conteos (3dd), sin :"),
+            _ => None,
+        }
     }
 
     /// Valor actual como texto, para dibujarlo en la fila.
@@ -94,6 +96,7 @@ impl CampoEditor {
             CampoEditor::UsarEspacios => etiqueta_bool(config.editor.usar_espacios),
             CampoEditor::AjusteLinea => etiqueta_bool(config.editor.ajuste_linea),
             CampoEditor::NumerosDeLinea => etiqueta_bool(config.editor.numeros_de_linea),
+            CampoEditor::ModoVim => etiqueta_bool(config.editor.modo_vim),
         }
     }
 
@@ -110,6 +113,7 @@ impl CampoEditor {
             CampoEditor::UsarEspacios => config.editor.usar_espacios = !config.editor.usar_espacios,
             CampoEditor::AjusteLinea => config.editor.ajuste_linea = !config.editor.ajuste_linea,
             CampoEditor::NumerosDeLinea => config.editor.numeros_de_linea = !config.editor.numeros_de_linea,
+            CampoEditor::ModoVim => config.editor.modo_vim = !config.editor.modo_vim,
         }
     }
 }

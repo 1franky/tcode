@@ -106,15 +106,23 @@ fn es_csv(ruta: &str) -> bool {
 
 /// Árbol de paneles: una hoja con un documento, o una división en dos
 /// sub-árboles. Privado — quien usa `tcode-ui` solo interactúa con
-/// [`Layout`], nunca navega el árbol directamente.
+/// [`Layout`], nunca navega el árbol directamente. `Hoja` va en `Box`
+/// porque `PanelEditor` (que incluye un `Editor` completo: buffer, rope,
+/// cursores, historial de deshacer/rehacer) es mucho más grande que
+/// `Division` — sin el `Box`, cada `Division` tendría que reservar tanto
+/// espacio como la hoja más grande posible aunque no contenga ninguna
+/// (`clippy::large_enum_variant`); ya se había topado con este límite dos
+/// veces creciendo campos de `PanelEditor`/`Editor` por otros motivos,
+/// así que esta vez se resuelve de raíz en vez de volver a acotar el
+/// crecimiento en el próximo campo nuevo que haga falta.
 enum Panel {
-    Hoja(PanelEditor),
+    Hoja(Box<PanelEditor>),
     Division { direccion: DireccionSplit, primero: Box<Panel>, segundo: Box<Panel> },
 }
 
 impl Panel {
     fn vacio() -> Self {
-        Panel::Hoja(PanelEditor::vacio())
+        Panel::Hoja(Box::new(PanelEditor::vacio()))
     }
 
     fn contar_hojas(&self) -> usize {
@@ -137,7 +145,7 @@ pub struct Layout {
 
 impl Layout {
     pub fn nuevo(editor: Editor, ruta_mostrada: String) -> Self {
-        Self { raiz: Panel::Hoja(PanelEditor::nuevo(editor, ruta_mostrada)), activo: 0 }
+        Self { raiz: Panel::Hoja(Box::new(PanelEditor::nuevo(editor, ruta_mostrada))), activo: 0 }
     }
 
     pub fn num_paneles(&self) -> usize {
@@ -505,7 +513,7 @@ fn dividir_en_indice(panel: Panel, indice: usize, direccion: DireccionSplit) -> 
         Panel::Hoja(original) if indice == 0 => Panel::Division {
             direccion,
             primero: Box::new(Panel::Hoja(original)),
-            segundo: Box::new(Panel::Hoja(PanelEditor::vacio())),
+            segundo: Box::new(Panel::Hoja(Box::new(PanelEditor::vacio()))),
         },
         Panel::Hoja(_) => panel,
         Panel::Division { direccion: d, primero, segundo } => {
