@@ -143,7 +143,15 @@ fn dibujar_central(
             })
             .collect(),
         Seccion::Temas => {
-            let activo = tcode_config::TEMAS_EMBEBIDOS.iter().find(|t| t.id == config.interfaz.tema);
+            // El tema activo puede no estar en `TEMAS_EMBEBIDOS` (uno
+            // que el usuario dejó en su carpeta de temas, PLAN.md §7
+            // "importar temas desde archivo") — en ese caso se carga
+            // igual, solo para mostrar su nombre acá.
+            let nombre_activo = tcode_config::TEMAS_EMBEBIDOS
+                .iter()
+                .find(|t| t.id == config.interfaz.tema)
+                .map(|t| t.nombre.to_string())
+                .or_else(|| tcode_config::cargar_tema(&config.interfaz.tema).ok().map(|t| t.name));
             CampoTemas::TODOS
                 .iter()
                 .enumerate()
@@ -152,8 +160,8 @@ fn dibujar_central(
                     let estilo = if seleccionado { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
                     let mut texto = campo.nombre().to_string();
                     if *campo == CampoTemas::DuplicarActivo {
-                        if let Some(tema) = activo {
-                            texto = format!("{texto} ({})", tema.nombre);
+                        if let Some(nombre) = &nombre_activo {
+                            texto = format!("{texto} ({nombre})");
                         }
                     }
                     ListItem::new(Line::from(Span::styled(texto, estilo))).style(estilo)

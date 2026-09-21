@@ -182,6 +182,24 @@ los temas "High Contrast" de VS Code/Windows).
 - [ ] La barra de estado se ve invertida (fondo blanco, texto negro) — a propósito, para marcar un límite visual inequívoco con el resto de la pantalla.
 - [ ] Buscar algo con `Ctrl+F`: la coincidencia actual se ve en naranja bien visible, las demás en azul — ninguna se pierde contra el fondo negro.
 
+### Importar temas de terceros en el selector (BACKLOG.md)
+
+Hasta esta pieza, un tema `.toml` que alguien dejara en
+`~/.config/tcode/themes/` (o el directorio portable de Windows) con un
+nombre que no fuera ninguno de los 13 embebidos podía *usarse*
+escribiendo `tema = "nombre-que-sea"` a mano en `config.toml` + `Ctrl+K
+Ctrl+L`, pero nunca aparecía listado en `Ctrl+K Ctrl+T` — rompía el
+flujo de "importar y elegir desde la lista" de `PLAN.md` §7. Ahora el
+selector escanea esa carpeta cada vez que se abre.
+
+- [ ] Copiar cualquier `.toml` de `runtime/themes/` a la carpeta de temas de usuario con OTRO nombre de archivo (por ejemplo `mi-tema-de-prueba.toml`, cambiándole también el campo `name` adentro para distinguirlo a simple vista) y abrir `Ctrl+K Ctrl+T`: aparece en la lista, después de los 13 embebidos, con su `name`/`type`/`alto_contraste` reales — no con el nombre del archivo.
+- [ ] Navegar hasta esa fila con `↓`: el preview en vivo cambia el editor de fondo al tema copiado, igual que con cualquier tema embebido.
+- [ ] `Enter` sobre esa fila: persiste en `config.toml` (`tema = "mi-tema-de-prueba"`, el nombre del ARCHIVO sin extensión, no el `name` de adentro) — reabrir `tcode` y confirmar que arranca con ese tema.
+- [ ] Filtrar por "Oscuro"/"Claro"/"Alto contraste" (`Tab`): un tema de terceros que declare `type`/`alto_contraste` correctos en su TOML aparece en el filtro que corresponda, igual que uno embebido.
+- [ ] Dejar un archivo `.toml` corrupto/inválido en la misma carpeta (por ejemplo texto que no sea TOML): el selector lo ignora en silencio — no rompe la lista ni el resto de los temas.
+- [ ] Con la copia editable de un tema embebido ya creada (`Ctrl+K Ctrl+P`/"Duplicar tema activo" en algún momento deja `<tema>-mio.toml` en esa misma carpeta): esa copia NO aparece como una fila nueva separada en el selector — sigue sustituyendo transparentemente al original, como ya funcionaba antes de esta pieza.
+- [ ] Sección "Temas" del panel de administración (`Ctrl+K A`): si el tema activo es uno de terceros (no embebido), la fila "Duplicar tema activo" sigue mostrando su nombre real entre paréntesis, no lo omite.
+
 ## M4 — Panel de administración (`Ctrl+,` / `Ctrl+K A`) y números de línea
 
 - [ ] `Ctrl+,` para abrir el panel: en terminales sin protocolo Kitty puede llegar como una `,` suelta insertada en el texto en vez de abrir el panel (ambigüedad conocida, igual que otras de este proyecto) — si pasa, deshacer con `Ctrl+Z` y usar `Ctrl+K A` en su lugar.

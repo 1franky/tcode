@@ -234,6 +234,88 @@ pub const TEMAS_EMBEBIDOS: &[InfoTema] = &[
     InfoTema { id: "alto-contraste", nombre: "Alto contraste", tipo: "dark", alto_contraste: true },
 ];
 
+/// Vista de un tema listable en el selector (`Ctrl+K Ctrl+T`) que no le
+/// importa a quien la usa si el tema es uno embebido (`TEMAS_EMBEBIDOS`,
+/// `&'static str`) o uno que el usuario dejó en su carpeta de temas
+/// (`descubrir_temas_usuario`, leído de disco — necesita `String`
+/// propio, no puede ser `&'static`). Separada de `InfoTema` a propósito:
+/// cambiar `InfoTema` para que sea owned habría obligado a clonar los 13
+/// embebidos en cada arranque sin necesidad; acá el costo de clonar sólo
+/// se paga al construir la lista para el selector, que ya hace I/O
+/// (`read_dir`) igual.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InfoTemaListado {
+    pub id: String,
+    pub nombre: String,
+    pub tipo: String,
+    pub alto_contraste: bool,
+}
+
+impl From<&InfoTema> for InfoTemaListado {
+    fn from(info: &InfoTema) -> Self {
+        Self { id: info.id.to_string(), nombre: info.nombre.to_string(), tipo: info.tipo.to_string(), alto_contraste: info.alto_contraste }
+    }
+}
+
+/// Temas que el usuario dejó como archivos `.toml` sueltos en
+/// `directorio_temas_usuario()` (PLAN.md §7, "Compartir temas": "importar
+/// temas desde archivo") — cualquiera que no sea ya uno de los 13
+/// embebidos, ni una copia editable de uno de ellos
+/// (`<id-embebido>-mio.toml`, que ya sustituye transparentemente al
+/// original vía `tema_texto_crudo`: listarlo aparte sería mostrar el
+/// mismo tema dos veces). Un archivo que no exista, no se pueda leer, o
+/// no parsee como `Tema` válido simplemente se ignora — un tema de
+/// terceros corrupto no debería poder romper el selector.
+///
+/// Vuelve a leer el directorio entero cada vez que se llama (sin cachear
+/// nada): mismo criterio de "correctitud primero, optimizar si hace
+/// falta de verdad" que ya usa el resto del proyecto (el resaltador de
+/// sintaxis re-parsea el archivo completo en cada frame) — en la
+/// práctica un usuario tiene a lo sumo un puñado de temas propios, así
+/// que el costo de un `read_dir` + parsear cada uno es insignificante
+/// frente a redibujar toda la UI de cualquier forma.
+pub fn descubrir_temas_usuario() -> Vec<InfoTemaListado> {
+    descubrir_temas_en(&directorio_temas_usuario())
+}
+
+/// La parte testeable de [`descubrir_temas_usuario`], separada porque
+/// `directorio_temas_usuario()` siempre apunta a la carpeta REAL de
+/// configuración del usuario (no hay forma de pisarla con una variable
+/// de entorno) — un test no puede llamar a la función pública sin
+/// arriesgarse a leer/depender del `~/.config/tcode/themes` real de
+/// quien corra los tests. Recibe el directorio como parámetro para poder
+/// apuntarlo a uno temporal en los tests, mismo criterio que
+/// `codificar_ruta_para_uri(..., es_windows: bool)` en `crates/app/src/
+/// lsp.rs` (parametrizar en vez de leer el entorno adentro de la función
+/// para poder ejercitar el camino desde cualquier host).
+fn descubrir_temas_en(dir: &std::path::Path) -> Vec<InfoTemaListado> {
+    let Ok(entradas) = std::fs::read_dir(dir) else { return Vec::new() };
+
+    let mut encontrados: Vec<InfoTemaListado> = entradas
+        .flatten()
+        .filter_map(|entrada| {
+            let ruta = entrada.path();
+            if ruta.extension().and_then(|e| e.to_str()) != Some("toml") {
+                return None;
+            }
+            let id = ruta.file_stem()?.to_str()?.to_string();
+            if tema_embebido(&id).is_some() {
+                return None; // ya está en TEMAS_EMBEBIDOS, no lo dupliques
+            }
+            if let Some(base) = id.strip_suffix("-mio") {
+                if tema_embebido(base).is_some() {
+                    return None; // copia editable de un embebido
+                }
+            }
+            let texto = std::fs::read_to_string(&ruta).ok()?;
+            let tema: Tema = toml::from_str(&texto).ok()?;
+            Some(InfoTemaListado { id, nombre: tema.name, tipo: tema.tipo, alto_contraste: tema.alto_contraste })
+        })
+        .collect();
+    encontrados.sort_by(|a, b| a.nombre.cmp(&b.nombre));
+    encontrados
+}
+
 /// El TOML crudo de un tema, sin parsear: primero busca un archivo de
 /// usuario en `~/.config/tcode/themes/<nombre>.toml` (o el directorio
 /// portable en Windows — ver M5), y si no existe recurre a los temas
@@ -399,6 +481,122 @@ mod tests {
         let recuperado: Tema = toml::from_str(&texto).unwrap();
         assert_eq!(recuperado.name, original.name);
         assert_eq!(recuperado.ui.background, original.ui.background);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Directorio temporal único por test (mismo criterio que
+    /// `guardar_tema_escribe_un_archivo_que_vuelve_a_cargar_igual` más
+    /// arriba — el crate no tiene `tempfile` como dependencia) para los
+    /// tests de `descubrir_temas_en`, que nunca deben tocar la carpeta de
+    /// temas REAL del usuario que corre los tests.
+    fn dir_temporal(sufijo: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("tcode-test-descubrir-temas-{sufijo}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn descubrir_temas_en_ignora_un_directorio_inexistente() {
+        let dir = std::env::temp_dir().join(format!("tcode-test-no-existe-{}", std::process::id()));
+        assert_eq!(descubrir_temas_en(&dir), Vec::new());
+    }
+
+    #[test]
+    fn descubrir_temas_en_encuentra_un_toml_valido_con_id_nuevo() {
+        let dir = dir_temporal("valido");
+        std::fs::write(
+            dir.join("mi-tema-lindo.toml"),
+            r##"name = "Mi Tema Lindo"
+type = "dark"
+[ui]
+background = "#000000"
+foreground = "#ffffff"
+cursor = "#ffffff"
+selection = "#333333"
+line_number = "#555555"
+line_number_active = "#ffffff"
+current_line = "#111111"
+[statusbar]
+background = "#000000"
+foreground = "#ffffff"
+"##,
+        )
+        .unwrap();
+
+        let encontrados = descubrir_temas_en(&dir);
+        assert_eq!(encontrados.len(), 1);
+        assert_eq!(encontrados[0].id, "mi-tema-lindo");
+        assert_eq!(encontrados[0].nombre, "Mi Tema Lindo");
+        assert_eq!(encontrados[0].tipo, "dark");
+        assert!(!encontrados[0].alto_contraste);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn descubrir_temas_en_ignora_un_toml_invalido_sin_romper_nada() {
+        let dir = dir_temporal("invalido");
+        std::fs::write(dir.join("roto.toml"), "esto no es un tema válido {{{").unwrap();
+
+        assert_eq!(descubrir_temas_en(&dir), Vec::new());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn descubrir_temas_en_no_duplica_un_id_embebido() {
+        let dir = dir_temporal("embebido-duplicado");
+        // Mismo id que un embebido real ("dracula") — no debería listarse
+        // aparte aunque el archivo exista y sea válido.
+        std::fs::write(dir.join("dracula.toml"), tema_embebido("dracula").unwrap()).unwrap();
+
+        assert_eq!(descubrir_temas_en(&dir), Vec::new());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn descubrir_temas_en_no_lista_una_copia_editable_de_un_embebido() {
+        let dir = dir_temporal("copia-mio");
+        // "dracula-mio.toml" es la copia editable de PLAN.md §7
+        // ("Duplicar tema base") — ya sustituye transparentemente al
+        // original, listarla aparte la mostraría dos veces.
+        std::fs::write(dir.join("dracula-mio.toml"), tema_embebido("dracula").unwrap()).unwrap();
+
+        assert_eq!(descubrir_temas_en(&dir), Vec::new());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn descubrir_temas_en_ordena_alfabeticamente_por_nombre() {
+        let dir = dir_temporal("orden");
+        for (archivo, nombre) in [("z.toml", "Zeta"), ("a.toml", "Alfa")] {
+            std::fs::write(
+                dir.join(archivo),
+                format!(
+                    r##"name = "{nombre}"
+type = "dark"
+[ui]
+background = "#000000"
+foreground = "#ffffff"
+cursor = "#ffffff"
+selection = "#333333"
+line_number = "#555555"
+line_number_active = "#ffffff"
+current_line = "#111111"
+[statusbar]
+background = "#000000"
+foreground = "#ffffff"
+"##
+                ),
+            )
+            .unwrap();
+        }
+
+        let encontrados = descubrir_temas_en(&dir);
+        assert_eq!(encontrados.iter().map(|t| t.nombre.as_str()).collect::<Vec<_>>(), vec!["Alfa", "Zeta"]);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
