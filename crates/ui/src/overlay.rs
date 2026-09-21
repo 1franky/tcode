@@ -1,17 +1,33 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use crate::Paleta;
 
 /// Dibuja un overlay de "escribir para buscar" genérico — la paleta de
-/// comandos (`Ctrl+Shift+P`/`F1`) y el buscador de archivos (`Ctrl+P`,
-/// PLAN.md §4) comparten exactamente esta forma: recuadro centrado con un
-/// campo de consulta arriba y una lista de resultados abajo, letras
-/// coincidentes en negrita y la fila seleccionada resaltada con el color
-/// de línea actual del tema.
+/// comandos (`Ctrl+Shift+P`/`F1`), el buscador de archivos (`Ctrl+P`,
+/// PLAN.md §4), el selector de temas y el visor de logs de LSP comparten
+/// exactamente esta forma: recuadro centrado con un campo de consulta
+/// arriba y una lista de resultados abajo, letras coincidentes en
+/// negrita y la fila seleccionada resaltada con el color de línea actual
+/// del tema.
+///
+/// `seleccion` maneja el scroll-follow vía `ListState` (BACKLOG.md P1,
+/// "scroll-follow real en overlays"): antes se armaba un `List` sin
+/// estado, así que siempre se dibujaba desde la fila 0 recortada a lo
+/// que entraba en pantalla — con más resultados que alto disponible,
+/// bajar la selección la dejaba resaltando una fila invisible. Un
+/// `ListState` fresco por frame (mismo criterio que `TableState` en
+/// `vista_csv::dibujar`, que tampoco persiste el suyo entre frames)
+/// alcanza: `ratatui` recalcula el offset necesario para que la
+/// seleccionada quede visible a partir de `selected`, sin que haga falta
+/// guardar nada de un frame al siguiente. Si `seleccion` no cae dentro de
+/// `filas` (el visor de logs pasa `usize::MAX` a propósito, porque no
+/// hay ninguna acción que confirmar sobre una línea de log) no se marca
+/// ninguna fila como seleccionada — mismo comportamiento que antes para
+/// ese caso, sin forzar scroll a un índice que no existe.
 pub fn dibujar(
     frame: &mut Frame,
     area_total: Rect,
@@ -60,7 +76,12 @@ pub fn dibujar(
             .border_set(crate::BORDE_ASCII)
             .style(estilo_base),
     );
-    frame.render_widget(lista, partes[1]);
+
+    let mut estado_lista = ListState::default();
+    if seleccion < filas.len() {
+        estado_lista.select(Some(seleccion));
+    }
+    frame.render_stateful_widget(lista, partes[1], &mut estado_lista);
 }
 
 /// Recorta `area` a un rectángulo centrado que ocupa `porcentaje_ancho`% x

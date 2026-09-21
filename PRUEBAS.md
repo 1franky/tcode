@@ -106,6 +106,24 @@ pasa por ninguna papelera de reciclaje.
 - [ ] Las 3 acciones ("Explorador: Nuevo archivo"/"Nueva carpeta"/"Renombrar selección") aparecen en la paleta de comandos (`F1`) y funcionan igual que sus atajos.
 - [ ] Limitación conocida: crear/renombrar/borrar algo refresca la carpeta contenedora leyéndola de nuevo del disco — si esa carpeta tenía OTRAS subcarpetas ya expandidas en el mismo nivel, quedan colapsadas de nuevo tras el refresco (se puede volver a expandirlas con `Enter`, no se pierde nada, solo el estado visual de "abierta").
 
+## Scroll-follow en listas con selección (BACKLOG.md)
+
+Fix transversal: ninguna de estas 5 listas (todas comparten el mismo
+problema por dos causas distintas — 4 pasan por `tcode_ui::overlay::
+dibujar`, el explorador arma su propia lista aparte) seguía la
+selección con scroll. Antes, con más filas/resultados de los que
+entraban en pantalla, bajar la selección con `↓` la dejaba resaltando
+una fila que ya no se dibujaba — visible solo si volvías a subir. Ahora
+`ratatui` recalcula el offset necesario en cada frame (vía `ListState`,
+sin persistir nada de un frame al siguiente — mismo criterio que ya usa
+`TableState` en la vista CSV).
+
+- [ ] **Explorador** (`Ctrl+B`): con más archivos que los que entran en el panel, bajar la selección hasta el último — sigue visible en todo momento, nunca desaparece de pantalla. Subir de nuevo hasta el primero: mismo resultado. El resaltado de fila, los íconos de carpeta y las etiquetas del modo "salto rápido" (`Ctrl+K J`) se ven exactamente igual que antes.
+- [ ] **Buscador de archivos** (`Ctrl+P`), en un proyecto con más de una pantalla de archivos: bajar/subir la selección hasta los extremos — siempre visible.
+- [ ] **Paleta de comandos** (`F1`): mismo chequeo — hay más de 25 comandos, más que lo que entra en cualquier ventana chica.
+- [ ] **Selector de temas** (`Ctrl+K Ctrl+T`): con los 13 temas (filtro "Todos"), bajar hasta el último (`Alto contraste`) y subir hasta el primero (`Dracula`) — el preview en vivo sigue aplicándose en cada fila visitada, igual que antes.
+- [ ] **Visor de logs de LSP** (`Ctrl+K R`) con más de una pantalla de líneas: no tiene navegación con flechas (no hay ninguna fila "seleccionada" — el filtro de texto es la forma de acotar), así que el comportamiento correcto es simplemente seguir mostrando las líneas más recientes desde arriba, sin romper nada ni intentar scrollear a ningún lado raro.
+
 ## M2 — Paleta de comandos, buscador de archivos, splits, LSP
 
 - [ ] `Ctrl+Shift+P` o `F1`: abre la paleta de comandos.
