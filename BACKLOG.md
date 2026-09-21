@@ -44,50 +44,14 @@ Cuatro niveles:
 
 ## P0 — Gaps sorprendentes
 
-### 1. El explorador de archivos es de solo lectura
-
-`crates/fs/src/explorador.rs` no tiene ningún método para crear,
-renombrar, borrar o mover un archivo/carpeta — solo navegar (`Enter`
-abre o expande/colapsa). No hay "nuevo archivo", "nueva carpeta",
-"renombrar" ni "eliminar" en ningún lado de la app, ni siquiera como
-comando de paleta.
-
-**Alcance**: cada operación es chica por separado (crear/renombrar son
-básicamente un prompt de texto tipo "Guardar como" + una llamada a
-`std::fs`; borrar necesita confirmación, capaz con el mismo patrón de
-doble-confirmación que ya usa `Ctrl+Q` con cambios sin guardar). Juntas
-son una pieza mediana. Candidato a dividir en 2-3 PRs (crear
-archivo/carpeta primero, renombrar después, borrar al final — es el más
-delicado, mejor no apurarlo).
+Ninguno pendiente por ahora — el único que había (explorador de solo
+lectura) se cerró, ver "Hecho recientemente".
 
 ---
 
 ## P1 — Gaps reales de alcance acotado
 
-### 2. El selector de temas no puede importar un tema de tercero
-
-`TEMAS_EMBEBIDOS` (`crates/config/src/tema.rs`) es un array fijo de 13
-entradas — nada escanea `directorio_temas_usuario()`
-(`~/.config/tcode/themes/`, o el equivalente portable de Windows)
-buscando archivos `.toml` nuevos que no correspondan a ninguno de esos
-13 ids. Si alguien te pasa un tema de un lenguaje/tema builder externo y
-lo dejás en esa carpeta con OTRO nombre, la app puede *usarlo* si lo
-escribís a mano en `config.toml` (`tema = "nombre-que-sea"`) y recargás
-con `Ctrl+K Ctrl+L`, pero **nunca aparece en el selector** (`Ctrl+K
-Ctrl+T`) — rompe justo el flujo "importar y elegir desde la lista" que
-describe `PLAN.md` §7 ("Compartir temas").
-
-**Alcance**: `EstadoSelectorTema::temas_filtrados` (o quien arma la
-lista) tendría que hacer `read_dir` sobre el directorio de usuario,
-parsear el `name`/`type`/`alto_contraste` de cada `.toml` que no
-coincida con ningún id embebido, y agregarlo a la lista como
-`InfoTema` "dinámico" (probablemente necesita que `InfoTema` deje de
-ser `&'static str` puro, o una segunda estructura paralela — repasar al
-encarar esto). Compatibilidad con el formato Helix (mencionada en el
-mismo punto del plan) es un problema aparte y más grande; no incluirla
-acá.
-
-### 3. LSP: sin variables de entorno por comando
+### 1. LSP: sin variables de entorno por comando
 
 `ComandoLsp` (`crates/config/src/config.rs`) tiene `comando` +
 `argumentos`, nada de `env` — PLAN.md §5.3 pedía las tres. Sirve para
@@ -102,7 +66,7 @@ pasarlo a `Command::envs(...)` en `Cliente::lanzar`
 editar un mapa clave-valor (no un string plano) es la parte con más
 decisiones de diseño.
 
-### 4. "Ver logs del LSP" (`Ctrl+K R`, ya implementado) es una foto, no en vivo
+### 2. "Ver logs del LSP" (`Ctrl+K R`, ya implementado) es una foto, no en vivo
 
 Nota, no gap nuevo: `PLAN.md` §5.3 pedía "logs en tiempo real"; lo que
 hay (PR #78) es un snapshot al momento de abrir — cerrar y volver a
@@ -113,7 +77,7 @@ usuario está tipeando un filtro). Si en algún momento hace falta de
 verdad ver un log mientras se reproduce un problema en curso, esta es
 la pieza para revisarla — hasta entonces, cerrar/reabrir alcanza.
 
-### 5. Scroll-follow real en overlays y en el explorador
+### 3. Scroll-follow real en overlays y en el explorador
 
 Bug latente compartido por varios lugares, notado en piezas anteriores
 pero nunca resuelto de raíz:
@@ -140,7 +104,7 @@ rompa el resaltado de fila actual que ya funciona.
 
 ## P2 — Del plan original, alcance grande o valor dudoso
 
-### 6. Guardado automático
+### 4. Guardado automático
 
 `PLAN.md` §5 "Editor": nunca / al perder foco / cada N segundos. No
 implementado. Alcance mediano: un campo de config + lógica de timer
@@ -149,7 +113,7 @@ implementado. Alcance mediano: un campo de config + lógica de timer
 hoy es puramente reactivo a `tokio::select!` entre teclado y LSP —
 agregar un `tokio::time::interval` al select).
 
-### 7. Formatear al guardar (vía LSP)
+### 5. Formatear al guardar (vía LSP)
 
 `PLAN.md` §5 "Editor": on/off por lenguaje. No implementado — no hay
 ninguna llamada a `textDocument/formatting` en `crates/lsp`/`app/src/
@@ -157,7 +121,7 @@ lsp.rs` hoy. Alcance grande: nuevo método LSP, aplicar el `TextEdit[]`
 resultante al buffer antes de escribir a disco, manejar el caso "el LSP
 no soporta formatting" o "tardó demasiado" sin bloquear el guardado.
 
-### 8. Indicadores de git en el gutter
+### 6. Indicadores de git en el gutter
 
 Colores `TemaGit` (`added`/`modified`/`deleted`) ya existen en cada
 tema, sin conectar a nada (confirmado: cero integración con git en todo
@@ -165,7 +129,7 @@ el repo). Implica correr `git diff`/leer el índice para saber qué
 líneas cambiaron respecto al último commit — trabajo real, y una
 dependencia nueva (`git2` o invocar el binario `git`). Grande.
 
-### 9. Code folding (plegado de bloques)
+### 7. Code folding (plegado de bloques)
 
 `PLAN.md` §4 lo lista con atajos propios (`Ctrl+Shift+[`/`]`, `Ctrl+K
 Ctrl+0`/`Ctrl+K Ctrl+J`) — cero implementación. Necesita: queries de
@@ -177,7 +141,7 @@ piezas más grandes de todo este documento — considerar dividirla en
 sub-piezas (soporte para 2-3 lenguajes primero, resto incremental, como
 se hizo con LSP).
 
-### 10. Config por proyecto (`.tcode/config.toml` con override)
+### 8. Config por proyecto (`.tcode/config.toml` con override)
 
 `PLAN.md` §12, decisión abierta #5: "sí a ambas, con override" — nunca
 se implementó, solo existe config global de usuario. Alcance: al
@@ -187,7 +151,7 @@ mezclarlo sobre la config global (probablemente campo por campo, no
 todo-o-nada). Mediano — la parte de "mezclar dos `Config` parciales"
 requiere pensar bien las reglas de merge.
 
-### 11. CSV: funciones que quedaron fuera de M3
+### 9. CSV: funciones que quedaron fuera de M3
 
 Ya documentado en `PRUEBAS.md` (sección "M3 — Vista CSV/TSV"), sigue
 pendiente: ordenar por columna, filtrar por columna, insertar/eliminar
@@ -199,7 +163,7 @@ urgente; se usan mucho menos que ver/editar celdas, que ya funciona.
 
 ## P3 — Bloqueado o reconsiderar si debería estar en el plan
 
-### 12. Densidad de UI / tabs / breadcrumbs
+### 10. Densidad de UI / tabs / breadcrumbs
 
 `PLAN.md` §5 "Interfaz". Genuinamente bloqueado: tcode no tiene ningún
 concepto de "pestaña de archivo abierto" (solo splits) ni de
@@ -209,7 +173,7 @@ falta diseñar y construir esos widgets desde cero antes de que
 camuflada de toggle; es un feature nuevo con ese toggle como
 consecuencia menor.
 
-### 13. Zoom (`Ctrl++`/`Ctrl+-`/`Ctrl+0`) y pantalla completa (`F11`)
+### 11. Zoom (`Ctrl++`/`Ctrl+-`/`Ctrl+0`) y pantalla completa (`F11`)
 
 `PLAN.md` §4 "Zoom y vista". Sospecha fuerte de que **no aplica a una
 TUI**: el tamaño de fuente en una terminal lo controla el emulador de
@@ -223,7 +187,7 @@ interpretación razonable para una terminal (¿"zoom" como ajustar
 cuántas columnas/filas usa el layout interno, sin tocar la fuente
 real?) que valga la pena.
 
-### 14. Modo zen
+### 12. Modo zen
 
 `PLAN.md` §4, `Ctrl+K Z`. Distinto de "Mostrar barra de estado" (ya
 existe, pero es un toggle persistente en config, no un atajo rápido
@@ -232,7 +196,7 @@ mostrarlo de nuevo igual de rápido). Factible y chico si se quiere: un
 booleano de sesión (no persistido) que la UI consulta para saltearse
 explorador/statusbar sin importar su config normal.
 
-### 15. Compatibilidad de temas con formato Helix
+### 13. Compatibilidad de temas con formato Helix
 
 `PLAN.md` §7 "Compartir temas": "parser tolerante que acepta temas en
 formato Helix". No implementado. Depende de qué tan distinto es el
@@ -243,6 +207,24 @@ formatos campo por campo.
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-21, dos piezas más en paralelo (mismo criterio: agentes en
+worktrees aislados, revisadas y mergeadas después de verificación
+independiente — build/test/clippy propios + merge de prueba contra el
+`develop` combinado + tmux):**
+- **Explorador: crear, renombrar y borrar** (PR #84) — era el único P0
+  que quedaba. `Explorador::crear_archivo`/`crear_carpeta`/
+  `renombrar_seleccion`/`borrar_seleccion`, refrescando solo la carpeta
+  contenedora. `Ctrl+K N`/`Ctrl+K C`/`Ctrl+K M` + `Delete` (con
+  confirmación explícita `y`/`Y`, ninguna otra tecla por defecto —
+  acción irreversible). Verificado a mano en tmux incluido el borrado
+  recursivo de una carpeta con contenido real.
+- **Selector de temas: importar temas de terceros** (PR #83) — era el
+  P1 #2. `descubrir_temas_usuario()` escanea la carpeta de temas del
+  usuario; `InfoTemaListado` (owned) en paralelo a `InfoTema`
+  (`&'static str`, sin tocar), sin duplicar embebidos ni copias `-mio`.
+  De paso corrigió que "Duplicar tema activo" perdía el nombre cuando el
+  tema activo era de terceros.
 
 **2026-09-18, dos piezas en paralelo (agentes en worktrees aislados,
 revisadas y mergeadas después de verificación independiente contra el
