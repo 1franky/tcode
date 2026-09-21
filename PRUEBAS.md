@@ -395,6 +395,29 @@ encontrar algo que quedó afuera de esa primera pantalla.
 - [ ] `Esc`: cierra el visor sin afectar la sesión LSP activa (no la reinicia ni la corta).
 - [ ] Con un `.py` real y `pyright` conectado: la mayoría de los servidores reales se quedan en silencio mientras todo funciona bien — `Ctrl+K R` mostrando el mensaje de "sin logs" con una sesión "Conectado" activa es un resultado esperado, no un bug.
 
+### Variables de entorno por comando LSP (BACKLOG.md, sintaxis `VAR=valor -- comando`)
+
+El campo de edición del comando LSP (`c` en "Lenguajes / LSP") acepta,
+antes del comando propiamente dicho, una lista de asignaciones
+`VAR=valor` separadas de él por un token `--` suelto — ej.
+`RUST_LOG=debug NODE_ENV=production -- rust-analyzer --stdio`. Se eligió
+extender esta misma línea en vez de agregar un campo/modal separado
+porque reutiliza el editor de texto que ya existe (precarga, `Enter`
+guarda, `Esc` cancela) sin superficie de UI nueva, y porque
+`ComandoLsp::como_linea()`/`fijar_comando_desde_linea()` son inversas
+entre sí, así que lo que se ve al reabrir para editar es exactamente lo
+que se guardó.
+
+- [ ] Sobre una fila sin comando (p. ej. Rust) escribir `MI_VAR=hola -- /ruta/a/mi-script.sh` y `Enter`: la fila pasa a mostrar el comando (sin el `MI_VAR=hola --`, que no es parte del comando en sí) seguido de `[+1 var de entorno]`, y `config.toml` (`[lenguajes.lsp_comando.rust]`) queda con `comando`, `argumentos` y una tabla `env = { MI_VAR = "hola" }`.
+- [ ] Con dos o más variables (`A=1 B=2 -- comando`): el sufijo dice `[+2 vars de entorno]` (plural correcto a partir de 2).
+- [ ] Volver a editar esa fila con `c`: el campo se precarga con la línea completa incluyendo las variables y el separador `--`, lista para ajustar en vez de reescribir todo de cero.
+- [ ] Un token antes del `--` que no tiene `=` (p. ej. `MI_VAR -- comando`, sin valor): se ignora en silencio — no rompe el parseo ni termina como parte del comando.
+- [ ] Una línea que es solo `-- comando` (sin ninguna variable antes del separador): funciona igual que escribir `comando` directamente, sin sufijo de variables.
+- [ ] Una línea que es solo variables y `--` sin comando después (p. ej. `A=1 --`): no guarda nada — igual que dejar el campo vacío, la fila queda como estaba antes de entrar a editar.
+- [ ] Un comando sin ningún `--` en la línea (la sintaxis de siempre, sin variables): funciona exactamente igual que antes de esta pieza — comportamiento retrocompatible.
+- [ ] Configurar una variable de entorno para un lenguaje con un script de prueba que la vuelque a stderr (p. ej. `echo "MI_VAR=$MI_VAR" >&2`) y abrir un archivo de ese lenguaje: `Ctrl+K R` muestra la línea con el valor real de la variable, confirmando que de verdad llegó al proceso hijo (no solo que se guardó en `config.toml`).
+- [ ] Las variables configuradas se suman al entorno heredado del proceso de `tcode`, no lo reemplazan: una variable ya presente en el entorno del sistema (p. ej. `PATH`) sigue estando disponible para el servidor LSP aunque no se la mencione en el campo.
+
 ## M4 — Sección "Interfaz" del panel de administración
 
 - [ ] Dentro del panel (`Ctrl+K A`), la sección "Interfaz" ya NO dice "(próximamente)": lista 7 filas — "Mostrar barra de estado" y 6 elementos de la statusbar (posición del cursor, codificación, fin de línea, lenguaje detectado, resumen de diagnósticos LSP, modo), todas en "Sí" por defecto.

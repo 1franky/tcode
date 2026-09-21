@@ -35,8 +35,8 @@ use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
 use tcode_config::{
-    CampoEditor, CampoTemas, Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin, ModoEdicion,
-    ResultadoDuplicarTema, Seccion,
+    CampoEditor, CampoTemas, ComandoLsp, Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin,
+    ModoEdicion, ResultadoDuplicarTema, Seccion,
 };
 use tcode_core::{
     analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo,
@@ -1548,8 +1548,16 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
         .iter()
         .map(|&lenguaje| {
             let (comando, en_path) = match lsp::comando_efectivo(lenguaje, &estado.config) {
-                Some((comando, args)) => {
-                    let texto = if args.is_empty() { comando.clone() } else { format!("{comando} {}", args.join(" ")) };
+                Some((comando, args, env)) => {
+                    let mut texto = if args.is_empty() { comando.clone() } else { format!("{comando} {}", args.join(" ")) };
+                    // Indicador chico de que además hay variables de
+                    // entorno configuradas (BACKLOG.md P1) — la línea
+                    // completa (con nombres y valores) solo se ve al
+                    // entrar a editar (`c`), acá alcanza con saber que
+                    // hay alguna.
+                    if !env.is_empty() {
+                        texto.push_str(&format!(" [+{} var{} de entorno]", env.len(), if env.len() == 1 { "" } else { "s" }));
+                    }
                     (texto, ruta_en_path(&comando))
                 }
                 None => (String::new(), false),
@@ -1638,11 +1646,13 @@ fn lenguaje_seleccionado_en_lenguajes(panel: &tcode_config::EstadoPanelAdmin) ->
 /// personalizado, precargando el buffer con el comando efectivo actual
 /// (personalizado si ya hay uno, o el que trae `tcode_lsp::comando_para`
 /// por defecto, o vacío si no hay ninguno) — así se puede ajustar solo
-/// los argumentos sin volver a escribir todo desde cero.
+/// los argumentos (o las variables de entorno, con la sintaxis `VAR=val
+/// -- comando`, ver `ComandoLsp::como_linea`/`fijar_comando_desde_linea`)
+/// sin volver a escribir todo desde cero.
 fn iniciar_edicion_comando_lsp_seleccionado(estado: &mut EstadoApp) {
     let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
     let valor_inicial = lsp::comando_efectivo(lenguaje, &estado.config)
-        .map(|(comando, args)| if args.is_empty() { comando } else { format!("{comando} {}", args.join(" ")) })
+        .map(|(comando, argumentos, env)| ComandoLsp { comando, argumentos, env }.como_linea())
         .unwrap_or_default();
     estado.panel_admin.iniciar_edicion_comando_lsp(valor_inicial);
 }

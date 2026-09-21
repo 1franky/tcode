@@ -51,14 +51,16 @@ pub struct Cliente {
 }
 
 impl Cliente {
-    /// Lanza `comando` como proceso hijo y arranca las tareas de fondo
-    /// que leen su stdout (reenviando cada mensaje por `receptor`) y su
-    /// stderr (acumulando líneas en `logs`) continuamente. El proceso se
-    /// mata solo si el `Cliente` se dropea sin pasar por `cerrar`
-    /// (`kill_on_drop`).
-    pub async fn lanzar(comando: &str, args: &[&str]) -> Result<Self> {
+    /// Lanza `comando` como proceso hijo (con `env` agregadas a las que ya
+    /// hereda del proceso de `tcode` — no las reemplaza, `Command::envs`
+    /// es aditivo) y arranca las tareas de fondo que leen su stdout
+    /// (reenviando cada mensaje por `receptor`) y su stderr (acumulando
+    /// líneas en `logs`) continuamente. El proceso se mata solo si el
+    /// `Cliente` se dropea sin pasar por `cerrar` (`kill_on_drop`).
+    pub async fn lanzar(comando: &str, args: &[&str], env: &[(&str, &str)]) -> Result<Self> {
         let mut proceso = Command::new(comando)
             .args(args)
+            .envs(env.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -335,7 +337,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn lanzar_y_recibir_via_un_proceso_eco() {
-        let mut cliente = Cliente::lanzar("cat", &[]).await.expect("cat debería existir en cualquier Unix");
+        let mut cliente = Cliente::lanzar("cat", &[], &[]).await.expect("cat debería existir en cualquier Unix");
         cliente.notificacion("prueba/eco", json!({ "hola": "mundo" })).await.unwrap();
 
         let mensaje = cliente.receptor.recv().await.expect("cat debería hacer eco del mensaje");
@@ -366,7 +368,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn cerrar_no_se_cuelga_aunque_el_proceso_no_salga_solo() {
-        let cliente = Cliente::lanzar("cat", &[]).await.expect("cat debería existir en cualquier Unix");
+        let cliente = Cliente::lanzar("cat", &[], &[]).await.expect("cat debería existir en cualquier Unix");
         tokio::time::timeout(TIMEOUT_CIERRE_EDUCADO + Duration::from_millis(500), cliente.cerrar())
             .await
             .expect("cerrar() no debería tardar más que su propio timeout interno");
@@ -391,7 +393,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn logs_acumula_lo_que_el_proceso_escribe_en_stderr() {
-        let cliente = Cliente::lanzar("sh", &["-c", "echo primera >&2; echo segunda >&2"])
+        let cliente = Cliente::lanzar("sh", &["-c", "echo primera >&2; echo segunda >&2"], &[])
             .await
             .expect("sh debería existir en cualquier Unix");
 
@@ -410,7 +412,7 @@ mod tests {
         // Genera MAX_LINEAS_LOG + 10 líneas numeradas; las primeras 10
         // deberían quedar afuera del snapshot final.
         let script = (0..MAX_LINEAS_LOG + 10).map(|i| format!("echo {i} >&2")).collect::<Vec<_>>().join("; ");
-        let cliente = Cliente::lanzar("sh", &["-c", &script]).await.expect("sh debería existir en cualquier Unix");
+        let cliente = Cliente::lanzar("sh", &["-c", &script], &[]).await.expect("sh debería existir en cualquier Unix");
 
         tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -419,5 +421,42 @@ mod tests {
         assert_eq!(logs.first().unwrap(), "10"); // se descartaron 0..10
         assert_eq!(logs.last().unwrap(), &(MAX_LINEAS_LOG + 9).to_string());
         cliente.matar().await;
+    }
+
+    /// Confirma que `env` de verdad llega al proceso hijo (no solo que
+    /// se acepta el parámetro) — `sh -c 'echo $VAR >&2'` imprime la
+    /// variable a stderr, que ya sabemos leer y acumular via `logs()`
+    /// (mismo mecanismo que el resto de los tests de este archivo, sin
+    /// depender de ningún LSP real instalado).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn lanzar_pasa_las_variables_de_entorno_al_proceso_hijo() {
+        let cliente = Cliente::lanzar("sh", &["-c", "echo $MI_VAR_DE_PRUEBA >&2"], &[("MI_VAR_DE_PRUEBA", "hola")])
+            .await
+            .expect("sh debería existir en cualquier Unix");
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert_eq!(cliente.logs(), vec!["hola".to_string()]);
+        cliente.matar().await;
+    }
+
+    /// `envs` es aditivo (`Command::envs`, no reemplaza el entorno
+    /// heredado del proceso de `tcode`) — confirma que una variable que
+    /// YA existía en el entorno de este proceso de test sigue llegando
+    /// al hijo aunque `env` (la lista que pasa `tcode`) esté vacía.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn lanzar_sin_variables_extra_hereda_el_entorno_normal() {
+        std::env::set_var("MI_VAR_HEREDADA_DE_PRUEBA", "heredada");
+        let cliente = Cliente::lanzar("sh", &["-c", "echo $MI_VAR_HEREDADA_DE_PRUEBA >&2"], &[])
+            .await
+            .expect("sh debería existir en cualquier Unix");
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert_eq!(cliente.logs(), vec!["heredada".to_string()]);
+        cliente.matar().await;
+        std::env::remove_var("MI_VAR_HEREDADA_DE_PRUEBA");
     }
 }
