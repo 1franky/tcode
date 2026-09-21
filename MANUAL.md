@@ -324,6 +324,15 @@ del lenguaje, escribí el comando completo con sus argumentos y `Enter`.
 Si ya hay una sesión activa para ese lenguaje, se relanza sola con el
 comando nuevo.
 
+Ese mismo campo acepta variables de entorno propias del servidor: antes
+del comando, escribí `VAR=valor` (una o más, separadas por espacio) y
+después un `--` suelto, por ejemplo
+`RUST_LOG=debug -- rust-analyzer --stdio`. Se suman al entorno que
+`tcode` ya tiene (no lo reemplazan), y la fila muestra
+`[+N var(s) de entorno]` junto al comando cuando hay alguna configurada.
+Volver a editar la fila con `c` precarga la línea completa, variables
+incluidas.
+
 **`Ctrl+K R`** ("LSP: Ver logs de la sesión activa" en la paleta):
 muestra lo que el servidor escribió en su stderr — útil para entender
 por qué no conecta o se comporta raro, más allá del estado "Conectado"/
