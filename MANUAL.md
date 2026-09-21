@@ -137,6 +137,21 @@ tecla modificadora (sin otra tecla acompañándola), sin importar cuál se
 elija — es una limitación del protocolo de teclado de cualquier
 terminal, no algo particular de `tcode`.
 
+### Crear, renombrar y borrar
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+K N` | Nuevo archivo (dentro de la carpeta seleccionada, o de la que contiene al archivo seleccionado) |
+| `Ctrl+K C` | Nueva carpeta (mismo destino que "Nuevo archivo") |
+| `Ctrl+K M` | Renombrar la selección actual (precargado con el nombre actual) |
+| `Delete` (con el explorador enfocado) | Borrar la selección actual — siempre pide confirmación primero |
+
+Los tres primeros son globales: si el explorador está oculto, lo
+muestran y le dan el foco antes de abrir el prompt, igual que `Ctrl+K
+J`. Borrar es irreversible (no hay papelera de reciclaje) — el prompt de
+confirmación solo acepta `y`/`Y`; cualquier otra tecla, incluido `Enter`,
+cancela sin tocar el disco.
+
 ## Modo VIM opcional
 
 Apagado por defecto: `tcode` sigue funcionando exactamente igual que

@@ -82,6 +82,30 @@ Vimium/`vim-easymotion`, no una tecla sostenida.
 - [ ] Invocar "Ver: Saltar a un archivo" desde la paleta de comandos (`F1`) con el explorador **oculto**: lo muestra, le da el foco y activa el modo salto directamente — no hace falta abrirlo a mano primero.
 - [ ] Con más archivos visibles que letras del alfabeto (36 — dígitos + minúsculas, poco común pero posible con una terminal muy alta): las filas de más allá de la 36 quedan sin etiqueta, pero se pueden seguir navegando con las flechas como siempre.
 
+### Crear, renombrar y borrar desde el explorador (BACKLOG.md P0, "explorador de solo lectura")
+
+Hasta esta pieza el explorador era de solo lectura — no había forma de
+crear, renombrar ni borrar nada desde la app. `Ctrl+K N`/`Ctrl+K C`/
+`Ctrl+K M` (nuevo archivo/carpeta/renombrar) son globales, como
+`Ctrl+K J`: si el explorador está oculto, lo muestran y le dan el foco
+antes de abrir el prompt. Borrar (`Delete`, con el explorador enfocado)
+siempre pide confirmación primero — es destructivo e irreversible, no
+pasa por ninguna papelera de reciclaje.
+
+- [ ] `Ctrl+K N` con una carpeta seleccionada: abre "Nuevo archivo" vacío; escribir un nombre y `Enter` lo crea DENTRO de esa carpeta (aunque esté colapsada) — confirmar en disco y, al expandirla, que aparece en el árbol.
+- [ ] `Ctrl+K N` con un archivo seleccionado (no una carpeta): el nuevo archivo se crea en la carpeta que lo CONTIENE, no adentro de él (los archivos no tienen "adentro").
+- [ ] `Ctrl+K C`: igual que `Ctrl+K N` pero crea una carpeta (`std::fs::create_dir`, no recursivo — si la carpeta padre no existe, es un error).
+- [ ] Escribir un nombre que ya existe en el destino (archivo o carpeta) y `Enter`: el prompt queda abierto con "ya existe '…'" en vez de cerrarse o sobreescribir nada.
+- [ ] Dejar el campo vacío (o solo espacios) y `Enter`: no crea nada, muestra "el nombre no puede estar vacío".
+- [ ] `Esc` en cualquier momento del prompt: cierra sin crear nada.
+- [ ] `Ctrl+K M` sobre una fila seleccionada: abre "Renombrar" PRECARGADO con el nombre actual (no vacío) — ajustarlo y `Enter` renombra en disco (`std::fs::rename`, misma carpeta contenedora — esto es renombrar, no mover a otro lado) y el árbol refleja el cambio al instante.
+- [ ] Renombrar a un nombre que ya existe en la misma carpeta: falla con "ya existe '…'", el archivo original queda intacto.
+- [ ] `Delete` con el explorador enfocado y algo seleccionado: abre "Confirmar borrado" con el nombre y si es "el archivo" o "la carpeta" — nunca borra directo desde la tecla.
+- [ ] Cualquier tecla que NO sea `y`/`Y` (incluido `Enter` y `Esc`) en la confirmación: cancela sin tocar el disco — a propósito no hay una "tecla por defecto" para una acción destructiva.
+- [ ] `y` confirma: el archivo/carpeta desaparece del árbol y del disco de verdad (una carpeta se borra recursivamente, con todo lo que tuviera adentro).
+- [ ] Las 3 acciones ("Explorador: Nuevo archivo"/"Nueva carpeta"/"Renombrar selección") aparecen en la paleta de comandos (`F1`) y funcionan igual que sus atajos.
+- [ ] Limitación conocida: crear/renombrar/borrar algo refresca la carpeta contenedora leyéndola de nuevo del disco — si esa carpeta tenía OTRAS subcarpetas ya expandidas en el mismo nivel, quedan colapsadas de nuevo tras el refresco (se puede volver a expandirlas con `Enter`, no se pierde nada, solo el estado visual de "abierta").
+
 ## M2 — Paleta de comandos, buscador de archivos, splits, LSP
 
 - [ ] `Ctrl+Shift+P` o `F1`: abre la paleta de comandos.

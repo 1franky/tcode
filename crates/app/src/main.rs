@@ -42,7 +42,7 @@ use tcode_core::{
     analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo,
     EstadoVim, Modo,
 };
-use tcode_fs::{BuscadorArchivos, Explorador};
+use tcode_fs::{BuscadorArchivos, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador, ModoPromptExplorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_lsp::EstadoLogsLsp;
 use tcode_syntax::{Lenguaje, Resaltador};
@@ -273,6 +273,14 @@ struct EstadoApp {
     /// Visor de logs de stderr de la sesión LSP activa (`Ctrl+K R`,
     /// PLAN.md §5.3).
     logs_lsp: EstadoLogsLsp,
+    /// Prompt de texto del explorador (`Ctrl+K N`/`Ctrl+K C`/`Ctrl+K M`
+    /// — nuevo archivo/carpeta/renombrar, BACKLOG.md P0 "explorador de
+    /// solo lectura").
+    prompt_explorador: EstadoPromptExplorador,
+    /// Confirmación de borrado del explorador (`Delete` con el
+    /// explorador enfocado) — separada de `prompt_explorador` porque no
+    /// tiene ningún campo de texto, solo `y`/cualquier otra tecla.
+    confirmar_borrado: EstadoConfirmarBorrado,
 }
 
 fn sin_modificadores(key: KeyEvent) -> bool {
@@ -334,6 +342,8 @@ async fn ejecutar(
         lsp: lsp::EstadoLsp::nuevo(),
         vim: EstadoVim::nuevo(),
         logs_lsp: EstadoLogsLsp::nuevo(),
+        prompt_explorador: EstadoPromptExplorador::nuevo(),
+        confirmar_borrado: EstadoConfirmarBorrado::nuevo(),
     };
 
     // El archivo abierto al arrancar también dispara el LSP si su
@@ -375,6 +385,8 @@ async fn ejecutar(
                 &filas_lenguajes,
                 &estado.editor_tema,
                 &estado.logs_lsp,
+                &estado.prompt_explorador,
+                &estado.confirmar_borrado,
             )
         })?;
 
@@ -771,6 +783,51 @@ async fn ejecutar(
             continue;
         }
 
+        // Prompt de texto del explorador (`Ctrl+K N`/`Ctrl+K C`/`Ctrl+K
+        // M` — nuevo archivo/carpeta/renombrar, BACKLOG.md P0
+        // "explorador de solo lectura"): mismo patrón que "Guardar
+        // como" — `Enter` confirma e intenta la operación de verdad
+        // (`crear_archivo`/`crear_carpeta`/`renombrar_seleccion`), si
+        // falla el prompt queda abierto con el error en vez de cerrarse
+        // como si nada.
+        if estado.prompt_explorador.activo() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => estado.prompt_explorador.cerrar(),
+                KeyCode::Backspace => estado.prompt_explorador.borrar(),
+                KeyCode::Enter => confirmar_prompt_explorador(&mut estado.explorador, &mut estado.prompt_explorador),
+                KeyCode::Char(c) if sin_modificadores(key) => estado.prompt_explorador.escribir(c),
+                _ => {}
+            }
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
+        // Confirmación de borrado del explorador (`Delete` con el
+        // explorador enfocado): acción destructiva e irreversible, así
+        // que no hay "Enter confirma" ni tecla por defecto — solo `y`
+        // borra de verdad, cualquier otra tecla (incluido `Esc`) cancela
+        // sin tocar el disco.
+        if estado.confirmar_borrado.activo() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    // `confirmar()` ya cierra el prompt; la ruta que
+                    // devuelve no hace falta acá — `borrar_seleccion` la
+                    // vuelve a sacar de la selección actual del árbol,
+                    // que no pudo haber cambiado mientras este prompt
+                    // capturaba el teclado por completo.
+                    estado.confirmar_borrado.confirmar();
+                    let _ = estado.explorador.borrar_seleccion();
+                }
+                _ => estado.confirmar_borrado.cerrar(),
+            }
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
         // "Salto rápido" del explorador (`Ctrl+K J`): mientras está
         // activo, cualquier tecla asignada como etiqueta
         // (`Explorador::etiqueta_para_fila`) abre ese archivo o expande
@@ -956,6 +1013,35 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             estado.logs_lsp.abrir(estado.lsp.logs());
             Accion::Continuar
         }
+        // Crear/renombrar en el explorador (BACKLOG.md P0, "explorador
+        // de solo lectura") — global, mismo criterio que
+        // `explorador.saltar`: invocable desde la paleta de comandos sin
+        // tener el explorador abierto todavía, lo muestra y le da el
+        // foco antes de abrir el prompt.
+        "explorador.nuevo_archivo" => {
+            estado.explorador.mostrar();
+            estado.foco = Foco::Explorador;
+            estado.prompt_explorador.abrir(ModoPromptExplorador::NuevoArchivo, "");
+            Accion::Continuar
+        }
+        "explorador.nueva_carpeta" => {
+            estado.explorador.mostrar();
+            estado.foco = Foco::Explorador;
+            estado.prompt_explorador.abrir(ModoPromptExplorador::NuevaCarpeta, "");
+            Accion::Continuar
+        }
+        // Precargado con el nombre actual (no vacío) — mismo criterio
+        // que "Guardar como" sobre un archivo ya existente: alcanza con
+        // ajustar en vez de reescribir la ruta entera. Sin nada
+        // seleccionado (árbol vacío) no abre nada — no hay qué renombrar.
+        "explorador.renombrar" => {
+            estado.explorador.mostrar();
+            estado.foco = Foco::Explorador;
+            if let Some(nodo) = estado.explorador.seleccion_actual() {
+                estado.prompt_explorador.abrir(ModoPromptExplorador::Renombrar, &nodo.nombre);
+            }
+            Accion::Continuar
+        }
         "buscar.en_archivo" | "buscar.reemplazar" => {
             let texto = layout.editor_activo().buffer().a_texto();
             estado.estado_busqueda.abrir(id == "buscar.reemplazar", &texto);
@@ -1009,6 +1095,22 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             let ruta_inicial =
                 layout.editor_activo().buffer().ruta().map(|r| r.display().to_string()).unwrap_or_default();
             estado.guardar_como.abrir(&ruta_inicial);
+            Accion::Continuar
+        }
+        // `Delete` reinterpretado como "pedir confirmación de borrado"
+        // en vez de "borrar hacia adelante" (su significado normal en el
+        // editor, `editor.borrar_adelante` en `ejecutar_comando` más
+        // abajo) — mismo criterio que `cursor.arriba`/`editor.nueva_linea`
+        // ya reinterpretados para el explorador, pero este necesita
+        // `estado.confirmar_borrado`, al que `ejecutar_comando_explorador`
+        // no tiene acceso, así que se resuelve acá en vez de ahí. Nunca
+        // borra directo: siempre abre el prompt de confirmación primero
+        // (BACKLOG.md P0, "explorador de solo lectura" — acción
+        // destructiva e irreversible).
+        "editor.borrar_adelante" if estado.foco == Foco::Explorador => {
+            if let Some(nodo) = estado.explorador.seleccion_actual() {
+                estado.confirmar_borrado.abrir(nodo.ruta.clone(), nodo.nombre.clone(), nodo.es_carpeta);
+            }
             Accion::Continuar
         }
         _ => ejecutar_comando(
@@ -1260,6 +1362,31 @@ fn guardar_como_confirmar(layout: &mut PanelLayout, guardar_como: &mut EstadoGua
             guardar_como.cerrar();
         }
         Err(e) => guardar_como.establecer_error(e.to_string()),
+    }
+}
+
+/// `Enter` con el prompt de texto del explorador abierto (`Ctrl+K N`/
+/// `Ctrl+K C`/`Ctrl+K M`): despacha a la operación de filesystem que
+/// corresponda según `ModoPromptExplorador`. Un nombre vacío (o solo
+/// espacios) no intenta nada — mismo criterio que "Guardar como" con una
+/// ruta vacía. Si la operación falla (ya existe algo con ese nombre,
+/// permiso denegado...) el prompt queda abierto con el motivo, en vez de
+/// cerrarse como si nada.
+fn confirmar_prompt_explorador(explorador: &mut Explorador, prompt: &mut EstadoPromptExplorador) {
+    let Some(modo) = prompt.modo() else { return };
+    let texto = prompt.texto().trim();
+    if texto.is_empty() {
+        prompt.establecer_error("el nombre no puede estar vacío".to_string());
+        return;
+    }
+    let resultado = match modo {
+        ModoPromptExplorador::NuevoArchivo => explorador.crear_archivo(texto),
+        ModoPromptExplorador::NuevaCarpeta => explorador.crear_carpeta(texto),
+        ModoPromptExplorador::Renombrar => explorador.renombrar_seleccion(texto),
+    };
+    match resultado {
+        Ok(()) => prompt.cerrar(),
+        Err(e) => prompt.establecer_error(e.to_string()),
     }
 }
 
