@@ -36,6 +36,23 @@ impl Nodo {
         Ok(nodo)
     }
 
+    /// Vuelve a leer del disco los hijos de este nodo — usado tras
+    /// crear/renombrar/borrar algo adentro (`Explorador::crear_archivo`/
+    /// `crear_carpeta`/`renombrar_seleccion`/`borrar_seleccion`) para que
+    /// el árbol en memoria refleje el cambio. Solo tiene sentido si ya se
+    /// habían cargado (una carpeta nunca expandida no tiene nada que
+    /// refrescar: la próxima vez que se expanda, `alternar` los carga
+    /// frescos igual). Los hijos nuevos siempre arrancan colapsados —
+    /// mismo comportamiento que la primera carga, no hay forma de saber
+    /// qué subcarpetas "deberían" seguir expandidas tras un cambio en el
+    /// disco.
+    pub(crate) fn recargar_hijos_si_estaban_cargados(&mut self) -> Result<()> {
+        if self.hijos_cargados {
+            self.cargar_hijos()?;
+        }
+        Ok(())
+    }
+
     fn cargar_hijos(&mut self) -> Result<()> {
         let mut entradas: Vec<_> = std::fs::read_dir(&self.ruta)
             .with_context(|| format!("no se pudo leer '{}'", self.ruta.display()))?

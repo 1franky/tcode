@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::nodo::Nodo;
 
@@ -160,6 +160,118 @@ impl Explorador {
 
         Ok(resultado)
     }
+
+    /// Nodo bajo la fila seleccionada ahora mismo, si el árbol no está
+    /// vacío — lo que necesitan crear/renombrar/borrar para saber sobre
+    /// qué archivo/carpeta operar sin duplicar el recorrido de
+    /// `activar_seleccion`.
+    pub fn seleccion_actual(&self) -> Option<&Nodo> {
+        let mut restante = self.seleccion;
+        nodo_en_indice(&self.raiz.hijos, &mut restante)
+    }
+
+    /// Carpeta donde debería crearse un archivo/carpeta nuevo (`Ctrl+K
+    /// N`/`Ctrl+K C`): la seleccionada si es una carpeta, la que la
+    /// contiene si es un archivo, o la raíz del proyecto si no hay nada
+    /// seleccionado (árbol vacío).
+    pub fn carpeta_destino_para_nuevo(&self) -> &Path {
+        match self.seleccion_actual() {
+            Some(nodo) if nodo.es_carpeta => &nodo.ruta,
+            Some(nodo) => nodo.ruta.parent().unwrap_or(&self.raiz.ruta),
+            None => &self.raiz.ruta,
+        }
+    }
+
+    /// Crea un archivo vacío llamado `nombre` dentro de
+    /// [`Explorador::carpeta_destino_para_nuevo`] y refresca esa carpeta
+    /// en el árbol para que aparezca sin tener que colapsar/reexpandirla
+    /// a mano. Falla (sin tocar el disco) si ya existe algo con ese
+    /// nombre ahí — mismo criterio que "Guardar como" nunca sobreescribe
+    /// en silencio.
+    pub fn crear_archivo(&mut self, nombre: &str) -> Result<()> {
+        let destino = self.carpeta_destino_para_nuevo().join(nombre);
+        if destino.exists() {
+            anyhow::bail!("ya existe '{}'", destino.display());
+        }
+        std::fs::File::create(&destino).with_context(|| format!("no se pudo crear '{}'", destino.display()))?;
+        self.refrescar_carpeta(destino.parent().unwrap_or(&self.raiz.ruta).to_path_buf())
+    }
+
+    /// Análogo a [`Explorador::crear_archivo`] pero para una carpeta
+    /// nueva (`std::fs::create_dir`, no recursivo — mismo criterio que
+    /// cualquier explorador: si la carpeta padre no existe, es un error,
+    /// no algo para crear en cascada sin confirmación).
+    pub fn crear_carpeta(&mut self, nombre: &str) -> Result<()> {
+        let destino = self.carpeta_destino_para_nuevo().join(nombre);
+        if destino.exists() {
+            anyhow::bail!("ya existe '{}'", destino.display());
+        }
+        std::fs::create_dir(&destino).with_context(|| format!("no se pudo crear '{}'", destino.display()))?;
+        self.refrescar_carpeta(destino.parent().unwrap_or(&self.raiz.ruta).to_path_buf())
+    }
+
+    /// Renombra la fila seleccionada a `nuevo_nombre` (dentro de la misma
+    /// carpeta contenedora — esto es "renombrar", no "mover" a otra
+    /// carpeta) y refresca esa carpeta en el árbol.
+    pub fn renombrar_seleccion(&mut self, nuevo_nombre: &str) -> Result<()> {
+        let Some(nodo) = self.seleccion_actual() else {
+            anyhow::bail!("no hay nada seleccionado para renombrar");
+        };
+        let origen = nodo.ruta.clone();
+        let carpeta_padre = origen.parent().unwrap_or(&self.raiz.ruta).to_path_buf();
+        let destino = carpeta_padre.join(nuevo_nombre);
+        if destino.exists() {
+            anyhow::bail!("ya existe '{}'", destino.display());
+        }
+        std::fs::rename(&origen, &destino)
+            .with_context(|| format!("no se pudo renombrar '{}' a '{}'", origen.display(), destino.display()))?;
+        self.refrescar_carpeta(carpeta_padre)
+    }
+
+    /// Borra la fila seleccionada del disco (archivo con
+    /// `std::fs::remove_file`, carpeta con `std::fs::remove_dir_all` —
+    /// recursivo, sin papelera de reciclaje) y refresca la carpeta
+    /// contenedora. Quien llama (`app`) es responsable de haber pedido
+    /// confirmación antes (`tcode_fs::EstadoConfirmarBorrado`) — este
+    /// método no vuelve a preguntar nada, borra directo.
+    pub fn borrar_seleccion(&mut self) -> Result<()> {
+        let Some(nodo) = self.seleccion_actual() else {
+            anyhow::bail!("no hay nada seleccionado para borrar");
+        };
+        let ruta = nodo.ruta.clone();
+        let es_carpeta = nodo.es_carpeta;
+        let carpeta_padre = ruta.parent().unwrap_or(&self.raiz.ruta).to_path_buf();
+
+        if es_carpeta {
+            std::fs::remove_dir_all(&ruta).with_context(|| format!("no se pudo borrar '{}'", ruta.display()))?;
+        } else {
+            std::fs::remove_file(&ruta).with_context(|| format!("no se pudo borrar '{}'", ruta.display()))?;
+        }
+        self.refrescar_carpeta(carpeta_padre)?;
+
+        // La fila borrada (y todas las que le seguían) ya no existen —
+        // recortar la selección igual que hace `activar_seleccion` al
+        // colapsar una carpeta.
+        let total = self.lista_visible().len();
+        self.seleccion = self.seleccion.min(total.saturating_sub(1));
+        Ok(())
+    }
+
+    /// Vuelve a leer del disco los hijos de la carpeta en `ruta` — el
+    /// nodo raíz si `ruta` es la raíz del proyecto, o el nodo
+    /// correspondiente en el árbol si no (`nodo_mut_por_ruta`). Si esa
+    /// carpeta no está en el árbol (poco común: pasó algo raro entre medio)
+    /// no hay nada que refrescar visualmente, pero el cambio en disco ya
+    /// se hizo de todos modos — no se considera un error.
+    fn refrescar_carpeta(&mut self, ruta: PathBuf) -> Result<()> {
+        if ruta == self.raiz.ruta {
+            return self.raiz.recargar_hijos_si_estaban_cargados();
+        }
+        let Some(nodo) = nodo_mut_por_ruta(&mut self.raiz.hijos, &ruta) else {
+            return Ok(());
+        };
+        nodo.recargar_hijos_si_estaban_cargados()
+    }
 }
 
 fn aplanar<'a>(nodo: &'a Nodo, profundidad: usize, salida: &mut Vec<(usize, &'a Nodo)>) {
@@ -182,6 +294,43 @@ fn nodo_mut_en_indice<'a>(nodos: &'a mut [Nodo], indice: &mut usize) -> Option<&
         *indice -= 1;
         if nodo.es_carpeta && nodo.expandida {
             if let Some(encontrado) = nodo_mut_en_indice(&mut nodo.hijos, indice) {
+                return Some(encontrado);
+            }
+        }
+    }
+    None
+}
+
+/// Versión de solo lectura de [`nodo_mut_en_indice`] — `Explorador::
+/// seleccion_actual` no necesita mutar nada, solo consultar.
+fn nodo_en_indice<'a>(nodos: &'a [Nodo], indice: &mut usize) -> Option<&'a Nodo> {
+    for nodo in nodos {
+        if *indice == 0 {
+            return Some(nodo);
+        }
+        *indice -= 1;
+        if nodo.es_carpeta && nodo.expandida {
+            if let Some(encontrado) = nodo_en_indice(&nodo.hijos, indice) {
+                return Some(encontrado);
+            }
+        }
+    }
+    None
+}
+
+/// Busca el nodo cuya `ruta` coincide exactamente con `objetivo`, en
+/// cualquier parte del árbol (esté o no expandido — no importa para
+/// refrescar: una carpeta nunca expandida no tiene hijos cargados que
+/// refrescar, `Nodo::recargar_hijos_si_estaban_cargados` ya lo resuelve
+/// sola). Usado por `Explorador::refrescar_carpeta` tras crear/renombrar/
+/// borrar algo.
+fn nodo_mut_por_ruta<'a>(nodos: &'a mut [Nodo], objetivo: &Path) -> Option<&'a mut Nodo> {
+    for nodo in nodos {
+        if nodo.ruta == objetivo {
+            return Some(nodo);
+        }
+        if nodo.es_carpeta {
+            if let Some(encontrado) = nodo_mut_por_ruta(&mut nodo.hijos, objetivo) {
                 return Some(encontrado);
             }
         }
@@ -340,5 +489,132 @@ mod tests {
         let resultado = explorador.saltar_a_etiqueta('z').unwrap();
         assert_eq!(resultado, None);
         assert!(explorador.modo_salto(), "una etiqueta inválida no cancela el modo salto");
+    }
+
+    #[test]
+    fn carpeta_destino_para_nuevo_sin_seleccion_es_la_raiz() {
+        let dir = crear_arbol_de_prueba();
+        let explorador = Explorador::nuevo(dir.path()).unwrap();
+        // Fila 0 = "carpeta" (una carpeta) — pero para probar "sin
+        // selección" de verdad hace falta un árbol vacío.
+        let vacio = tempfile::tempdir().unwrap();
+        let explorador_vacio = Explorador::nuevo(vacio.path()).unwrap();
+        assert_eq!(explorador_vacio.carpeta_destino_para_nuevo(), vacio.path());
+        // Con "carpeta" seleccionada (fila 0, una carpeta): el destino es
+        // ella misma.
+        assert_eq!(explorador.carpeta_destino_para_nuevo(), dir.path().join("carpeta"));
+    }
+
+    #[test]
+    fn carpeta_destino_para_nuevo_con_archivo_seleccionado_es_su_carpeta_contenedora() {
+        let dir = crear_arbol_de_prueba();
+        let mut explorador = Explorador::nuevo(dir.path()).unwrap();
+        explorador.mover_abajo(); // fila 1 = "archivo.txt"
+        assert_eq!(explorador.carpeta_destino_para_nuevo(), dir.path());
+    }
+
+    #[test]
+    fn crear_archivo_en_la_raiz_aparece_en_el_arbol_y_en_disco() {
+        let dir = crear_arbol_de_prueba();
+        let mut explorador = Explorador::nuevo(dir.path()).unwrap();
+        explorador.mover_abajo(); // selecciona "archivo.txt" -> destino es la raíz
+
+        explorador.crear_archivo("nuevo.txt").unwrap();
+
+        assert!(dir.path().join("nuevo.txt").is_file());
+        assert!(explorador.lista_visible().iter().any(|(_, n)| n.nombre == "nuevo.txt"));
+    }
+
+    #[test]
+    fn crear_archivo_dentro_de_una_carpeta_seleccionada() {
+        let dir = crear_arbol_de_prueba();
+        let mut explorador = Explorador::nuevo(dir.path()).unwrap();
+        // Fila 0 = "carpeta" (colapsada) — sigue siendo el destino aunque
+        // no esté expandida.
+        explorador.crear_archivo("adentro2.txt").unwrap();
+
+        assert!(dir.path().join("carpeta").join("adentro2.txt").is_file());
+        // Expandir para confirmar que el hijo nuevo aparece en el árbol.
+        explorador.activar_seleccion().unwrap();
+        assert!(explorador.lista_visible().iter().any(|(_, n)| n.nombre == "adentro2.txt"));
+    }
+
+    #[test]
+    fn crear_archivo_que_ya_existe_falla_sin_tocar_el_disco() {
+        let dir = crear_arbol_de_prueba();
+        let mut explorador = Explorador::nuevo(dir.path()).unwrap();
+        explorador.mover_abajo(); // destino: raíz
+        std::fs::write(dir.path().join("archivo.txt"), "contenido original").unwrap();
+
+        assert!(explorador.crear_archivo("archivo.txt").is_err());
+        assert_eq!(std::fs::read_to_string(dir.path().join("archivo.txt")).unwrap(), "contenido original");
+    }
+
+    #[test]
+    fn crear_carpeta_aparece_en_el_arbol_y_en_disco() {
+        let dir = crear_arbol_de_prueba();
+        let mut explorador = Explorador::nuevo(dir.path()).unwrap();
+        explorador.mover_abajo(); // destino: raíz
+
+        explorador.crear_carpeta("carpeta_nueva").unwrap();
+
+        assert!(dir.path().join("carpeta_nueva").is_dir());
+        assert!(explorador.lista_visible().iter().any(|(_, n)| n.nombre == "carpeta_nueva" && n.es_carpeta));
+    }
+
+    #[test]
+    fn renombrar_seleccion_cambia_el_nombre_conservando_el_contenido() {
+        let dir = crear_arbol_de_prueba();
+        std::fs::write(dir.path().join("archivo.txt"), "hola").unwrap();
+        let mut explorador = Explorador::nuevo(dir.path()).unwrap();
+        explorador.mover_abajo(); // fila 1 = "archivo.txt"
+
+        explorador.renombrar_seleccion("renombrado.txt").unwrap();
+
+        assert!(!dir.path().join("archivo.txt").exists());
+        assert_eq!(std::fs::read_to_string(dir.path().join("renombrado.txt")).unwrap(), "hola");
+        assert!(explorador.lista_visible().iter().any(|(_, n)| n.nombre == "renombrado.txt"));
+        assert!(!explorador.lista_visible().iter().any(|(_, n)| n.nombre == "archivo.txt"));
+    }
+
+    #[test]
+    fn renombrar_a_un_nombre_que_ya_existe_falla() {
+        let dir = crear_arbol_de_prueba();
+        let mut explorador = Explorador::nuevo(dir.path()).unwrap();
+        explorador.mover_abajo(); // fila 1 = "archivo.txt"
+
+        assert!(explorador.renombrar_seleccion("carpeta").is_err());
+        assert!(dir.path().join("archivo.txt").exists(), "no debería haberse tocado el original");
+    }
+
+    #[test]
+    fn borrar_un_archivo_lo_quita_del_arbol_y_del_disco() {
+        let dir = crear_arbol_de_prueba();
+        let mut explorador = Explorador::nuevo(dir.path()).unwrap();
+        explorador.mover_abajo(); // fila 1 = "archivo.txt"
+
+        explorador.borrar_seleccion().unwrap();
+
+        assert!(!dir.path().join("archivo.txt").exists());
+        assert!(!explorador.lista_visible().iter().any(|(_, n)| n.nombre == "archivo.txt"));
+    }
+
+    #[test]
+    fn borrar_una_carpeta_la_borra_recursivamente() {
+        let dir = crear_arbol_de_prueba();
+        let mut explorador = Explorador::nuevo(dir.path()).unwrap();
+        // Fila 0 = "carpeta" (tiene "dentro.txt" adentro).
+
+        explorador.borrar_seleccion().unwrap();
+
+        assert!(!dir.path().join("carpeta").exists());
+        assert_eq!(explorador.lista_visible().len(), 1, "solo queda archivo.txt");
+    }
+
+    #[test]
+    fn seleccion_actual_es_none_en_un_arbol_vacio() {
+        let dir = tempfile::tempdir().unwrap();
+        let explorador = Explorador::nuevo(dir.path()).unwrap();
+        assert!(explorador.seleccion_actual().is_none());
     }
 }
