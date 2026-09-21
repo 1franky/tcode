@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 use ratatui::Frame;
 
 use tcode_fs::Explorador;
@@ -23,11 +23,16 @@ use crate::Paleta;
 /// la indentación) con su etiqueta de una tecla — tipearla abre ese
 /// archivo o expande esa carpeta directamente, sin navegar con las
 /// flechas (útil con muchos archivos visibles a la vez, en vez de
-/// contarlos uno por uno). No hay scroll-follow todavía en este panel
-/// (una fila seleccionada más allá del alto visible simplemente no se
-/// ve): las etiquetas comparten esa misma limitación — solo tienen
-/// sentido, y solo se deberían usar, sobre filas realmente visibles en
-/// pantalla.
+/// contarlos uno por uno). Con scroll-follow (`ListState`, BACKLOG.md
+/// P1 — antes se dibujaba siempre desde la fila 0, dejando la
+/// seleccionada invisible si el árbol era más alto que el panel) las
+/// etiquetas quedan mejor todavía: al activar el modo, la fila
+/// seleccionada ya está en pantalla (no hace falta que esté cerca del
+/// principio del árbol) — cada etiqueta sigue siendo la de
+/// `Explorador::etiqueta_para_fila(idx)` con el índice ABSOLUTO de esa
+/// fila en `lista_visible()`, así que da lo mismo si la ventana visible
+/// arranca en la fila 0 o más abajo: lo que se ve siempre corresponde a
+/// la tecla que hay que tipear.
 pub fn dibujar(frame: &mut Frame, area: Rect, explorador: &Explorador, paleta: &Paleta) {
     let seleccion = explorador.seleccion();
     let modo_salto = explorador.modo_salto();
@@ -88,5 +93,9 @@ pub fn dibujar(frame: &mut Frame, area: Rect, explorador: &Explorador, paleta: &
         .title(explorador.nombre_raiz().to_string())
         .style(Style::default().bg(paleta.fondo).fg(paleta.texto));
 
-    frame.render_widget(List::new(items).block(bloque), area);
+    let mut estado_lista = ListState::default();
+    if seleccion < items.len() {
+        estado_lista.select(Some(seleccion));
+    }
+    frame.render_stateful_widget(List::new(items).block(bloque), area, &mut estado_lista);
 }
