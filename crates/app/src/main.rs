@@ -674,7 +674,7 @@ async fn ejecutar(
                 }
                 KeyCode::Enter => {
                     if let Some(id) = estado.selector_tema.confirmar() {
-                        confirmar_tema_seleccionado(&mut estado, id);
+                        confirmar_tema_seleccionado(&mut estado, &id);
                     }
                 }
                 _ => {}
@@ -1320,7 +1320,7 @@ fn recargar_config_tema_y_keymap(estado: &mut EstadoApp, resolvedor: &mut Resolv
 /// queda como estaba).
 fn aplicar_preview_tema(estado: &mut EstadoApp) {
     if let Some(id) = estado.selector_tema.tema_seleccionado() {
-        estado.paleta = cargar_paleta(id);
+        estado.paleta = cargar_paleta(&id);
     }
 }
 

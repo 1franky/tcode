@@ -1,4 +1,4 @@
-use crate::tema::{InfoTema, TEMAS_EMBEBIDOS};
+use crate::tema::{descubrir_temas_usuario, InfoTemaListado, TEMAS_EMBEBIDOS};
 
 /// Filtro de tipo de tema del selector (`Ctrl+K Ctrl+T`, PLAN.md §7): los
 /// tres que menciona el plan — "alto contraste" quedó pendiente hasta que
@@ -36,12 +36,12 @@ impl FiltroTipoTema {
         }
     }
 
-    fn coincide(&self, info: &InfoTema) -> bool {
+    fn coincide(&self, tipo: &str, alto_contraste: bool) -> bool {
         match self {
             FiltroTipoTema::Todos => true,
-            FiltroTipoTema::Oscuro => info.tipo == "dark",
-            FiltroTipoTema::Claro => info.tipo == "light",
-            FiltroTipoTema::AltoContraste => info.alto_contraste,
+            FiltroTipoTema::Oscuro => tipo == "dark",
+            FiltroTipoTema::Claro => tipo == "light",
+            FiltroTipoTema::AltoContraste => alto_contraste,
         }
     }
 }
@@ -98,10 +98,17 @@ impl EstadoSelectorTema {
         self.activa = false;
     }
 
-    /// Temas embebidos que pasan el filtro actual, en el orden de
-    /// [`TEMAS_EMBEBIDOS`].
-    pub fn temas_filtrados(&self) -> Vec<InfoTema> {
-        TEMAS_EMBEBIDOS.iter().filter(|t| self.filtro.coincide(t)).copied().collect()
+    /// Temas que pasan el filtro actual: primero los embebidos (en el
+    /// orden de [`TEMAS_EMBEBIDOS`]), después los que el usuario dejó en
+    /// su carpeta de temas (`descubrir_temas_usuario`, alfabético) — ver
+    /// PLAN.md §7 "Compartir temas: importar temas desde archivo".
+    pub fn temas_filtrados(&self) -> Vec<InfoTemaListado> {
+        TEMAS_EMBEBIDOS
+            .iter()
+            .map(InfoTemaListado::from)
+            .chain(descubrir_temas_usuario())
+            .filter(|t| self.filtro.coincide(&t.tipo, t.alto_contraste))
+            .collect()
     }
 
     pub fn mover_abajo(&mut self) {
@@ -126,15 +133,17 @@ impl EstadoSelectorTema {
 
     /// El id del tema bajo la fila seleccionada ahora mismo, si hay
     /// alguno visible con el filtro actual — es lo que `app` usa para el
-    /// preview en vivo en cada movimiento.
-    pub fn tema_seleccionado(&self) -> Option<&'static str> {
-        self.temas_filtrados().get(self.seleccion).map(|t| t.id)
+    /// preview en vivo en cada movimiento. `String` propio (no
+    /// `&'static str`) porque un tema descubierto en la carpeta de
+    /// usuario no tiene esa duración de vida.
+    pub fn tema_seleccionado(&self) -> Option<String> {
+        self.temas_filtrados().into_iter().nth(self.seleccion).map(|t| t.id)
     }
 
     /// Confirma la fila seleccionada: cierra el selector y devuelve el id
     /// del tema a persistir (`None` si el filtro actual no deja ninguna
     /// fila visible).
-    pub fn confirmar(&mut self) -> Option<&'static str> {
+    pub fn confirmar(&mut self) -> Option<String> {
         let id = self.tema_seleccionado();
         self.cerrar();
         id
@@ -157,7 +166,7 @@ mod tests {
         selector.abrir("nord");
         assert!(selector.activa());
         assert_eq!(selector.tema_original(), "nord");
-        assert_eq!(selector.tema_seleccionado(), Some("nord"));
+        assert_eq!(selector.tema_seleccionado(), Some("nord".to_string()));
     }
 
     #[test]

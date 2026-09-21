@@ -233,6 +233,11 @@ de las primeras versiones).
   `~/.config/tcode/themes/<tema>-mio.toml` (o el directorio de config
   equivalente de tu SO) — un archivo TOML plano, fácil de editar a mano
   o pasarle a alguien más.
+- **Importar un tema de otra persona**: dejá su archivo `.toml` en esa
+  misma carpeta de temas (con cualquier nombre de archivo que no sea uno
+  de los 13 incluidos) y va a aparecer solo en el selector (`Ctrl+K
+  Ctrl+T`), con su nombre y filtro (claro/oscuro/alto contraste) reales
+  — no hace falta reiniciar `tcode` ni editar `config.toml` a mano.
 
 ## Panel de administración
 
