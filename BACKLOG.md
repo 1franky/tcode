@@ -44,27 +44,18 @@ Cuatro niveles:
 
 ## P0 — Gaps sorprendentes
 
-Ninguno pendiente por ahora — el único que había (explorador de solo
-lectura) se cerró, ver "Hecho recientemente".
+### Rendimiento: pegar texto grande y repetición rápida de teclas
+
+Reportado el 2026-09-23 usando el editor de verdad: pegar ~500 líneas
+desde el portapapeles se ve "línea por línea" y tarda demasiado, y
+mantener apretadas las flechas congela la pantalla un momento y después
+el cursor "se pone al día" de golpe, pasándose de donde se quería ir.
+Para un editor de terminal cuya razón de ser es la velocidad, esto es
+el problema más importante que hay hoy. En investigación.
 
 ---
 
 ## P1 — Gaps reales de alcance acotado
-
-### 1. LSP: sin variables de entorno por comando
-
-`ComandoLsp` (`crates/config/src/config.rs`) tiene `comando` +
-`argumentos`, nada de `env` — PLAN.md §5.3 pedía las tres. Sirve para
-casos reales (un LSP que necesita `JAVA_HOME`, o una versión de Node
-distinta vía `PATH` acotado a esa sesión).
-
-**Alcance**: agregar `env: HashMap<String, String>` a `ComandoLsp`
-(con su UI de edición — probablemente una fila más en el prompt `c` de
-"Lenguajes / LSP", o un modal aparte tipo `CLAVE=valor` por línea) y
-pasarlo a `Command::envs(...)` en `Cliente::lanzar`
-(`crates/lsp/src/cliente.rs`). Acotado, pero la parte de UI para
-editar un mapa clave-valor (no un string plano) es la parte con más
-decisiones de diseño.
 
 ### 2. "Ver logs del LSP" (`Ctrl+K R`, ya implementado) es una foto, no en vivo
 
@@ -76,29 +67,6 @@ una vista que recibe actualizaciones de una tarea de fondo mientras el
 usuario está tipeando un filtro). Si en algún momento hace falta de
 verdad ver un log mientras se reproduce un problema en curso, esta es
 la pieza para revisarla — hasta entonces, cerrar/reabrir alcanza.
-
-### 3. Scroll-follow real en overlays y en el explorador
-
-Bug latente compartido por varios lugares, notado en piezas anteriores
-pero nunca resuelto de raíz:
-
-- `tcode_ui::overlay::dibujar` (paleta de comandos, buscador de
-  archivos, selector de temas, visor de logs de LSP) usa
-  `ratatui::widgets::List` **sin `ListState`** — siempre renderiza desde
-  el ítem 0, recortado a lo que entra en el alto disponible. Con más
-  resultados de los que entran en pantalla, mover la selección hacia
-  abajo con `↓` la deja resaltando una fila que nunca se dibuja.
-- `crates/ui/src/panel_archivos.rs` (explorador) tiene el mismo
-  problema: sin `ListState`, un árbol más alto que el panel deja la
-  fila seleccionada invisible al bajar lo suficiente.
-
-**Alcance**: un solo arreglo en `overlay::dibujar` (agregar `ListState`
-y `render_stateful_widget`, calculando el offset para mantener
-`seleccion` visible) resuelve los 4 usos de una vez. El explorador
-necesita el mismo tratamiento por separado (arma su propia `List` sin
-pasar por `overlay::dibujar`). No es viese ni difícil, pero toca 2
-archivos con bastante superficie de uso — probar con cuidado que no
-rompa el resaltado de fila actual que ya funciona.
 
 ---
 
@@ -207,6 +175,17 @@ formatos campo por campo.
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-21, dos P1 más (misma verificación independiente):**
+- **Scroll-follow real en overlays y en el explorador** (PR #86) — era
+  el P1 #3. `ListState` en `overlay::dibujar` (paleta, buscador, selector
+  de temas, visor de logs LSP) y su equivalente en `panel_archivos.rs`;
+  la fila seleccionada ya no queda fuera de pantalla con listas largas.
+- **Variables de entorno por comando LSP** (PR #87) — era el P1 #1.
+  `ComandoLsp::env` (`BTreeMap`), sintaxis `VAR=valor -- comando` en el
+  mismo campo de edición de "Lenguajes / LSP" (retrocompatible);
+  `Cliente::lanzar` las pasa con `Command::envs` (aditivo al entorno
+  heredado).
 
 **2026-09-21, dos piezas más en paralelo (mismo criterio: agentes en
 worktrees aislados, revisadas y mergeadas después de verificación
