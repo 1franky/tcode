@@ -61,6 +61,13 @@ pub struct PanelEditor {
     pub modo_markdown: ModoMarkdown,
     pub modo_csv: ModoCsv,
     pub estado_csv: EstadoCsv,
+    /// Motivo del último intento de guardar este documento que falló
+    /// (permiso denegado, carpeta borrada...), mostrado en la statusbar
+    /// hasta que un guardado posterior funcione o se abra otro archivo
+    /// en el panel. Lo fija `app` (`guardar_panel` en `main.rs`) tanto
+    /// para `Ctrl+S` como para el guardado automático (BACKLOG.md P2 #4)
+    /// — este último corre solo, sin ningún prompt donde mostrar el error.
+    pub aviso_guardado: Option<String>,
 }
 
 impl PanelEditor {
@@ -74,6 +81,7 @@ impl PanelEditor {
             modo_markdown: ModoMarkdown::default(),
             modo_csv,
             estado_csv: EstadoCsv::nuevo(),
+            aviso_guardado: None,
         }
     }
 
@@ -171,6 +179,13 @@ impl Layout {
         salida
     }
 
+    /// Todos los paneles, en el mismo orden que los índices de
+    /// `ir_a_panel` — para lo que tiene que recorrerlos a todos, no solo
+    /// el activo (el guardado automático, BACKLOG.md P2 #4).
+    pub fn paneles_mut(&mut self) -> Vec<&mut PanelEditor> {
+        self.hojas_mut()
+    }
+
     fn hojas_mut(&mut self) -> Vec<&mut PanelEditor> {
         fn recorrer<'a>(panel: &'a mut Panel, salida: &mut Vec<&'a mut PanelEditor>) {
             match panel {
@@ -214,6 +229,7 @@ impl Layout {
         panel.modo_markdown = ModoMarkdown::default();
         panel.modo_csv = if panel.es_csv() { ModoCsv::Tabla } else { ModoCsv::Fuente };
         panel.estado_csv = EstadoCsv::nuevo();
+        panel.aviso_guardado = None;
     }
 
     /// `Ctrl+K T`: alterna el panel activo entre la vista de tabla y el
@@ -393,6 +409,7 @@ fn dibujar_panel(
                         area_statusbar,
                         &panel_editor.editor,
                         &panel_editor.ruta_mostrada,
+                        panel_editor.aviso_guardado.as_deref(),
                         paleta,
                         &panel_editor.diagnosticos,
                         interfaz,
@@ -486,6 +503,7 @@ fn dibujar_panel(
                     area_statusbar,
                     &panel_editor.editor,
                     &panel_editor.ruta_mostrada,
+                    panel_editor.aviso_guardado.as_deref(),
                     paleta,
                     &panel_editor.diagnosticos,
                     interfaz,

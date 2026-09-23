@@ -230,9 +230,12 @@ impl EstadoLsp {
     /// Líneas de stderr acumuladas por la sesión activa, de la más
     /// vieja a la más nueva — vacío si no hay sesión, o si la hay pero
     /// nunca escribió nada (PLAN.md §5.3, "ver logs"; `Ctrl+K R`,
-    /// `crates/app/src/main.rs`).
-    pub fn logs(&self) -> Vec<String> {
-        self.sesion.as_ref().map(|s| s.cliente.logs()).unwrap_or_default()
+    /// `crates/app/src/main.rs`), más el total de líneas recibidas por la
+    /// sesión (`Cliente::logs_con_total`) — lo que usa el visor en vivo
+    /// (`EstadoLogsLsp::actualizar`, BACKLOG.md P1 #2) para saber cuántas
+    /// son nuevas. `(vacío, 0)` sin sesión.
+    pub fn logs_con_total(&self) -> (Vec<String>, u64) {
+        self.sesion.as_ref().map(|s| s.cliente.logs_con_total()).unwrap_or_default()
     }
 
     /// Texto legible en español del estado de la sesión activa —
