@@ -3,6 +3,7 @@ use ratatui::Frame;
 
 use tcode_config::ConfigInterfaz;
 use tcode_core::{delimitador_por_extension, Editor, EstadoBusqueda, EstadoCsv};
+use tcode_fs::DiffGit;
 use tcode_lsp::DiagnosticoSimple;
 use tcode_syntax::{Lenguaje, Resaltador};
 
@@ -61,6 +62,10 @@ pub struct PanelEditor {
     pub modo_markdown: ModoMarkdown,
     pub modo_csv: ModoCsv,
     pub estado_csv: EstadoCsv,
+    /// Base de `HEAD` + marcas por línea para los indicadores de git del
+    /// gutter (BACKLOG.md P2 #6). Se carga sola la primera vez que se
+    /// dibuja el panel con un archivo con ruta (ver `dibujar_panel`).
+    pub git: DiffGit,
 }
 
 impl PanelEditor {
@@ -74,6 +79,7 @@ impl PanelEditor {
             modo_markdown: ModoMarkdown::default(),
             modo_csv,
             estado_csv: EstadoCsv::nuevo(),
+            git: DiffGit::nuevo(),
         }
     }
 
@@ -214,6 +220,27 @@ impl Layout {
         panel.modo_markdown = ModoMarkdown::default();
         panel.modo_csv = if panel.es_csv() { ModoCsv::Tabla } else { ModoCsv::Fuente };
         panel.estado_csv = EstadoCsv::nuevo();
+        panel.git = DiffGit::nuevo();
+    }
+
+    /// Vuelve a leer de `HEAD` la base de los indicadores de git de todos
+    /// los paneles (BACKLOG.md P2 #6) — la app lo llama al guardar: es el
+    /// momento natural en que un commit hecho desde otra terminal se
+    /// vuelve visible. Todos y no solo el activo porque el mismo archivo
+    /// puede estar abierto en más de un panel; son pocos y cada uno es un
+    /// `git cat-file` en segundo plano.
+    pub fn refrescar_bases_git(&mut self) {
+        for panel in self.hojas_mut() {
+            panel.git.refrescar_base();
+        }
+    }
+
+    /// Si algún panel está esperando que `git` devuelva su base o que
+    /// termine de calcularse su diff: mientras tanto la app vuelve a
+    /// dibujar cada tanto aunque no lleguen teclas, para que las marcas
+    /// aparezcan solas al terminar.
+    pub fn cargas_git_pendientes(&self) -> bool {
+        self.hojas().iter().any(|p| p.git.pendiente())
     }
 
     /// `Ctrl+K T`: alterna el panel activo entre la vista de tabla y el
@@ -307,6 +334,7 @@ impl Layout {
         mostrar_numeros: bool,
         ajuste_linea: bool,
         columna_regla: Option<usize>,
+        indicadores_git: bool,
         interfaz: &ConfigInterfaz,
     ) {
         let activo = self.activo;
@@ -323,6 +351,7 @@ impl Layout {
             mostrar_numeros,
             ajuste_linea,
             columna_regla,
+            indicadores_git,
             interfaz,
         );
     }
@@ -341,6 +370,7 @@ fn dibujar_panel(
     mostrar_numeros: bool,
     ajuste_linea: bool,
     columna_regla: Option<usize>,
+    indicadores_git: bool,
     interfaz: &ConfigInterfaz,
 ) {
     match panel {
@@ -403,6 +433,19 @@ fn dibujar_panel(
 
             let area_markdown = if panel_editor.es_markdown() { panel_editor.modo_markdown } else { ModoMarkdown::Fuente };
 
+            // Indicadores de git (BACKLOG.md P2 #6): se ponen al día acá,
+            // al dibujar, y solo para los paneles que muestran código —
+            // `DiffGit::actualizar` no copia nada si el texto no cambió
+            // desde el frame anterior. Sin base (archivo fuera de un repo,
+            // sin trackear, o todavía cargando) no se le reserva columna.
+            let marcas_git = if indicadores_git && area_markdown != ModoMarkdown::SoloPreview {
+                let buffer = panel_editor.editor.buffer();
+                panel_editor.git.actualizar(buffer.ruta(), buffer.rope().chunks());
+                panel_editor.git.tiene_base().then(|| panel_editor.git.marcas())
+            } else {
+                None
+            };
+
             match area_markdown {
                 ModoMarkdown::Fuente => {
                     vista_codigo::dibujar(
@@ -420,6 +463,7 @@ fn dibujar_panel(
                         mostrar_numeros,
                         ajuste_linea,
                         columna_regla,
+                        marcas_git,
                     );
                 }
                 ModoMarkdown::Dividido => {
@@ -457,6 +501,7 @@ fn dibujar_panel(
                         // dos mitades (a diferencia de `ajuste_linea`
                         // arriba).
                         columna_regla,
+                        marcas_git,
                     );
                     vista_markdown::dibujar(
                         frame,
@@ -506,11 +551,11 @@ fn dibujar_panel(
                 .split(area);
             dibujar_panel(
                 frame, partes[0], primero, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
-                ajuste_linea, columna_regla, interfaz,
+                ajuste_linea, columna_regla, indicadores_git, interfaz,
             );
             dibujar_panel(
                 frame, partes[1], segundo, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
-                ajuste_linea, columna_regla, interfaz,
+                ajuste_linea, columna_regla, indicadores_git, interfaz,
             );
         }
     }

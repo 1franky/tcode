@@ -41,6 +41,12 @@ pub struct Paleta {
     /// [`color_regla_vertical`] lo deriva de `background`/`foreground`,
     /// así se adapta solo a temas oscuros y claros por igual.
     pub regla_vertical: Color,
+    /// Colores de los indicadores de git del gutter (sección `[git]` del
+    /// tema, BACKLOG.md P2 #6) — existían en todos los temas desde M0 sin
+    /// estar conectados a nada.
+    pub git_agregada: Color,
+    pub git_modificada: Color,
+    pub git_borrada: Color,
     /// Estilo por token de sintaxis (PLAN.md §7), indexado por uno de los
     /// nombres canónicos de [`tcode_syntax::NOMBRES_RESALTADO`].
     sintaxis: HashMap<&'static str, Style>,
@@ -78,6 +84,9 @@ impl Paleta {
             busqueda_actual: color_diagnostico(&tema.search.coincidencia_actual, Color::Yellow),
             busqueda_otras: color_diagnostico(&tema.search.otras_coincidencias, Color::DarkGray),
             regla_vertical: color_regla_vertical(fondo_rgb, texto_rgb),
+            git_agregada: color_diagnostico(&tema.git.added, Color::Green),
+            git_modificada: color_diagnostico(&tema.git.modified, Color::Yellow),
+            git_borrada: color_diagnostico(&tema.git.deleted, Color::Red),
             sintaxis,
         })
     }
@@ -105,6 +114,9 @@ impl Paleta {
             busqueda_actual: Color::Yellow,
             busqueda_otras: Color::DarkGray,
             regla_vertical: Color::DarkGray,
+            git_agregada: Color::Green,
+            git_modificada: Color::Yellow,
+            git_borrada: Color::Red,
             sintaxis: HashMap::new(),
         }
     }

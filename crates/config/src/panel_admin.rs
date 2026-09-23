@@ -58,6 +58,7 @@ pub enum CampoEditor {
     UsarEspacios,
     AjusteLinea,
     NumerosDeLinea,
+    IndicadoresGit,
     ModoVim,
     ColumnaRegla,
 }
@@ -74,11 +75,12 @@ const COLUMNA_REGLA_MIN: i32 = 20;
 const COLUMNA_REGLA_MAX: i32 = 300;
 
 impl CampoEditor {
-    pub const TODOS: [CampoEditor; 6] = [
+    pub const TODOS: [CampoEditor; 7] = [
         CampoEditor::TamanoTabulacion,
         CampoEditor::UsarEspacios,
         CampoEditor::AjusteLinea,
         CampoEditor::NumerosDeLinea,
+        CampoEditor::IndicadoresGit,
         CampoEditor::ModoVim,
         CampoEditor::ColumnaRegla,
     ];
@@ -89,6 +91,7 @@ impl CampoEditor {
             CampoEditor::UsarEspacios => "Usar espacios en vez de tabs",
             CampoEditor::AjusteLinea => "Ajuste de línea (wrap)",
             CampoEditor::NumerosDeLinea => "Números de línea",
+            CampoEditor::IndicadoresGit => "Indicadores de git en el gutter",
             CampoEditor::ModoVim => "Modo VIM (hjkl, Normal/Insertar)",
             CampoEditor::ColumnaRegla => "Regla vertical (columna)",
         }
@@ -111,6 +114,7 @@ impl CampoEditor {
             CampoEditor::UsarEspacios => etiqueta_bool(config.editor.usar_espacios),
             CampoEditor::AjusteLinea => etiqueta_bool(config.editor.ajuste_linea),
             CampoEditor::NumerosDeLinea => etiqueta_bool(config.editor.numeros_de_linea),
+            CampoEditor::IndicadoresGit => etiqueta_bool(config.editor.indicadores_git),
             CampoEditor::ModoVim => etiqueta_bool(config.editor.modo_vim),
             CampoEditor::ColumnaRegla => {
                 config.editor.columna_regla.map(|c| c.to_string()).unwrap_or_else(|| "Apagada".to_string())
@@ -131,6 +135,7 @@ impl CampoEditor {
             CampoEditor::UsarEspacios => config.editor.usar_espacios = !config.editor.usar_espacios,
             CampoEditor::AjusteLinea => config.editor.ajuste_linea = !config.editor.ajuste_linea,
             CampoEditor::NumerosDeLinea => config.editor.numeros_de_linea = !config.editor.numeros_de_linea,
+            CampoEditor::IndicadoresGit => config.editor.indicadores_git = !config.editor.indicadores_git,
             CampoEditor::ModoVim => config.editor.modo_vim = !config.editor.modo_vim,
             // Un solo campo (`Option<usize>`, no un booleano + un número
             // separados) para que "apagada" y "prendida en la columna
@@ -938,6 +943,16 @@ mod tests {
         assert!(!config.editor.numeros_de_linea);
         CampoEditor::NumerosDeLinea.aplicar(&mut config, -1);
         assert!(config.editor.numeros_de_linea);
+    }
+
+    #[test]
+    fn campo_editor_indicadores_git_prendido_por_defecto_y_alternable() {
+        let mut config = Config::default();
+        assert!(config.editor.indicadores_git);
+        assert_eq!(CampoEditor::IndicadoresGit.valor_actual(&config), "Sí");
+        CampoEditor::IndicadoresGit.aplicar(&mut config, 1);
+        assert!(!config.editor.indicadores_git);
+        assert_eq!(CampoEditor::IndicadoresGit.valor_actual(&config), "No");
     }
 
     #[test]

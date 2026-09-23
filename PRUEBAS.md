@@ -573,6 +573,31 @@ con 10.000 líneas).
 - [ ] Con ajuste de línea activo (`Ctrl+,` → Editor), las líneas largas se siguen partiendo bien, con los números de línea solo en la primera fila de cada una.
 - [ ] Dos paneles (`Ctrl+\`) con archivos distintos: cada uno se resalta bien al editar en cualquiera de los dos.
 
+## Indicadores de git en el gutter
+
+BACKLOG.md P2 #6. Una columna entre los números de línea y el código con
+`+` (agregada), `~` (modificada) y `-` (líneas borradas justo antes)
+respecto de `HEAD`, con los colores de la sección `[git]` del tema. La
+base se lee con `git cat-file` en segundo plano al abrir y al guardar; el
+diff se recalcula en vivo al escribir. Preparar un repo de prueba:
+`git init`, un archivo de ~10 líneas commiteado.
+
+- [ ] Abrir el archivo commiteado sin tocarlo: aparece la columna de git (el código se corre 1 columna a la derecha) pero sin ninguna marca.
+- [ ] Agregar una línea nueva en el medio: aparece `+` verde (según el tema) en esa línea, sin guardar.
+- [ ] Cambiar una letra de una línea existente: aparece `~` amarilla; al deshacer (`Ctrl+Z`) la marca desaparece.
+- [ ] Borrar una línea entera: aparece `-` roja en la línea que quedó justo después del hueco; borrar la última línea del archivo pone el `-` en la nueva última.
+- [ ] Reemplazar una línea por dos distintas: las dos quedan con `~`.
+- [ ] Guardar (`Ctrl+S`), commitear desde otra terminal y volver a `Ctrl+S` en tcode: las marcas desaparecen.
+- [ ] Archivo fuera de cualquier repo: sin columna de git (el código arranca donde siempre), sin errores ni demoras al abrir.
+- [ ] Archivo nuevo sin trackear dentro del repo: sin columna ni marcas (decisión: igual que VSCode/Helix, no se marca todo como agregado).
+- [ ] `Ctrl+,` → Editor → "Indicadores de git en el gutter" en `No`: la columna desaparece al instante; en `Sí` vuelve con las marcas al día.
+- [ ] Con "Números de línea" apagado y el archivo en un repo: se sigue viendo la columna de git sola (marca + espacio); con un archivo fuera de un repo no hay gutter en absoluto.
+- [ ] Con ajuste de línea activo, una línea larga agregada muestra `+` en todas sus filas de pantalla.
+- [ ] Cambiar de tema (`Ctrl+K Ctrl+T`): los colores de las marcas cambian con el tema.
+- [ ] Un repo con archivos CRLF (`core.autocrlf` o commiteados así): abrir uno sin tocarlo no muestra marcas.
+- [ ] Archivo de 10.000 líneas commiteado: tipear de corrido en el medio sigue siendo instantáneo.
+- [ ] Sin `git` en el `PATH` (p. ej. `PATH=/nada "$(command -v tcode)" archivo`): abre normal, sin columna ni errores.
+
 ---
 
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca

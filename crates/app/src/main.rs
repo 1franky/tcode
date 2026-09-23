@@ -432,6 +432,14 @@ async fn ejecutar(
                     }
                     continue;
                 }
+                // Indicadores de git (BACKLOG.md P2 #6): mientras algún
+                // panel espera que `git` devuelva su base de `HEAD` o que
+                // termine el cálculo del diff (los dos en hilos aparte,
+                // ver `tcode_fs::DiffGit`), se vuelve a dibujar cada tanto
+                // aunque no llegue ninguna tecla — así las marcas aparecen
+                // solas al abrir un archivo o al dejar de tipear. Sin nada
+                // pendiente esta rama ni se arma: cero costo en reposo.
+                _ = tokio::time::sleep(INTERVALO_SONDEO_GIT), if layout.cargas_git_pendientes() => continue,
             },
         };
 
@@ -989,6 +997,12 @@ async fn ejecutar(
 /// volver a dibujar por cada tecla.
 const INTERVALO_MAXIMO_SIN_DIBUJAR: Duration = Duration::from_millis(50);
 
+/// Cada cuánto se vuelve a dibujar (para sondear el resultado) mientras
+/// hay una lectura de la base de git en curso — ver la rama
+/// correspondiente del `select!` en `ejecutar`. `git cat-file` suele
+/// tardar pocos ms, así que casi siempre alcanza con una vuelta.
+const INTERVALO_SONDEO_GIT: Duration = Duration::from_millis(30);
+
 /// Texto pegado desde la terminal (`Event::Paste`, bracketed paste). Con
 /// el editor enfocado y sin ningún overlay abierto se inserta entero de
 /// una vez (`Editor::insertar_texto`: una sola edición, un solo paso de
@@ -1153,6 +1167,11 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
                 estado.guardar_como.abrir("");
             } else {
                 let _ = layout.editor_activo_mut().guardar();
+                // Guardar no cambia `HEAD`, pero es el momento natural
+                // para notar un commit hecho desde otra terminal
+                // (BACKLOG.md P2 #6): `Ctrl+S` refresca la base de los
+                // indicadores de git aunque no haya cambios.
+                layout.refrescar_bases_git();
             }
             Accion::Continuar
         }
