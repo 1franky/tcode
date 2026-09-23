@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -300,12 +300,25 @@ pub fn cargar() -> Result<Config> {
     toml::from_str(&texto).with_context(|| format!("'{}' tiene TOML inválido", ruta.display()))
 }
 
+/// Guarda `config` como la config GLOBAL del usuario (`ruta_config()`).
+/// Con una `.tcode/config.toml` de proyecto activa (BACKLOG.md P2 #8),
+/// lo que se pasa acá tiene que ser la config global sin mezclar — nunca
+/// la efectiva (`ConfigProyecto::aplicar_sobre`), o los valores del
+/// proyecto terminarían copiados a la config de todos los demás
+/// proyectos del usuario.
 pub fn guardar(config: &Config) -> Result<()> {
-    let dir = directorio_config();
-    std::fs::create_dir_all(&dir).with_context(|| format!("no se pudo crear '{}'", dir.display()))?;
+    guardar_en(config, &ruta_config())
+}
+
+/// Igual que [`guardar`] pero en una ruta arbitraria — separado para que
+/// los tests puedan ejercitar el mismo camino de escritura sin tocar la
+/// config real del usuario.
+pub fn guardar_en(config: &Config, ruta: &Path) -> Result<()> {
+    if let Some(dir) = ruta.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("no se pudo crear '{}'", dir.display()))?;
+    }
     let texto = toml::to_string_pretty(config).context("no se pudo serializar la configuración")?;
-    let ruta = ruta_config();
-    std::fs::write(&ruta, texto).with_context(|| format!("no se pudo escribir '{}'", ruta.display()))
+    std::fs::write(ruta, texto).with_context(|| format!("no se pudo escribir '{}'", ruta.display()))
 }
 
 /// Recarga la config desde disco reemplazando `actual` en el sitio — esto

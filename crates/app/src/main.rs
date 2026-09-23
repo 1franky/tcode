@@ -20,6 +20,7 @@ mod vim;
 
 use std::collections::VecDeque;
 use std::io::{self, Stdout};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -40,8 +41,8 @@ use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
 use tcode_config::{
-    CampoEditor, CampoTemas, ComandoLsp, Config, ConfigEditor, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema,
-    FocoPanelAdmin, GuardadoAutomatico, ModoEdicion, ResultadoDuplicarTema, Seccion,
+    CampoEditor, CampoTemas, ComandoLsp, Config, ConfigEditor, ConfigProyecto, EstadoEditorTema, EstadoPanelAdmin,
+    EstadoSelectorTema, FocoPanelAdmin, GuardadoAutomatico, ModoEdicion, ResultadoDuplicarTema, Seccion,
 };
 use tcode_core::{
     analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo,
@@ -85,8 +86,12 @@ async fn main() -> Result<()> {
 
     // La config y el keymap nunca hacen fallar el arranque: si el archivo
     // del usuario está corrupto, se sigue con los valores por defecto en
-    // vez de negarse a abrir el editor.
-    let config = tcode_config::cargar().unwrap_or_default();
+    // vez de negarse a abrir el editor. Lo mismo con la config de
+    // proyecto (`.tcode/config.toml`, BACKLOG.md P2 #8): si es inválida
+    // se sigue solo con la global, y el motivo se ve en la cabecera del
+    // panel de administración (`Ctrl+,`).
+    let capas_config = CapasConfig::cargar(tcode_config::directorio_inicio_proyecto(ruta_arg.as_deref()));
+    let config = capas_config.efectiva();
     let keymap = tcode_keymap::cargar().unwrap_or_else(|_| tcode_keymap::keymap_por_defecto());
     let explorador = crear_explorador(ruta_arg.as_deref());
 
@@ -103,10 +108,53 @@ async fn main() -> Result<()> {
     }
 
     let (mut terminal, protocolo_kitty) = iniciar_terminal()?;
-    let resultado = ejecutar(&mut terminal, &mut layout, config, keymap, explorador, ruta_arg.as_deref()).await;
+    let resultado = ejecutar(&mut terminal, &mut layout, capas_config, keymap, explorador, ruta_arg.as_deref()).await;
     finalizar_terminal(&mut terminal, protocolo_kitty)?;
 
     resultado
+}
+
+/// Las dos capas de configuración (BACKLOG.md P2 #8, PLAN.md §12
+/// decisión abierta #5): la global del usuario — la ÚNICA que edita y
+/// guarda el panel de administración — y la de proyecto
+/// (`.tcode/config.toml`, buscada subiendo desde `dir_inicio`), que solo
+/// se lee. `EstadoApp::config` es siempre `efectiva()`: todo lo que
+/// consulta la config (vista de código, statusbar, LSP...) la ve ya
+/// mezclada, sin saber que hay dos capas.
+struct CapasConfig {
+    global: Config,
+    proyecto: Option<ConfigProyecto>,
+    /// Directorio del archivo abierto al arrancar (o el cwd) — fijo toda
+    /// la sesión: `config.recargar` vuelve a buscar desde acá, no desde
+    /// el archivo activo en ese momento (más predecible: abrir otro
+    /// archivo no cambia la config en silencio).
+    dir_inicio: PathBuf,
+}
+
+impl CapasConfig {
+    fn cargar(dir_inicio: PathBuf) -> Self {
+        let global = tcode_config::cargar().unwrap_or_default();
+        let proyecto = tcode_config::cargar_config_proyecto(&dir_inicio);
+        Self { global, proyecto, dir_inicio }
+    }
+
+    fn efectiva(&self) -> Config {
+        match &self.proyecto {
+            Some(proyecto) => proyecto.aplicar_sobre(&self.global),
+            None => self.global.clone(),
+        }
+    }
+}
+
+/// Guarda la config GLOBAL (nunca la efectiva: los valores del proyecto
+/// no deben terminar en la config de todos los demás proyectos del
+/// usuario) y recalcula `estado.config` con el cambio. Todo lo que edita
+/// config desde la UI tiene que mutar `estado.capas_config.global` y
+/// después llamar a esto — mutar `estado.config` directamente se
+/// perdería en la próxima recomposición.
+fn guardar_config_global(estado: &mut EstadoApp) {
+    let _ = tcode_config::guardar(&estado.capas_config.global);
+    estado.config = estado.capas_config.efectiva();
 }
 
 fn cargar_paleta(nombre_tema: &str) -> Paleta {
@@ -260,7 +308,10 @@ enum Accion {
 /// de este struct: es "el documento activo", conceptualmente distinto de
 /// "todo lo demás".
 struct EstadoApp {
+    /// Config EFECTIVA (global + proyecto) — de solo lectura en la
+    /// práctica: para cambiar algo, ver `guardar_config_global`.
     config: Config,
+    capas_config: CapasConfig,
     paleta: Paleta,
     explorador: Explorador,
     foco: Foco,
@@ -327,7 +378,7 @@ fn sin_modificadores(key: KeyEvent) -> bool {
 async fn ejecutar(
     terminal: &mut Terminal<Backend>,
     layout: &mut PanelLayout,
-    config: Config,
+    capas_config: CapasConfig,
     keymap: Keymap,
     explorador: Explorador,
     ruta_arg: Option<&str>,
@@ -358,9 +409,11 @@ async fn ejecutar(
             .collect(),
     );
 
+    let config = capas_config.efectiva();
     let mut estado = EstadoApp {
         paleta: cargar_paleta(&config.interfaz.tema),
         config,
+        capas_config,
         explorador,
         foco: Foco::Editor,
         // Ctrl+Q con cambios sin guardar pide una segunda confirmación en
@@ -473,6 +526,8 @@ async fn ejecutar(
                     &estado.selector_tema,
                     &estado.panel_admin,
                     &estado.config,
+                    &estado.capas_config.global,
+                    estado.capas_config.proyecto.as_ref(),
                     &estado.keymap,
                     &filas_lenguajes,
                     &estado.editor_tema,
@@ -661,7 +716,7 @@ async fn ejecutar(
                         // describe el plan, sin arriesgar perder cambios
                         // si alguien lo espera.
                         KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            let _ = tcode_config::guardar(&estado.config);
+                            let _ = tcode_config::guardar(&estado.capas_config.global);
                         }
                         KeyCode::Enter if estado.panel_admin.seccion_actual() == Seccion::Temas => {
                             ejecutar_accion_temas_admin(&mut estado);
@@ -698,15 +753,15 @@ async fn ejecutar(
                             // "Editor" no hace falta un delta, cualquiera
                             // de las tres teclas simplemente alterna.
                             if let Some(campo) = estado.panel_admin.campo_interfaz_actual() {
-                                campo.aplicar(&mut estado.config);
-                                let _ = tcode_config::guardar(&estado.config);
+                                campo.aplicar(&mut estado.capas_config.global);
+                                guardar_config_global(&mut estado);
                             }
                         }
                         KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
                             if let Some(campo) = estado.panel_admin.campo_editor_actual() {
                                 let delta = if key.code == KeyCode::Left { -1 } else { 1 };
-                                campo.aplicar(&mut estado.config, delta);
-                                let _ = tcode_config::guardar(&estado.config);
+                                campo.aplicar(&mut estado.capas_config.global, delta);
+                                guardar_config_global(&mut estado);
                                 // Si se acaba de prender el modo VIM desde
                                 // acá, el panel activo pasa a Normal de
                                 // inmediato — sin esto quedaría en
@@ -1970,12 +2025,19 @@ fn confirmar_edicion_celda_csv(layout: &mut PanelLayout, avanzar: bool) {
 /// el panel de administración en otra instancia) no tomaría efecto hasta
 /// reiniciar, aunque el panel ya mostrara el valor nuevo.
 fn recargar_config_tema_y_keymap(estado: &mut EstadoApp, resolvedor: &mut Resolvedor) {
-    if let Ok(nueva) = tcode_config::cargar() {
-        let tema_cambio = nueva.interfaz.tema != estado.config.interfaz.tema;
-        estado.config = nueva;
-        if tema_cambio {
-            estado.paleta = cargar_paleta(&estado.config.interfaz.tema);
-        }
+    // La global se conserva si ahora no se puede leer (igual que antes de
+    // la config por proyecto); la de proyecto se vuelve a buscar desde
+    // cero — puede haber aparecido, desaparecido o cambiado
+    // (BACKLOG.md P2 #8).
+    if let Ok(global) = tcode_config::cargar() {
+        estado.capas_config.global = global;
+    }
+    estado.capas_config.proyecto = tcode_config::cargar_config_proyecto(&estado.capas_config.dir_inicio);
+    let nueva = estado.capas_config.efectiva();
+    let tema_cambio = nueva.interfaz.tema != estado.config.interfaz.tema;
+    estado.config = nueva;
+    if tema_cambio {
+        estado.paleta = cargar_paleta(&estado.config.interfaz.tema);
     }
     if let Ok(nuevo_keymap) = tcode_keymap::cargar() {
         estado.keymap = nuevo_keymap;
@@ -1998,10 +2060,14 @@ fn aplicar_preview_tema(estado: &mut EstadoApp) {
 /// se venía aplicando, persiste el cambio en `config.toml` para que
 /// sobreviva a reiniciar el editor (best-effort — si no se puede escribir
 /// a disco, el tema queda igual aplicado en memoria para esta sesión).
+///
+/// Con una config de proyecto que pisa `interfaz.tema`, el tema elegido
+/// queda guardado en la global pero el que se ve sigue siendo el del
+/// proyecto (la paleta se recarga desde la efectiva, no desde `id`).
 fn confirmar_tema_seleccionado(estado: &mut EstadoApp, id: &str) {
-    estado.config.interfaz.tema = id.to_string();
-    estado.paleta = cargar_paleta(id);
-    let _ = tcode_config::guardar(&estado.config);
+    estado.capas_config.global.interfaz.tema = id.to_string();
+    guardar_config_global(estado);
+    estado.paleta = cargar_paleta(&estado.config.interfaz.tema);
 }
 
 /// Qué bloque del `match` de más arriba corresponde al modo de edición
@@ -2035,9 +2101,9 @@ fn categoria_modo_editor_tema(editor_tema: &EstadoEditorTema) -> CategoriaModoEd
 fn abrir_editor_visual_tema(estado: &mut EstadoApp) {
     let tema_actual = estado.config.interfaz.tema.clone();
     if estado.editor_tema.abrir(&tema_actual).is_ok() {
-        estado.config.interfaz.tema = estado.editor_tema.id_tema().to_string();
+        estado.capas_config.global.interfaz.tema = estado.editor_tema.id_tema().to_string();
+        guardar_config_global(estado);
         estado.paleta = Paleta::desde_tema(estado.editor_tema.tema()).unwrap_or_else(|_| Paleta::basica());
-        let _ = tcode_config::guardar(&estado.config);
     }
 }
 
@@ -2114,9 +2180,13 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
                 nombre: lenguaje.nombre_mostrado().to_string(),
                 comando,
                 en_path,
-                habilitado: estado.config.lenguajes.lsp_habilitado(lenguaje.id()),
-                personalizado: estado.config.lenguajes.comando_configurado(lenguaje.id()).is_some(),
-                formatear_al_guardar: estado.config.lenguajes.formatear_al_guardar(lenguaje.id()),
+                // "Habilitado" muestra la GLOBAL (lo que alterna esta
+                // fila); si el proyecto lo apaga igual, se marca aparte.
+                habilitado: estado.capas_config.global.lenguajes.lsp_habilitado(lenguaje.id()),
+                deshabilitado_por_proyecto: estado.capas_config.global.lenguajes.lsp_habilitado(lenguaje.id())
+                    && !estado.config.lenguajes.lsp_habilitado(lenguaje.id()),
+                personalizado: estado.capas_config.global.lenguajes.comando_configurado(lenguaje.id()).is_some(),
+                formatear_al_guardar: estado.capas_config.global.lenguajes.formatear_al_guardar(lenguaje.id()),
                 estado: estado_texto,
             }
         })
@@ -2172,8 +2242,8 @@ fn alternar_lsp_lenguaje_seleccionado(estado: &mut EstadoApp) {
         return;
     }
     if let Some(&lenguaje) = Lenguaje::TODOS.get(estado.panel_admin.campo()) {
-        estado.config.lenguajes.alternar_lsp(lenguaje.id());
-        let _ = tcode_config::guardar(&estado.config);
+        estado.capas_config.global.lenguajes.alternar_lsp(lenguaje.id());
+        guardar_config_global(estado);
     }
 }
 
@@ -2193,8 +2263,8 @@ fn lenguaje_seleccionado_en_lenguajes(panel: &tcode_config::EstadoPanelAdmin) ->
 /// simplemente avisa que no formateó (ver `formatear_antes_de_guardar`).
 fn alternar_formatear_al_guardar_seleccionado(estado: &mut EstadoApp) {
     let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
-    estado.config.lenguajes.alternar_formatear_al_guardar(lenguaje.id());
-    let _ = tcode_config::guardar(&estado.config);
+    estado.capas_config.global.lenguajes.alternar_formatear_al_guardar(lenguaje.id());
+    guardar_config_global(estado);
 }
 
 /// `c` sobre una fila de "Lenguajes / LSP": empieza a editar su comando
@@ -2221,8 +2291,8 @@ fn confirmar_edicion_comando_lsp(estado: &mut EstadoApp) {
         return;
     };
     if let Some(linea) = estado.panel_admin.confirmar_edicion_comando_lsp() {
-        estado.config.lenguajes.fijar_comando_desde_linea(lenguaje.id(), &linea);
-        let _ = tcode_config::guardar(&estado.config);
+        estado.capas_config.global.lenguajes.fijar_comando_desde_linea(lenguaje.id(), &linea);
+        guardar_config_global(estado);
     }
 }
 
@@ -2231,8 +2301,8 @@ fn confirmar_edicion_comando_lsp(estado: &mut EstadoApp) {
 /// uno — vuelve a usar el que trae `tcode_lsp::comando_para` por defecto.
 fn quitar_comando_lsp_seleccionado(estado: &mut EstadoApp) {
     let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
-    estado.config.lenguajes.quitar_comando(lenguaje.id());
-    let _ = tcode_config::guardar(&estado.config);
+    estado.capas_config.global.lenguajes.quitar_comando(lenguaje.id());
+    guardar_config_global(estado);
 }
 
 /// El comando de `tcode_commands::comandos_disponibles()` que corresponde

@@ -1,10 +1,12 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
-use tcode_config::{CampoEditor, CampoInterfaz, CampoTemas, Config, EstadoPanelAdmin, FocoPanelAdmin, Seccion};
+use tcode_config::{
+    CampoEditor, CampoInterfaz, CampoTemas, Config, ConfigProyecto, EstadoPanelAdmin, FocoPanelAdmin, Seccion,
+};
 use tcode_keymap::{detectar_conflictos, formatear_atajo, Keymap};
 
 use crate::Paleta;
@@ -25,6 +27,10 @@ pub struct FilaLenguajeLsp {
     pub comando: String,
     pub en_path: bool,
     pub habilitado: bool,
+    /// `true` si la global lo tiene habilitado pero una `.tcode/
+    /// config.toml` de proyecto lo apaga (BACKLOG.md P2 #8) — `habilitado`
+    /// muestra la global porque es lo que esta fila alterna y guarda.
+    pub deshabilitado_por_proyecto: bool,
     /// `true` si `comando` viene de un override guardado a mano (PLAN.md
     /// §5.3: "Configurar comando, argumentos...") en vez del que trae
     /// `tcode_lsp::comando_para` por defecto.
@@ -37,6 +43,26 @@ pub struct FilaLenguajeLsp {
     pub estado: String,
 }
 
+/// Las capas de config que el panel necesita (BACKLOG.md P2 #8): las
+/// filas muestran y editan la `global` (la única que se guarda a disco);
+/// si `proyecto` pisa una de ellas, se agrega el valor `efectiva` que de
+/// verdad está en uso, marcado como "[proyecto: ...]".
+pub struct CapasPanel<'a> {
+    pub efectiva: &'a Config,
+    pub global: &'a Config,
+    pub proyecto: Option<&'a ConfigProyecto>,
+}
+
+impl CapasPanel<'_> {
+    /// `valor` + la marca de override del proyecto si corresponde.
+    fn valor_con_marca(&self, (seccion, clave): (&str, &str), global: String, efectiva: String) -> String {
+        match self.proyecto {
+            Some(p) if p.pisa(seccion, clave) => format!("{global}   [proyecto: {efectiva}]"),
+            _ => global,
+        }
+    }
+}
+
 /// Dibuja el panel de administración (`Ctrl+,`) a pantalla completa: es
 /// una vista más del sistema, no un overlay flotante sobre el editor
 /// (PLAN.md §5) — quien llama (`tcode_ui::dibujar`) no dibuja nada más
@@ -46,7 +72,7 @@ pub fn dibujar(
     frame: &mut Frame,
     area_total: Rect,
     panel: &EstadoPanelAdmin,
-    config: &Config,
+    capas: &CapasPanel,
     keymap: &Keymap,
     filas_lenguajes: &[FilaLenguajeLsp],
     paleta: &Paleta,
@@ -59,18 +85,71 @@ pub fn dibujar(
         .constraints([Constraint::Length(ANCHO_BARRA), Constraint::Min(1)])
         .split(area_total);
 
+    // Cabecera de config de proyecto: solo ocupa lugar si hay una
+    // `.tcode/config.toml` activa (o con errores), y tantas líneas como
+    // necesite su texto (la ruta sola ya puede ser larga) — con una línea
+    // de más por el corte en palabras de `Wrap`, y un tope para no
+    // comerse el área central.
+    let cabecera = capas.proyecto.map(|p| texto_cabecera_proyecto(p, paleta));
+    let alto_cabecera = cabecera.as_ref().map_or(0, |(texto, _)| {
+        let ancho = columnas[1].width.max(1) as usize;
+        (texto.chars().count().div_ceil(ancho) + 1).min(ALTO_MAXIMO_CABECERA_PROYECTO) as u16
+    });
     let filas_derecha = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(alto_cabecera),
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
         .split(columnas[1]);
 
     dibujar_barra(frame, columnas[0], panel, paleta);
-    match panel.foco() {
-        FocoPanelAdmin::Busqueda => dibujar_busqueda(frame, filas_derecha[0], panel, paleta),
-        _ => dibujar_central(frame, filas_derecha[0], panel, config, keymap, filas_lenguajes, paleta),
+    if let Some((texto, color)) = cabecera {
+        let estilo = Style::default().bg(paleta.fondo).fg(color);
+        frame.render_widget(Paragraph::new(texto).wrap(Wrap { trim: false }).style(estilo), filas_derecha[0]);
     }
-    dibujar_mensaje(frame, filas_derecha[1], panel, paleta);
-    dibujar_pie(frame, filas_derecha[2], panel, paleta);
+    match panel.foco() {
+        FocoPanelAdmin::Busqueda => dibujar_busqueda(frame, filas_derecha[1], panel, paleta),
+        _ => dibujar_central(frame, filas_derecha[1], panel, capas, keymap, filas_lenguajes, paleta),
+    }
+    dibujar_mensaje(frame, filas_derecha[2], panel, paleta);
+    dibujar_pie(frame, filas_derecha[3], panel, paleta);
+}
+
+/// Tope de alto de la cabecera de config de proyecto (ver `dibujar`).
+const ALTO_MAXIMO_CABECERA_PROYECTO: usize = 6;
+
+/// Aviso de que hay una `.tcode/config.toml` de proyecto activa
+/// (BACKLOG.md P2 #8): su ruta, qué claves pisa, y que el panel edita y
+/// guarda SOLO la config global — o, si el archivo tiene errores, por
+/// qué se ignoró entero (así no se pierde en silencio un TOML roto).
+fn texto_cabecera_proyecto(proyecto: &ConfigProyecto, paleta: &Paleta) -> (String, Color) {
+    let ruta = proyecto.ruta().display();
+    match proyecto.error() {
+        Some(error) => (
+            format!(" Config de proyecto {ruta} IGNORADA ({error}) — se usa solo la global."),
+            paleta.diagnostico_error,
+        ),
+        None => {
+            let pisadas = if proyecto.claves_pisadas().is_empty() {
+                "nada".to_string()
+            } else {
+                proyecto.claves_pisadas().join(", ")
+            };
+            let mut texto = format!(
+                " Config de proyecto activa: {ruta} — pisa: {pisadas}. Este panel edita y guarda solo la config global."
+            );
+            if !proyecto.claves_ignoradas().is_empty() {
+                texto.push_str(&format!(" Ignorado por seguridad: {}.", proyecto.claves_ignoradas().join(", ")));
+            }
+            if !proyecto.claves_desconocidas().is_empty() {
+                texto.push_str(&format!(" Claves desconocidas: {}.", proyecto.claves_desconocidas().join(", ")));
+            }
+            (texto, paleta.diagnostico_advertencia)
+        }
+    }
 }
 
 /// Barra lateral con las 5 secciones de PLAN.md §5 (todas visibles desde
@@ -111,11 +190,12 @@ fn dibujar_central(
     frame: &mut Frame,
     area: Rect,
     panel: &EstadoPanelAdmin,
-    config: &Config,
+    capas: &CapasPanel,
     keymap: &Keymap,
     filas_lenguajes: &[FilaLenguajeLsp],
     paleta: &Paleta,
 ) {
+    let config = capas.efectiva;
     let estilo_base = Style::default().bg(paleta.fondo).fg(paleta.texto);
     let seccion = panel.seccion_actual();
     let bloque = Block::default()
@@ -138,7 +218,12 @@ fn dibujar_central(
             .map(|(idx, campo)| {
                 let seleccionado = idx == panel.campo() && panel.foco() == FocoPanelAdmin::Central;
                 let estilo = if seleccionado { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
-                let mut texto = format!("{:<34}{}", campo.nombre(), campo.valor_actual(config));
+                let valor = capas.valor_con_marca(
+                    campo.clave_toml(),
+                    campo.valor_actual(capas.global),
+                    campo.valor_actual(capas.efectiva),
+                );
+                let mut texto = format!("{:<34}{valor}", campo.nombre());
                 if let Some(nota) = campo.nota() {
                     texto.push_str(&format!("   ({nota})"));
                 }
@@ -182,7 +267,12 @@ fn dibujar_central(
                 // 41: el nombre más largo de CampoInterfaz mide 38
                 // ("Statusbar: resumen de diagnósticos LSP") — deja 3
                 // de margen antes del valor.
-                let texto = format!("{:<41}{}", campo.nombre(), campo.valor_actual(config));
+                let valor = capas.valor_con_marca(
+                    campo.clave_toml(),
+                    campo.valor_actual(capas.global),
+                    campo.valor_actual(capas.efectiva),
+                );
+                let texto = format!("{:<41}{valor}", campo.nombre());
                 ListItem::new(Line::from(Span::styled(texto, estilo))).style(estilo)
             })
             .collect(),
@@ -284,6 +374,7 @@ fn filas_lenguajes_lsp<'a>(
             let seleccionada = panel.campo() == idx && central_activa;
             let estilo_fila = if seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
             let habilitado = if fila.habilitado { "Sí" } else { "No" };
+            let marca_proyecto = if fila.deshabilitado_por_proyecto { " [proyecto: No]" } else { "" };
             let formato = if fila.formatear_al_guardar { "Sí" } else { "No" };
 
             if let (true, Some(buffer)) = (seleccionada, panel.editando_comando_lsp()) {
@@ -312,6 +403,7 @@ fn filas_lenguajes_lsp<'a>(
                 Span::styled(format!("{:<14}", fila.nombre), estilo_fila),
                 Span::styled(format!("Habilitado: {habilitado:<5}"), estilo_fila),
                 Span::styled(format!("Formato: {formato:<4}"), estilo_fila),
+                Span::styled(marca_proyecto, estilo_fila),
                 Span::styled(format!("  {comando}"), estilo_comando),
                 Span::styled(personalizado, estilo_comando),
                 Span::styled(en_path, estilo_comando),

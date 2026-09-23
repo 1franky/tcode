@@ -614,6 +614,42 @@ reintenta cada 2 s.
 - [ ] Con formatear al guardar activo y rust-analyzer: desordenar la indentación de un `.rs`, guardar (queda formateado), tipear algo más con acentos y volver a guardar: formatea de nuevo sin romper el archivo (el LSP recibe las ediciones incrementales también después de aplicar el formateo).
 - [ ] Abrir un archivo grande de código Rust renombrado a `.py` (miles de líneas) y tipear en el medio: las teclas aparecen al instante (antes se trababa más de un segundo por tecla); los colores de lo recién editado pueden quedar aproximados hasta unos segundos después — en un archivo así ya eran incorrectos igual.
 
+## Config por proyecto (`.tcode/config.toml`)
+
+Una `.tcode/config.toml` en el proyecto pisa, clave por clave, la config
+global del usuario solo para ese proyecto (BACKLOG.md P2 #8). Para
+probar sin tocar tu config real, corré `tcode` con `HOME=<carpeta
+temporal>` y armá un repo de prueba (`git init` o una carpeta `.git`
+vacía) con, p. ej.:
+
+```toml
+[editor]
+numeros_de_linea = false
+typo_clave = 1
+
+[interfaz]
+tema = "claro"
+
+[lenguajes.lsp_comando.python]
+comando = "./malicioso.sh"
+```
+
+- [ ] Abrir un archivo de ese repo (también en una subcarpeta, p. ej. `src/main.rs`): sin números de línea y con el tema Claro, aunque la global diga lo contrario.
+- [ ] Abrir un archivo FUERA del repo (o `tcode` sin argumentos desde otra carpeta): vuelven los valores de la global.
+- [ ] Una `.tcode/config.toml` por encima de la raíz git del repo NO se aplica (la búsqueda se detiene en la carpeta que tiene `.git`).
+- [ ] `Ctrl+,`: arriba del área central aparece "Config de proyecto activa: <ruta> — pisa: editor.numeros_de_linea, interfaz.tema", el aviso "Ignorado por seguridad: lenguajes.lsp_comando" y "Claves desconocidas: editor.typo_clave". Sin proyecto, esa cabecera no aparece.
+- [ ] Sección "Editor": "Números de línea" muestra el valor de la GLOBAL con `[proyecto: No]` al lado. Cambiarlo (o cualquier otra fila) cambia solo la global.
+- [ ] Después de cambiar algo desde el panel, abrir la `config.toml` global del `HOME` temporal: tiene el cambio hecho, pero NO `tema = "claro"` ni `numeros_de_linea = false` del proyecto (salvo que se hayan elegido a propósito ahí) ni ningún `lsp_comando` de python.
+- [ ] "Lenguajes / LSP": Python muestra su comando por defecto (o el de la global), nunca `./malicioso.sh`. Con `lsp_deshabilitado = ["python"]` en el proyecto, la fila marca `[proyecto: No]`; con `lsp_deshabilitado = []` en el proyecto NO se vuelve a prender un LSP que la global tiene apagado.
+- [ ] Romper el TOML del proyecto (p. ej. `[editor` sin cerrar, o `tamano_tabulacion = "cuatro"`): el editor arranca igual con la global, y la cabecera del panel dice "IGNORADA (TOML inválido: ...)" / "(valor inválido: ...)" en rojo.
+- [ ] Arreglar el archivo con el editor abierto y `Ctrl+K Ctrl+L` (`config.recargar`): se aplica sin reiniciar. Lo mismo al crear o borrar la `.tcode/config.toml`.
+
+### Limitaciones conocidas de la config por proyecto
+
+- La búsqueda parte del archivo abierto al arrancar (o del cwd) y queda fija toda la sesión: abrir después un archivo de otro repo no cambia la config.
+- Un proyecto no puede "apagar" algo que la global fija como opcional (p. ej. la regla vertical: TOML no tiene `null`), ni volver a habilitar un LSP apagado en la global.
+- Con `interfaz.tema` pisado por el proyecto, elegir otro tema en el selector (`Ctrl+K Ctrl+T`) lo guarda en la global pero el que se ve sigue siendo el del proyecto.
+
 ## Guardado automático (`Ctrl+,` → Editor, BACKLOG.md P2 #4)
 
 Tres modos: **Nunca** (por defecto), **Al perder foco** y **Cada N

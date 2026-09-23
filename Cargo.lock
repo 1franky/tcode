@@ -858,6 +858,7 @@ dependencies = [
  "dirs",
  "serde",
  "tcode-fuzzy",
+ "tempfile",
  "toml",
 ]
 

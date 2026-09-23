@@ -26,7 +26,7 @@ use ratatui::layout::{Constraint, Direction, Layout as LayoutRatatui};
 use ratatui::Frame;
 
 use tcode_commands::EstadoPaleta;
-use tcode_config::{Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema};
+use tcode_config::{Config, ConfigProyecto, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema};
 use tcode_core::{EstadoBusqueda, EstadoGuardarComo};
 use tcode_fs::{BuscadorArchivos, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador};
 use tcode_keymap::Keymap;
@@ -116,6 +116,8 @@ pub fn dibujar(
     selector_tema: &EstadoSelectorTema,
     panel_admin_estado: &EstadoPanelAdmin,
     config: &Config,
+    config_global: &Config,
+    config_proyecto: Option<&ConfigProyecto>,
     keymap: &Keymap,
     filas_lenguajes: &[FilaLenguajeLsp],
     editor_tema: &EstadoEditorTema,
@@ -131,7 +133,8 @@ pub fn dibujar(
     }
 
     if panel_admin_estado.activo() {
-        panel_admin::dibujar(frame, area_total, panel_admin_estado, config, keymap, filas_lenguajes, paleta);
+        let capas = panel_admin::CapasPanel { efectiva: config, global: config_global, proyecto: config_proyecto };
+        panel_admin::dibujar(frame, area_total, panel_admin_estado, &capas, keymap, filas_lenguajes, paleta);
         return;
     }
 
