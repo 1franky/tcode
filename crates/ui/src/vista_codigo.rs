@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -129,8 +131,8 @@ pub fn dibujar(
     ajuste_linea: bool,
     columna_regla: Option<usize>,
 ) {
-    let lineas = editor.buffer().lineas_texto();
-    let (area_gutter, area) = dividir_gutter(area, lineas.len(), mostrar_numeros);
+    let buffer = editor.buffer();
+    let (area_gutter, area) = dividir_gutter(area, buffer.num_lineas(), mostrar_numeros);
 
     let alto_visible = area.height as usize;
     let ancho_visible = area.width as usize;
@@ -138,35 +140,45 @@ pub fn dibujar(
     let cursor = editor.cursor();
     let cursores = editor.cursores();
 
-    // Filas visuales de TODO el archivo, no solo las visibles: hace
-    // falta la secuencia completa para poder calcular scroll/cursor en
-    // términos de fila visual quando el ajuste de línea está activo
-    // (una línea larga puede correr el índice de las que vienen
-    // después). Recorrer todo el archivo cada frame para esto es
-    // aceptable con el mismo criterio que ya usa el resaltador de
-    // sintaxis (recalcula tree-sitter completo cada frame en vez de
-    // parsing incremental, ver `tcode_syntax::Resaltador`): correctitud
-    // primero, optimizar cuando haga falta de verdad. Sin ajuste de
-    // línea esto es tan barato como antes (una fila por línea, sin
-    // partir nada).
-    let filas: Vec<FilaVisual> = if ajuste_linea {
-        lineas.iter().enumerate().flat_map(|(idx, l)| filas_visuales_de(idx, l, ancho)).collect()
+    // Solo las filas que entran en pantalla (`filas[0]` es la fila visual
+    // número `estado.scroll`). Sin ajuste de línea hay una fila por línea
+    // lógica, así que alcanza con leer del buffer las líneas visibles —
+    // copiar todas las líneas en cada frame costaba ~3 ms con 10.000
+    // líneas (BACKLOG.md P1 #14). Con ajuste de línea sí hace falta
+    // recorrer el archivo entero: una línea larga que se parte en varias
+    // filas corre el índice de fila de todas las que vienen después, y
+    // sin eso no se puede ubicar el scroll ni el cursor en filas visuales.
+    let (filas, fila_cursor) = if ajuste_linea {
+        let lineas = buffer.lineas_texto();
+        let todas: Vec<FilaVisual> =
+            lineas.iter().enumerate().flat_map(|(idx, l)| filas_visuales_de(idx, l, ancho)).collect();
+        let fila_cursor = fila_de_cursor(&lineas, cursor.linea, cursor.columna, ajuste_linea, ancho);
+        ajustar_scroll(estado, fila_cursor, alto_visible);
+        let fin = (estado.scroll + alto_visible).min(todas.len());
+        (todas.get(estado.scroll..fin).unwrap_or_default().to_vec(), fila_cursor)
     } else {
-        lineas.iter().enumerate().map(|(idx, l)| FilaVisual { idx_linea: idx, inicio: 0, fin: l.len() }).collect()
+        ajustar_scroll(estado, cursor.linea, alto_visible);
+        let fin = (estado.scroll + alto_visible).min(buffer.num_lineas());
+        let filas = (estado.scroll..fin)
+            .map(|idx| FilaVisual { idx_linea: idx, inicio: 0, fin: buffer.linea_texto(idx).len() })
+            .collect();
+        (filas, cursor.linea)
     };
+    // Texto de las líneas que tocan las filas visibles, indexado desde la
+    // primera de ellas.
+    let primera_linea = filas.first().map_or(0, |f| f.idx_linea);
+    let ultima_linea = filas.last().map_or(0, |f| f.idx_linea);
+    let lineas: Vec<String> =
+        if filas.is_empty() { Vec::new() } else { (primera_linea..=ultima_linea).map(|i| buffer.linea_texto(i)).collect() };
 
-    let fila_cursor = fila_de_cursor(&lineas, cursor.linea, cursor.columna, ajuste_linea, ancho);
-    ajustar_scroll(estado, fila_cursor, alto_visible);
-
-    let tokens = calcular_tokens(editor, resaltador, ruta);
+    let rango_visible = rango_bytes_visible(editor, &filas);
+    let tokens = calcular_tokens(editor, resaltador, ruta, rango_visible);
     let lineas_con_cursor: Vec<usize> = cursores.iter().map(|c| c.cursor.linea).collect();
 
     let visibles: Vec<Line> = filas
         .iter()
-        .skip(estado.scroll)
-        .take(alto_visible)
         .map(|fila| {
-            let linea = &lineas[fila.idx_linea];
+            let linea = &lineas[fila.idx_linea - primera_linea];
             let inicio_byte_linea = editor.buffer().inicio_byte_linea(fila.idx_linea);
             let inicio_byte = inicio_byte_linea + fila.inicio;
             let fin_byte = inicio_byte_linea + fila.fin;
@@ -296,7 +308,7 @@ pub fn dibujar(
     );
 
     if let Some(area_gutter) = area_gutter {
-        dibujar_gutter(frame, area_gutter, &filas, estado.scroll, alto_visible, cursor.linea, paleta);
+        dibujar_gutter(frame, area_gutter, &filas, alto_visible, cursor.linea, paleta);
     }
 
     if mostrar_cursor {
@@ -353,9 +365,9 @@ fn dividir_gutter(area: Rect, total_lineas: usize, mostrar_numeros: bool) -> (Op
     (Some(partes[0]), partes[1])
 }
 
-/// Dibuja los números de línea de las filas visibles (mismo rango de
-/// scroll que el código, `scroll..scroll +
-/// alto_visible`, en términos de FILA VISUAL — con ajuste de línea
+/// Dibuja los números de línea de las filas visibles (`filas` son las
+/// mismas que se ven en el código, ya recortadas al scroll, en términos
+/// de FILA VISUAL — con ajuste de línea
 /// activo, varias filas seguidas pueden compartir línea lógica), alineados
 /// a la derecha con un espacio de separación antes del código. Solo la
 /// primera fila de cada línea (`FilaVisual::primera`) muestra el número
@@ -367,7 +379,6 @@ fn dibujar_gutter(
     frame: &mut Frame,
     area: Rect,
     filas: &[FilaVisual],
-    scroll: usize,
     alto_visible: usize,
     linea_cursor: usize,
     paleta: &Paleta,
@@ -376,7 +387,7 @@ fn dibujar_gutter(
     let en_blanco = || Line::from(Span::styled(" ".repeat(area.width as usize), Style::default().bg(paleta.fondo)));
     let filas_pantalla: Vec<Line> = (0..alto_visible)
         .map(|offset| {
-            let Some(fila) = filas.get(scroll + offset) else { return en_blanco() };
+            let Some(fila) = filas.get(offset) else { return en_blanco() };
             if !fila.primera() {
                 return en_blanco();
             }
@@ -388,15 +399,27 @@ fn dibujar_gutter(
     frame.render_widget(Paragraph::new(filas_pantalla), area);
 }
 
-/// Resalta el archivo completo si su extensión corresponde a uno de los 5
-/// lenguajes de M1; si no, o si el parseo falla, se sigue mostrando el
-/// texto sin colorear (nunca rompe el render).
-fn calcular_tokens(editor: &Editor, resaltador: &mut Resaltador, ruta: &str) -> Vec<Token> {
+/// Rango de bytes del texto que ocupan las filas visibles (de la primera
+/// fila en pantalla a la última) — lo único que hace falta resaltar.
+fn rango_bytes_visible(editor: &Editor, filas: &[FilaVisual]) -> Range<usize> {
+    let buffer = editor.buffer();
+    let (Some(primera), Some(ultima)) = (filas.first(), filas.last()) else {
+        return 0..0;
+    };
+    buffer.inicio_byte_linea(primera.idx_linea) + primera.inicio..buffer.inicio_byte_linea(ultima.idx_linea) + ultima.fin
+}
+
+/// Resalta lo visible del archivo si su extensión corresponde a un
+/// lenguaje soportado; si no, o si el parseo falla, se sigue mostrando el
+/// texto sin colorear (nunca rompe el render). La ruta identifica al
+/// documento para que el resaltador re-parsee de forma incremental (ver
+/// `Resaltador::resaltar_documento`).
+fn calcular_tokens(editor: &Editor, resaltador: &mut Resaltador, ruta: &str, rango: Range<usize>) -> Vec<Token> {
     let Some(lenguaje) = Lenguaje::detectar_por_extension(ruta) else {
         return Vec::new();
     };
     let fuente = editor.buffer().a_texto();
-    resaltador.resaltar(lenguaje, &fuente).unwrap_or_default()
+    resaltador.resaltar_documento(ruta, lenguaje, &fuente, rango).unwrap_or_default()
 }
 
 /// Construye los spans coloreados de una línea a partir de los tokens del

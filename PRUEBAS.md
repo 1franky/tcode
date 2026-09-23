@@ -561,6 +561,18 @@ flechas seguidas de 1 s a 0,02 s.
 - [ ] Pegar con la confirmación de borrado del explorador abierta NO confirma el borrado aunque lo pegado empiece con `y`.
 - [ ] Con un LSP activo (p. ej. un `.py` con pyright), pegar código con un error: el diagnóstico aparece igual que al tipearlo.
 
+### Archivos grandes (miles de líneas)
+
+El resaltado de sintaxis ahora es incremental y solo se calcula para lo
+visible (antes cada tecla re-parseaba el archivo entero: ~40 ms por tecla
+con 10.000 líneas).
+
+- [ ] Abrir un archivo de código de varios miles de líneas y tipear de corrido en el medio: cada tecla aparece al instante, sin retraso perceptible.
+- [ ] Abrir un comentario de bloque (`/*` en Rust/JS/C) o un string sin cerrar en el medio del archivo: todo lo que sigue en pantalla cambia de color al momento; al cerrarlo (o borrarlo) vuelve a su color normal.
+- [ ] Ir al final del archivo (`Ctrl+End`) y volver al principio (`Ctrl+Home`): los colores son correctos en ambos extremos (incluidos comentarios o strings de varias líneas que empiezan fuera de la pantalla).
+- [ ] Con ajuste de línea activo (`Ctrl+,` → Editor), las líneas largas se siguen partiendo bien, con los números de línea solo en la primera fila de cada una.
+- [ ] Dos paneles (`Ctrl+\`) con archivos distintos: cada uno se resalta bien al editar en cualquiera de los dos.
+
 ---
 
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
