@@ -7,6 +7,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use tcode_core::{linea_de_ordinal, ordinal_visible, tramo_que_oculta, Coincidencia, Editor};
+use tcode_fs::MarcaGit;
 use tcode_lsp::{DiagnosticoSimple, Severidad};
 use tcode_syntax::{Lenguaje, Resaltador, Token};
 
@@ -222,6 +223,10 @@ fn ajustar_scroll_con_ajuste(
 /// no a la línea lógica, así que con ajuste de línea activo se ve en la
 /// misma columna de pantalla en todas las filas de una línea partida,
 /// consistente con cómo se ve en cualquier otro editor.
+/// `marcas_git` son los indicadores de git (BACKLOG.md P2 #6, ver
+/// `tcode_fs::DiffGit`): `None` = sin columna de git (toggle apagado, o
+/// archivo sin base en `HEAD`); `Some` reserva una columna de 1 carácter
+/// entre los números y el código — ver [`dibujar_gutter`].
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -238,9 +243,10 @@ pub fn dibujar(
     mostrar_numeros: bool,
     ajuste_linea: bool,
     columna_regla: Option<usize>,
+    marcas_git: Option<&[Option<MarcaGit>]>,
 ) {
     let buffer = editor.buffer();
-    let (area_gutter, area) = dividir_gutter(area, buffer.num_lineas(), mostrar_numeros);
+    let (area_gutter, area) = dividir_gutter(area, buffer.num_lineas(), mostrar_numeros, marcas_git.is_some());
 
     let alto_visible = area.height as usize;
     let ancho_visible = area.width as usize;
@@ -457,7 +463,7 @@ pub fn dibujar(
     );
 
     if let Some(area_gutter) = area_gutter {
-        dibujar_gutter(frame, area_gutter, &filas, alto_visible, cursor.linea, paleta);
+        dibujar_gutter(frame, area_gutter, &filas, alto_visible, cursor.linea, paleta, mostrar_numeros, marcas_git);
     }
 
     if mostrar_cursor {
@@ -498,12 +504,20 @@ fn color_severidad(paleta: &Paleta, severidad: Severidad) -> ratatui::style::Col
 /// demasiado angosta para reservarle aunque sea 3 columnas al gutter (2
 /// dígitos + 1 espacio de separación), no hay gutter: se devuelve `(None,
 /// area)` sin recortar nada, priorizando el código sobre los números.
-fn dividir_gutter(area: Rect, total_lineas: usize, mostrar_numeros: bool) -> (Option<Rect>, Rect) {
-    if !mostrar_numeros {
+///
+/// `con_git` suma la columna de los indicadores de git (BACKLOG.md P2 #6)
+/// entre los números y el espacio de separación. Con los números
+/// apagados, el gutter aparece igual si hay columna de git (marca +
+/// espacio, 2 columnas): el usuario apagó los números, no las marcas —
+/// para no verlas está su propio toggle. Como `con_git` solo es `true`
+/// para archivos con base en `HEAD`, un archivo fuera de un repo sigue
+/// sin gutter con los números apagados, igual que antes de esta pieza.
+fn dividir_gutter(area: Rect, total_lineas: usize, mostrar_numeros: bool, con_git: bool) -> (Option<Rect>, Rect) {
+    if !mostrar_numeros && !con_git {
         return (None, area);
     }
-    let ancho_numero = total_lineas.max(1).to_string().len().max(2) as u16;
-    let ancho_gutter = ancho_numero + 1;
+    let ancho_numero = if mostrar_numeros { total_lineas.max(1).to_string().len().max(2) as u16 } else { 0 };
+    let ancho_gutter = ancho_numero + u16::from(con_git) + 1;
     if area.width <= ancho_gutter {
         return (None, area);
     }
@@ -524,6 +538,17 @@ fn dividir_gutter(area: Rect, total_lineas: usize, mostrar_numeros: bool) -> (Op
 /// de los editores con ajuste de línea. Las filas que quedan más allá
 /// del final del archivo (ventana más alta que el contenido) también van
 /// en blanco en vez de mostrar números inexistentes.
+///
+/// Con `marcas_git` (BACKLOG.md P2 #6), una columna más entre el número y
+/// el espacio de separación: `+` agregada, `~` modificada, `-` hay líneas
+/// borradas justo antes de esta, cada una con su color de la sección
+/// `[git]` del tema. ASCII a propósito, no `▎`/`▔` como en otros
+/// editores: los símbolos de ancho "ambiguo" desalineaban Windows
+/// Terminal (ver `BORDE_ASCII` en `lib.rs`). Agregada/modificada se
+/// repiten en las filas de continuación de una línea partida por el
+/// ajuste de línea (la línea entera cambió); borrada va solo en la
+/// primera, que es donde está el hueco.
+#[allow(clippy::too_many_arguments)]
 fn dibujar_gutter(
     frame: &mut Frame,
     area: Rect,
@@ -531,18 +556,40 @@ fn dibujar_gutter(
     alto_visible: usize,
     linea_cursor: usize,
     paleta: &Paleta,
+    mostrar_numeros: bool,
+    marcas_git: Option<&[Option<MarcaGit>]>,
 ) {
-    let ancho_numero = area.width.saturating_sub(1) as usize;
-    let en_blanco = || Line::from(Span::styled(" ".repeat(area.width as usize), Style::default().bg(paleta.fondo)));
+    let ancho_git = usize::from(marcas_git.is_some());
+    let ancho_numero = if mostrar_numeros { (area.width as usize).saturating_sub(1 + ancho_git) } else { 0 };
+    let fondo = Style::default().bg(paleta.fondo);
+    let en_blanco = || Line::from(Span::styled(" ".repeat(area.width as usize), fondo));
     let filas_pantalla: Vec<Line> = (0..alto_visible)
         .map(|offset| {
             let Some(fila) = filas.get(offset) else { return en_blanco() };
-            if !fila.primera() {
-                return en_blanco();
+            let mut spans = Vec::with_capacity(3);
+            if ancho_numero > 0 {
+                let texto = if fila.primera() {
+                    format!("{:>ancho$}", fila.idx_linea + 1, ancho = ancho_numero)
+                } else {
+                    " ".repeat(ancho_numero)
+                };
+                let color = if fila.idx_linea == linea_cursor { paleta.numero_linea_activo } else { paleta.numero_linea };
+                spans.push(Span::styled(texto, fondo.fg(color)));
             }
-            let color = if fila.idx_linea == linea_cursor { paleta.numero_linea_activo } else { paleta.numero_linea };
-            let texto = format!("{:>ancho$} ", fila.idx_linea + 1, ancho = ancho_numero);
-            Line::from(Span::styled(texto, Style::default().fg(color).bg(paleta.fondo)))
+            if let Some(marcas) = marcas_git {
+                let marca = match marcas.get(fila.idx_linea).copied().flatten() {
+                    Some(MarcaGit::Agregada) => Some(("+", paleta.git_agregada)),
+                    Some(MarcaGit::Modificada) => Some(("~", paleta.git_modificada)),
+                    Some(MarcaGit::Borrada) if fila.primera() => Some(("-", paleta.git_borrada)),
+                    _ => None,
+                };
+                spans.push(match marca {
+                    Some((simbolo, color)) => Span::styled(simbolo, fondo.fg(color)),
+                    None => Span::styled(" ", fondo),
+                });
+            }
+            spans.push(Span::styled(" ", fondo));
+            Line::from(spans)
         })
         .collect();
     frame.render_widget(Paragraph::new(filas_pantalla), area);

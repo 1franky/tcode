@@ -556,6 +556,14 @@ async fn ejecutar(
                     }
                     continue;
                 }
+                // Indicadores de git (BACKLOG.md P2 #6): mientras algún
+                // panel espera que `git` devuelva su base de `HEAD` o que
+                // termine el cálculo del diff (los dos en hilos aparte,
+                // ver `tcode_fs::DiffGit`), se vuelve a dibujar cada tanto
+                // aunque no llegue ninguna tecla — así las marcas aparecen
+                // solas al abrir un archivo o al dejar de tipear. Sin nada
+                // pendiente esta rama ni se arma: cero costo en reposo.
+                _ = tokio::time::sleep(INTERVALO_SONDEO_GIT), if layout.cargas_git_pendientes() => continue,
                 _ = tick.tick(), if necesita_tick(&estado) => {
                     omitir_dibujo = !procesar_tick(layout, &mut estado);
                     continue;
@@ -1165,6 +1173,12 @@ async fn ejecutar(
 /// el bucle de `ejecutar`): lo suficiente para que se vea avanzar, sin
 /// volver a dibujar por cada tecla.
 const INTERVALO_MAXIMO_SIN_DIBUJAR: Duration = Duration::from_millis(50);
+
+/// Cada cuánto se vuelve a dibujar (para sondear el resultado) mientras
+/// hay una lectura de la base de git en curso — ver la rama
+/// correspondiente del `select!` en `ejecutar`. `git cat-file` suele
+/// tardar pocos ms, así que casi siempre alcanza con una vuelta.
+const INTERVALO_SONDEO_GIT: Duration = Duration::from_millis(30);
 
 /// Período del tick del bucle principal (ver `necesita_tick`): lo que
 /// tarda como mucho una línea nueva de stderr del LSP en aparecer en el
@@ -1899,7 +1913,12 @@ async fn guardar_como_confirmar(layout: &mut PanelLayout, estado: &mut EstadoApp
 /// hace fallar el guardado.
 async fn guardar_archivo_activo(layout: &mut PanelLayout, estado: &mut EstadoApp) -> Result<()> {
     formatear_antes_de_guardar(layout, estado).await;
-    guardar_panel(layout.panel_activo_mut())
+    let resultado = guardar_panel(layout.panel_activo_mut());
+    // Guardar no cambia `HEAD`, pero es el momento natural para notar un
+    // commit hecho desde otra terminal (BACKLOG.md P2 #6): `Ctrl+S`
+    // refresca la base de los indicadores de git aunque no haya cambios.
+    layout.refrescar_bases_git();
+    resultado
 }
 
 /// "Formatear al guardar" (PLAN.md §5 "Editor", BACKLOG.md P2 #5): si

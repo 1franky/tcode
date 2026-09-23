@@ -25,6 +25,12 @@ pub struct ConfigEditor {
     pub usar_espacios: bool,
     pub ajuste_linea: bool,
     pub numeros_de_linea: bool,
+    /// Indicadores de git en el gutter (BACKLOG.md P2 #6): marca las
+    /// líneas agregadas/modificadas/borradas respecto de `HEAD`, en vivo
+    /// mientras se escribe. Prendido por defecto — no cambia nada en
+    /// archivos fuera de un repo o sin trackear (ni siquiera reserva la
+    /// columna, ver `tcode_ui::vista_codigo`).
+    pub indicadores_git: bool,
     /// Modo VIM (M5, alcance "lo esencial" — sin operadores combinables
     /// como `dw`, sin conteos numéricos, sin `:`): modos Normal/Insertar
     /// con `Esc`/`i`/`a`/`o`, movimientos `hjkl`/`0`/`$`/`gg`/`G`, y
@@ -96,6 +102,7 @@ impl Default for ConfigEditor {
             usar_espacios: true,
             ajuste_linea: false,
             numeros_de_linea: true,
+            indicadores_git: true,
             modo_vim: false,
             columna_regla: None,
             guardado_automatico: GuardadoAutomatico::Nunca,
@@ -351,6 +358,7 @@ mod tests {
                 usar_espacios: false,
                 ajuste_linea: true,
                 numeros_de_linea: false,
+                indicadores_git: false,
                 modo_vim: true,
                 columna_regla: Some(80),
                 guardado_automatico: GuardadoAutomatico::CadaNSegundos,

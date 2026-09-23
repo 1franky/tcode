@@ -132,9 +132,9 @@ pub struct TemaBusqueda {
 }
 
 /// Un tema completo, tal como se define en `runtime/themes/*.toml`
-/// (PLAN.md §7). `git` todavía no se usa (la rama git en la statusbar es
-/// una feature que no existe todavía, PLAN.md §5.5); se parsea desde ya
-/// para no tener que cambiar el formato del archivo cuando se conecte.
+/// (PLAN.md §7). `git` colorea los indicadores de git del gutter
+/// (BACKLOG.md P2 #6); la rama git en la statusbar (PLAN.md §5.5) todavía
+/// no existe.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Tema {
     pub name: String,
