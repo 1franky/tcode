@@ -400,6 +400,88 @@ impl Editor {
         self.mover_cursor_a_byte(inicio_byte + reemplazo.len());
     }
 
+    /// Aplica varias ediciones `(rango de bytes, texto nuevo)` de una
+    /// sola vez, como UN solo paso de deshacer (un `Ctrl+Z` vuelve al
+    /// texto de antes de todas ellas) — pensado para el "formatear al
+    /// guardar" vía LSP (BACKLOG.md P2 #5), cuyo `TextEdit[]` puede traer
+    /// decenas de cambios chicos repartidos por el archivo.
+    ///
+    /// Todos los rangos se refieren al texto ANTERIOR a cualquiera de
+    /// ellas (la misma convención que LSP) y no pueden solaparse: se
+    /// aplican de atrás hacia adelante para que ninguna invalide los
+    /// offsets de las que faltan. Si dos se solapan (un servidor que no
+    /// respeta la spec) no se aplica ninguna y devuelve `false` — mejor
+    /// no formatear que dejar el archivo a medio romper. También `false`
+    /// (sin registrar nada en el historial) si la lista viene vacía o
+    /// ninguna edición cambia el texto de verdad, para que un guardado
+    /// sin cambios de formato no deje un paso de deshacer vacío.
+    ///
+    /// Los cursores (y sus selecciones) se conservan "lo mejor posible":
+    /// cada extremo se corre según lo que se insertó/borró ANTES de él;
+    /// uno que caía DENTRO de un rango reemplazado se queda a la misma
+    /// distancia del inicio de ese rango, recortado al largo del texto
+    /// nuevo. Con ediciones mínimas (lo que devuelven rust-analyzer y la
+    /// mayoría de los servidores: solo los espacios que cambian) el
+    /// cursor queda sobre el mismo código que antes de formatear.
+    pub fn aplicar_ediciones(&mut self, ediciones: &[(Range<usize>, String)]) -> bool {
+        let texto = self.buffer.a_texto();
+        let mut ordenadas: Vec<&(Range<usize>, String)> = ediciones.iter().collect();
+        ordenadas.sort_by_key(|(rango, _)| (rango.start, rango.end));
+        let invalida = ordenadas.iter().any(|(r, _)| texto.get(r.clone()).is_none())
+            || ordenadas.windows(2).any(|par| par[0].0.end > par[1].0.start);
+        if invalida {
+            return false;
+        }
+        if ordenadas.iter().all(|(r, nuevo)| texto[r.clone()] == **nuevo) {
+            return false;
+        }
+
+        let mapear = |offset: usize| -> usize {
+            let mut delta: isize = 0;
+            for (rango, nuevo) in &ordenadas {
+                if rango.end <= offset {
+                    delta += nuevo.len() as isize - rango.len() as isize;
+                } else if rango.start < offset {
+                    // Dentro del rango reemplazado: misma distancia al
+                    // inicio, sin pasarse del texto nuevo.
+                    let dentro = (offset - rango.start).min(nuevo.len());
+                    return (rango.start as isize + delta) as usize + dentro;
+                } else {
+                    break;
+                }
+            }
+            (offset as isize + delta) as usize
+        };
+        let cursores_mapeados: Vec<(usize, usize)> = self
+            .cursores
+            .iter()
+            .map(|c| {
+                let ancla = self.buffer.offset_byte(c.ancla.linea, c.ancla.columna);
+                let cursor = self.buffer.offset_byte(c.cursor.linea, c.cursor.columna);
+                (mapear(ancla), mapear(cursor))
+            })
+            .collect();
+
+        self.registrar_snapshot();
+        for (rango, nuevo) in ordenadas.iter().rev() {
+            self.buffer.reemplazar_rango_bytes(rango.start, rango.end, nuevo);
+        }
+        self.cursores = cursores_mapeados
+            .into_iter()
+            .map(|(ancla, cursor)| {
+                let ancla = self.buffer.linea_columna_desde_byte(ancla);
+                let cursor = self.buffer.linea_columna_desde_byte(cursor);
+                let mut c = CursorMultiple {
+                    ancla: Cursor { linea: ancla.0, columna: ancla.1 },
+                    cursor: Cursor { linea: cursor.0, columna: cursor.1 },
+                };
+                c.recortar(&self.buffer);
+                c
+            })
+            .collect();
+        true
+    }
+
     /// `Ctrl+D` (PLAN.md §11 M3): si el cursor principal no tiene
     /// selección, selecciona la palabra bajo ese cursor (sin agregar
     /// ninguno nuevo todavía — la primera pulsación solo marca la
@@ -987,5 +1069,90 @@ mod tests {
             assert_eq!(c.ancla, anclas_antes[i], "el ancla de cada cursor no debe moverse");
             assert_ne!(c.cursor, cursores_antes[i], "el extremo activo de cada cursor sí debe avanzar");
         }
+    }
+
+    /// Editor con `texto` ya cargado y el cursor en `(linea, columna)`.
+    fn editor_con(texto: &str, linea: usize, columna: usize) -> Editor {
+        let mut editor = Editor::nuevo();
+        editor.insertar_texto(texto);
+        let offset = editor.buffer().offset_byte(linea, columna);
+        editor.mover_cursor_a_byte(offset);
+        editor
+    }
+
+    #[test]
+    fn aplicar_ediciones_de_atras_hacia_adelante_con_rangos_del_texto_original() {
+        // Rangos del texto ORIGINAL, en cualquier orden: la segunda
+        // edición no se corre por lo que insertó la primera.
+        let mut editor = editor_con("fn main(){\nlet x=1;\n}\n", 0, 0);
+        let ediciones = vec![(11..11, "    ".to_string()), (9..9, " ".to_string()), (16..17, " = ".to_string())];
+        assert!(editor.aplicar_ediciones(&ediciones));
+        assert_eq!(editor.buffer().a_texto(), "fn main() {\n    let x = 1;\n}\n");
+    }
+
+    #[test]
+    fn aplicar_ediciones_se_deshace_en_un_solo_paso() {
+        let mut editor = editor_con("a=1\nb=2\n", 0, 0);
+        editor.aplicar_ediciones(&[(1..2, " = ".to_string()), (5..6, " = ".to_string())]);
+        assert_eq!(editor.buffer().a_texto(), "a = 1\nb = 2\n");
+
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "a=1\nb=2\n");
+        editor.rehacer();
+        assert_eq!(editor.buffer().a_texto(), "a = 1\nb = 2\n");
+    }
+
+    #[test]
+    fn aplicar_ediciones_conserva_el_cursor_sobre_el_mismo_codigo() {
+        // Cursor sobre la "b" de la línea 1; se inserta indentación antes
+        // de ella y espacios en la línea 0: tiene que seguir sobre la "b".
+        let mut editor = editor_con("a=1\nb=2\n", 1, 0);
+        editor.aplicar_ediciones(&[(1..2, " = ".to_string()), (4..4, "    ".to_string())]);
+        assert_eq!((editor.cursor().linea, editor.cursor().columna), (1, 4));
+    }
+
+    #[test]
+    fn aplicar_ediciones_con_cursor_dentro_de_un_rango_reemplazado_lo_recorta() {
+        // Reemplazo de todo el archivo por algo más corto: el cursor no
+        // puede quedar más allá del texto nuevo.
+        let mut editor = editor_con("abcdefgh", 0, 6);
+        editor.aplicar_ediciones(&[(0..8, "xy".to_string())]);
+        assert_eq!(editor.buffer().a_texto(), "xy");
+        assert_eq!((editor.cursor().linea, editor.cursor().columna), (0, 2));
+    }
+
+    #[test]
+    fn aplicar_ediciones_con_acentos_y_emoji() {
+        let texto = "let s=\"ñandú 😀\";\n";
+        let mut editor = editor_con(texto, 0, 8); // sobre la "a" de "ñandú"
+        let igual = texto.find('=').unwrap();
+        editor.aplicar_ediciones(&[(igual..igual + 1, " = ".to_string())]);
+        assert_eq!(editor.buffer().a_texto(), "let s = \"ñandú 😀\";\n");
+        assert_eq!(editor.cursor().columna, 10);
+    }
+
+    #[test]
+    fn aplicar_ediciones_solapadas_no_aplica_nada() {
+        let mut editor = editor_con("abcdef", 0, 0);
+        assert!(!editor.aplicar_ediciones(&[(0..3, "x".to_string()), (2..4, "y".to_string())]));
+        assert_eq!(editor.buffer().a_texto(), "abcdef");
+    }
+
+    #[test]
+    fn aplicar_ediciones_fuera_de_rango_o_a_mitad_de_caracter_no_aplica_nada() {
+        let mut editor = editor_con("ñ", 0, 0);
+        assert!(!editor.aplicar_ediciones(&[(0..10, "x".to_string())]));
+        assert!(!editor.aplicar_ediciones(&[(1..2, "x".to_string())]));
+        assert_eq!(editor.buffer().a_texto(), "ñ");
+    }
+
+    #[test]
+    fn aplicar_ediciones_sin_cambios_reales_no_deja_paso_de_deshacer() {
+        let mut editor = editor_con("abc", 0, 0);
+        assert!(!editor.aplicar_ediciones(&[]));
+        assert!(!editor.aplicar_ediciones(&[(0..1, "a".to_string())]));
+        // El único paso de deshacer sigue siendo el `insertar_texto`.
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "");
     }
 }

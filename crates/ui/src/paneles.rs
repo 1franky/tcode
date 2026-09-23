@@ -61,6 +61,11 @@ pub struct PanelEditor {
     pub modo_markdown: ModoMarkdown,
     pub modo_csv: ModoCsv,
     pub estado_csv: EstadoCsv,
+    /// Aviso corto y transitorio para la barra de estado de este panel
+    /// (por ahora solo lo deja el guardado con "formatear al guardar"
+    /// prendido, BACKLOG.md P2 #5: "Formateado al guardar" o por qué no
+    /// se formateó). `app` lo limpia con la siguiente tecla.
+    pub mensaje_estado: Option<String>,
 }
 
 impl PanelEditor {
@@ -74,6 +79,7 @@ impl PanelEditor {
             modo_markdown: ModoMarkdown::default(),
             modo_csv,
             estado_csv: EstadoCsv::nuevo(),
+            mensaje_estado: None,
         }
     }
 
@@ -396,6 +402,7 @@ fn dibujar_panel(
                         paleta,
                         &panel_editor.diagnosticos,
                         interfaz,
+                        panel_editor.mensaje_estado.as_deref(),
                     );
                 }
                 return;
@@ -489,6 +496,7 @@ fn dibujar_panel(
                     paleta,
                     &panel_editor.diagnosticos,
                     interfaz,
+                    panel_editor.mensaje_estado.as_deref(),
                 );
             }
         }
