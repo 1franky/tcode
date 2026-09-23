@@ -592,6 +592,34 @@ con 10.000 líneas).
 - [ ] Con ajuste de línea activo (`Ctrl+,` → Editor), las líneas largas se siguen partiendo bien, con los números de línea solo en la primera fila de cada una.
 - [ ] Dos paneles (`Ctrl+\`) con archivos distintos: cada uno se resalta bien al editar en cualquiera de los dos.
 
+## Plegado de bloques (code folding)
+
+Plegar oculta las líneas de un bloque (cuerpo de función, clase, `impl`,
+`if`/`for`, objeto/array, comentario de bloque...) y deja visible su
+primera línea con un marcador ` ... ` al final; la línea de cierre (`}`,
+`end`, `</div>`) queda visible debajo, como en VSCode. Rangos por
+tree-sitter para todos los lenguajes con gramática salvo Markdown (sin
+plegado a propósito); por indentación para el resto (texto plano, YAML,
+TOML...). En terminales sin protocolo Kitty `Ctrl+Shift+[`/`]` y `Ctrl+K
+Ctrl+0` pueden no llegar: usar `Ctrl+K [`, `Ctrl+K ]` y `Ctrl+K 0`.
+
+- [ ] En un `.rs` (p. ej. una copia de `crates/core/src/editor.rs`), cursor dentro de una función: `Ctrl+K [` pliega el bloque más interno que contiene al cursor; la cabecera muestra ` ... ` y los números de línea saltan (p. ej. de 10 a 25).
+- [ ] Repetir `Ctrl+K [` pliega el bloque siguiente hacia afuera (p. ej. el `if` y después la función entera).
+- [ ] `Ctrl+K ]` sobre la cabecera la despliega; los bloques de adentro que estaban plegados siguen plegados.
+- [ ] `Ctrl+K 0` pliega todo el archivo; `Ctrl+K Ctrl+J` despliega todo. Con todo plegado, moverse y hacer scroll por un archivo de miles de líneas sigue siendo instantáneo.
+- [ ] `↓` desde la cabecera plegada salta a la primera línea después del bloque; `↑` desde ahí vuelve a la cabecera. `→` al final de la cabecera va al principio de la línea siguiente al bloque; `←` al principio de esa línea vuelve al final de la cabecera.
+- [ ] `Shift+↓` desde la cabecera selecciona el bloque plegado entero; `Backspace` lo borra y el pliegue desaparece (no queda plegando otras líneas).
+- [ ] `Enter` en una línea de más arriba (o borrar una línea de más arriba): el bloque plegado se corre con su contenido y sigue plegado sobre las mismas líneas de código.
+- [ ] Escribir en la cabecera plegada (p. ej. renombrar la función) no la despliega; `Enter` en el medio o al final de la cabecera sí.
+- [ ] `Ctrl+Z` después de editar cerca de un pliegue: el pliegue vuelve a su lugar (o se despliega si se tocó), nunca oculta líneas equivocadas.
+- [ ] `Ctrl+F` buscando un texto que está dentro de un bloque plegado: al saltar a esa coincidencia el bloque se despliega.
+- [ ] En Python (`.py`): plegar un `def`/`class` oculta el cuerpo entero desde la línea del `def`; en JavaScript/TypeScript: funciones, objetos, arrays y comentarios `/* */`.
+- [ ] Con ajuste de línea activo (`Ctrl+,` → Editor), plegar y desplegar sigue funcionando; el marcador va en la última fila de una cabecera partida en varias filas.
+- [ ] En un `.yaml` o `.txt` indentado: `Ctrl+K [` pliega por indentación.
+- [ ] En un `.md`, `Ctrl+K [` no hace nada (Markdown no tiene plegado).
+- [ ] La paleta (`Ctrl+Shift+P`) lista "Plegado: Plegar el bloque del cursor", "Desplegar...", "Plegar todo" y "Desplegar todo", y funcionan igual que los atajos.
+- [ ] Dos paneles (`Ctrl+\`) con archivos distintos: plegar en uno no afecta al otro.
+
 ---
 
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca

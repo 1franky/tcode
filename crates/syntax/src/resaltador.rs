@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use tree_sitter::{InputEdit, Language, Parser, Point, Query, QueryCursor, StreamingIterator, Tree};
 
 use crate::lenguaje::Lenguaje;
+use crate::plegado::{rangos_de_arbol, rangos_por_indentacion, RangoPlegable};
 
 /// Nombres de token canónicos, en el mismo vocabulario que
 /// `tcode_config::TemaSintaxis` (PLAN.md §7: keyword, string, number,
@@ -308,34 +309,92 @@ impl Resaltador {
         fuente: &str,
         rango: Range<usize>,
     ) -> Result<Vec<Token>> {
+        self.resaltar_documento_tramos(clave, lenguaje, fuente, &[rango])
+    }
+
+    /// Igual que [`Resaltador::resaltar_documento`], pero para varios
+    /// tramos del documento (en orden, sin solaparse) de una sola vez:
+    /// con bloques plegados (BACKLOG.md P2 #7) lo visible son pedazos
+    /// separados por miles de líneas ocultas, y resaltar desde la primera
+    /// fila visible hasta la última recorrería también todo lo oculto. Un
+    /// token que cruza de un tramo al siguiente (un comentario de bloque
+    /// largo) se recorta para que el resultado siga ordenado y sin
+    /// solapes.
+    pub fn resaltar_documento_tramos(
+        &mut self,
+        clave: &str,
+        lenguaje: Lenguaje,
+        fuente: &str,
+        tramos: &[Range<usize>],
+    ) -> Result<Vec<Token>> {
+        self.actualizar_documento(clave, lenguaje, fuente)?;
+        let arbol = &self.documentos[clave].arbol;
+        let config = &self.configs[&lenguaje];
+        let mut tokens: Vec<Token> = Vec::new();
+        for rango in tramos {
+            let inicio = rango.start.min(fuente.len());
+            let fin = rango.end.clamp(inicio, fuente.len());
+            let hasta = tokens.last().map_or(0, |t| t.fin);
+            for mut token in tokens_de_capturas(&mut self.cursor, config, arbol, fuente, inicio..fin) {
+                if token.fin <= hasta {
+                    continue;
+                }
+                token.inicio = token.inicio.max(hasta);
+                tokens.push(token);
+            }
+        }
+        Ok(tokens)
+    }
+
+    /// Rangos plegables del documento `clave` (BACKLOG.md P2 #7, ver
+    /// `crate::plegado`), a partir del mismo árbol incremental que usa el
+    /// resaltado — no hace falta volver a parsear el archivo. Sin
+    /// lenguaje (o si el parseo falla), por indentación.
+    pub fn rangos_plegables(&mut self, clave: &str, lenguaje: Option<Lenguaje>, fuente: &str) -> Vec<RangoPlegable> {
+        let Some(lenguaje) = lenguaje else {
+            return rangos_por_indentacion(fuente);
+        };
+        if self.actualizar_documento(clave, lenguaje, fuente).is_err() {
+            return rangos_por_indentacion(fuente);
+        }
+        rangos_de_arbol(&self.documentos[clave].arbol, lenguaje, fuente)
+    }
+
+    /// Deja en `self.documentos[clave]` el árbol de `fuente`: la primera
+    /// vez parsea el texto completo; las siguientes calcula qué cambió
+    /// respecto del texto de la llamada anterior (prefijo y sufijo
+    /// comunes: una tecla, un pegado o un "reemplazar todo" son siempre
+    /// UNA región contigua o se tratan como tal) y re-parsea de forma
+    /// incremental reutilizando el árbol anterior. Si el texto no cambió,
+    /// no se parsea nada.
+    fn actualizar_documento(&mut self, clave: &str, lenguaje: Lenguaje, fuente: &str) -> Result<()> {
         self.preparar(lenguaje)?;
         self.reloj += 1;
 
         let anterior = self.documentos.remove(clave).filter(|d| d.lenguaje == lenguaje);
-        let arbol = match anterior {
-            Some(doc) if doc.fuente == fuente => doc.arbol,
+        let (arbol, fuente) = match anterior {
+            Some(doc) if doc.fuente == fuente => (doc.arbol, doc.fuente),
             Some(mut doc) => {
                 doc.arbol.edit(&edicion_entre(&doc.fuente, fuente));
-                self.parser
+                let arbol = self
+                    .parser
                     .parse(fuente, Some(&doc.arbol))
-                    .ok_or_else(|| anyhow!("tree-sitter no pudo parsear"))?
+                    .ok_or_else(|| anyhow!("tree-sitter no pudo parsear"))?;
+                (arbol, fuente.to_string())
             }
-            None => self.parser.parse(fuente, None).ok_or_else(|| anyhow!("tree-sitter no pudo parsear"))?,
+            None => {
+                let arbol = self.parser.parse(fuente, None).ok_or_else(|| anyhow!("tree-sitter no pudo parsear"))?;
+                (arbol, fuente.to_string())
+            }
         };
-
-        let config = &self.configs[&lenguaje];
-        let inicio = rango.start.min(fuente.len());
-        let fin = rango.end.clamp(inicio, fuente.len());
-        let tokens = tokens_de_capturas(&mut self.cursor, config, &arbol, fuente, inicio..fin);
 
         if self.documentos.len() >= MAX_DOCUMENTOS {
             if let Some(mas_viejo) = self.documentos.iter().min_by_key(|(_, d)| d.ultimo_uso).map(|(k, _)| k.clone()) {
                 self.documentos.remove(&mas_viejo);
             }
         }
-        let fuente = fuente.to_string();
         self.documentos.insert(clave.to_string(), Documento { lenguaje, fuente, arbol, ultimo_uso: self.reloj });
-        Ok(tokens)
+        Ok(())
     }
 }
 
@@ -641,6 +700,19 @@ mod tests {
                     "{lenguaje:?}, paso {paso}: el incremental difiere de parsear de cero"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn resaltar_por_tramos_pinta_igual_que_de_a_uno() {
+        let fuente = muestra(Lenguaje::Rust);
+        let tramos = [0..500, 3000..3600, 3600..4000, 20000..20100];
+        let mut resaltador = Resaltador::nuevo();
+        let juntos = resaltador.resaltar_documento_tramos("doc", Lenguaje::Rust, fuente, &tramos).unwrap();
+        assert!(juntos.windows(2).all(|par| par[0].fin <= par[1].inicio), "tokens solapados o desordenados");
+        for tramo in tramos {
+            let solo = resaltador.resaltar_documento("doc", Lenguaje::Rust, fuente, tramo.clone()).unwrap();
+            assert_eq!(nombre_por_byte(&juntos, tramo.clone()), nombre_por_byte(&solo, tramo));
         }
     }
 

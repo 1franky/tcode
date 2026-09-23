@@ -9,6 +9,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Atajos esenciales](#atajos-esenciales)
 - [Multi-cursor y selección](#multi-cursor-y-selección)
 - [Búsqueda y reemplazo](#búsqueda-y-reemplazo)
+- [Plegado de bloques](#plegado-de-bloques)
 - [Paneles divididos (splits)](#paneles-divididos-splits)
 - [Explorador de archivos](#explorador-de-archivos)
 - [Modo VIM opcional](#modo-vim-opcional)
@@ -102,6 +103,39 @@ reemplazo. Con la barra abierta:
 
 `F3`/`Shift+F3` también funcionan con la barra cerrada, repitiendo la
 última búsqueda — igual que en VSCode.
+
+## Plegado de bloques
+
+Plegar oculta las líneas de un bloque (el cuerpo de una función, clase o
+`impl`, un `if`/`for`, un objeto o array, un comentario de bloque...): su
+primera línea queda visible con un marcador ` ... ` al final, y la línea
+de cierre (`}`, `end`, `</div>`) queda debajo, igual que en VSCode.
+
+| Atajo | Alternativa | Acción |
+|---|---|---|
+| `Ctrl+Shift+[` | `Ctrl+K [` | Plegar el bloque más interno que contiene al cursor (repetirlo pliega hacia afuera) |
+| `Ctrl+Shift+]` | `Ctrl+K ]` | Desplegar el bloque del cursor |
+| `Ctrl+K Ctrl+0` | `Ctrl+K 0` | Plegar todo |
+| `Ctrl+K Ctrl+J` | | Desplegar todo |
+
+Las alternativas son para terminales sin el protocolo de teclado de
+Kitty, donde `Ctrl+Shift+[` llega como `Esc` y `Ctrl+0` como un `0`
+suelto. Los cuatro comandos también están en la paleta (`Ctrl+Shift+P`,
+"Plegado: ...").
+
+- Las flechas saltan los bloques plegados; `Shift`+flecha selecciona el
+  bloque entero.
+- Editar dentro de un bloque plegado (o borrarlo con una selección) lo
+  despliega; editar más arriba lo corre junto con su código. Escribir en
+  la primera línea del bloque no lo despliega.
+- Buscar (`Ctrl+F`/`F3`) una coincidencia que está adentro de un bloque
+  plegado lo despliega.
+- Qué se puede plegar sale del árbol de sintaxis (tree-sitter) en todos
+  los lenguajes con resaltado, salvo Markdown, que no tiene plegado. En
+  archivos sin lenguaje reconocido (texto plano, YAML, TOML...) se pliega
+  por indentación: una línea seguida de otras más indentadas.
+- El plegado es de cada panel y no se guarda: al volver a abrir el
+  archivo arranca todo desplegado.
 
 ## Paneles divididos (splits)
 

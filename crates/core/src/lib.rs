@@ -12,6 +12,7 @@ pub mod estado_csv;
 pub mod estado_guardar_como;
 pub mod estado_vim;
 pub mod history;
+pub mod plegado;
 
 pub use buffer::{Buffer, Eol};
 pub use busqueda::{buscar_coincidencias, Coincidencia, OpcionesBusqueda};
@@ -26,6 +27,7 @@ pub use estado_csv::EstadoCsv;
 pub use estado_guardar_como::EstadoGuardarComo;
 pub use estado_vim::EstadoVim;
 pub use history::Historia;
+pub use plegado::{linea_de_ordinal, ordinal_visible, tramo_que_oculta, Plegado, Pliegue};
 
 #[cfg(test)]
 mod tests {

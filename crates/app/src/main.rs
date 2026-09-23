@@ -42,7 +42,7 @@ use tcode_config::{
 };
 use tcode_core::{
     analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo,
-    EstadoVim, Modo,
+    EstadoVim, Modo, Pliegue,
 };
 use tcode_fs::{BuscadorArchivos, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador, ModoPromptExplorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
@@ -286,6 +286,11 @@ struct EstadoApp {
     /// explorador enfocado) — separada de `prompt_explorador` porque no
     /// tiene ningún campo de texto, solo `y`/cualquier otra tecla.
     confirmar_borrado: EstadoConfirmarBorrado,
+    /// Resaltador de sintaxis (árbol de tree-sitter incremental por
+    /// documento). Vive acá, no suelto en `ejecutar`, porque además de
+    /// dibujar lo usan los comandos de plegado (BACKLOG.md P2 #7) para
+    /// sacar los rangos plegables del mismo árbol, sin volver a parsear.
+    resaltador: Resaltador,
 }
 
 fn sin_modificadores(key: KeyEvent) -> bool {
@@ -300,7 +305,6 @@ async fn ejecutar(
     explorador: Explorador,
     ruta_arg: Option<&str>,
 ) -> Result<()> {
-    let mut resaltador = Resaltador::nuevo();
     let mut resolvedor = Resolvedor::nuevo(keymap.clone());
     let mut eventos = EventStream::new();
 
@@ -349,6 +353,7 @@ async fn ejecutar(
         logs_lsp: EstadoLogsLsp::nuevo(),
         prompt_explorador: EstadoPromptExplorador::nuevo(),
         confirmar_borrado: EstadoConfirmarBorrado::nuevo(),
+        resaltador: Resaltador::nuevo(),
     };
 
     // Ver `forzar_redibujado_completo`: en Windows, si la "forma" de la
@@ -395,7 +400,7 @@ async fn ejecutar(
                     frame,
                     layout,
                     &estado.paleta,
-                    &mut resaltador,
+                    &mut estado.resaltador,
                     &estado.explorador,
                     &estado.paleta_comandos,
                     &estado.buscador_archivos,
@@ -1129,6 +1134,31 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             if let Some(nodo) = estado.explorador.seleccion_actual() {
                 estado.prompt_explorador.abrir(ModoPromptExplorador::Renombrar, &nodo.nombre);
             }
+            Accion::Continuar
+        }
+        // Plegado (BACKLOG.md P2 #7, PLAN.md §4): los rangos plegables
+        // salen del árbol de tree-sitter que ya mantiene el resaltador
+        // (o de la indentación, sin gramática) y se calculan a pedido,
+        // solo al plegar. Ni en el explorador ni en la vista de tabla
+        // CSV hay líneas de código que plegar.
+        "plegar.actual" | "plegar.todo" => {
+            if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
+                let candidatos = rangos_plegables_del_activo(layout, &mut estado.resaltador);
+                let editor = layout.editor_activo_mut();
+                if id == "plegar.todo" {
+                    editor.plegar_todo(&candidatos);
+                } else {
+                    editor.plegar_en_cursor(&candidatos);
+                }
+            }
+            Accion::Continuar
+        }
+        "plegar.desplegar" => {
+            layout.editor_activo_mut().desplegar_en_cursor();
+            Accion::Continuar
+        }
+        "plegar.desplegar_todo" => {
+            layout.editor_activo_mut().desplegar_todo();
             Accion::Continuar
         }
         "buscar.en_archivo" | "buscar.reemplazar" => {
@@ -2024,6 +2054,21 @@ fn insertar_tabulacion(editor: &mut Editor, config: &Config) {
     } else {
         editor.insertar_char('\t');
     }
+}
+
+/// Rangos plegables del documento del panel activo, como `Pliegue`s del
+/// `core` (ver `Resaltador::rangos_plegables`). La clave del documento es
+/// la misma ruta que usa `vista_codigo` al resaltar, así se reutiliza su
+/// árbol ya parseado.
+fn rangos_plegables_del_activo(layout: &PanelLayout, resaltador: &mut Resaltador) -> Vec<Pliegue> {
+    let panel = layout.panel_activo();
+    let ruta = &panel.ruta_mostrada;
+    let fuente = panel.editor.buffer().a_texto();
+    resaltador
+        .rangos_plegables(ruta, Lenguaje::detectar_por_extension(ruta), &fuente)
+        .into_iter()
+        .map(|r| Pliegue { inicio: r.inicio, fin: r.fin })
+        .collect()
 }
 
 /// Mueve el cursor del editor activo a la coincidencia de búsqueda
