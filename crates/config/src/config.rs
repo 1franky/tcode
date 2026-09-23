@@ -40,7 +40,54 @@ pub struct ConfigEditor {
     /// esta columna" o "apagada" sin un segundo estado que pueda quedar
     /// inconsistente (p. ej. "prendida" pero con la columna en 0).
     pub columna_regla: Option<usize>,
+    /// Guardado automático (PLAN.md §5.4, BACKLOG.md P2 #4). `Nunca` por
+    /// defecto — no le cambia el comportamiento a nadie que no lo prenda
+    /// a propósito. Solo afecta a buffers CON ruta y modificados (un
+    /// "[Sin nombre]" no tiene dónde escribirse sin preguntar).
+    pub guardado_automatico: GuardadoAutomatico,
+    /// Cada cuántos segundos guarda `GuardadoAutomatico::CadaNSegundos`
+    /// — un campo aparte (en vez de un dato dentro de la variante) para
+    /// que el TOML quede plano y legible a mano
+    /// (`guardado_automatico = "cada_n_segundos"` +
+    /// `segundos_guardado_automatico = 30`), y para que el número se
+    /// recuerde aunque se cambie de modo y se vuelva. Ignorado en los
+    /// otros dos modos.
+    pub segundos_guardado_automatico: u64,
 }
+
+/// Modos de guardado automático de PLAN.md §5.4 ("nunca / al perder foco
+/// / cada N segundos"). "Perder foco" = el panel/archivo activo cambia
+/// (otro panel de un split, abrir otro archivo, pasar al explorador) o la
+/// terminal avisa que perdió el foco (si soporta esos eventos) — lo
+/// decide `app`, este crate solo guarda la elección.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GuardadoAutomatico {
+    #[default]
+    Nunca,
+    AlPerderFoco,
+    CadaNSegundos,
+}
+
+impl GuardadoAutomatico {
+    pub const TODOS: [GuardadoAutomatico; 3] =
+        [GuardadoAutomatico::Nunca, GuardadoAutomatico::AlPerderFoco, GuardadoAutomatico::CadaNSegundos];
+
+    /// El modo siguiente (`delta` > 0) o anterior (`delta` < 0) en
+    /// [`Self::TODOS`], dando la vuelta en los extremos — así `←`/`→`/
+    /// `Enter` en el panel de administración recorren los tres sin
+    /// quedarse trabados en una punta.
+    pub fn rotar(self, delta: i32) -> Self {
+        let total = Self::TODOS.len() as i32;
+        let actual = Self::TODOS.iter().position(|m| *m == self).unwrap_or(0) as i32;
+        Self::TODOS[(actual + delta).rem_euclid(total) as usize]
+    }
+}
+
+/// Valor por defecto de `segundos_guardado_automatico` — suficientemente
+/// seguido como para no perder mucho si algo se cuelga, suficientemente
+/// espaciado como para no estar escribiendo a disco todo el tiempo.
+pub const SEGUNDOS_GUARDADO_AUTOMATICO_POR_DEFECTO: u64 = 30;
 
 impl Default for ConfigEditor {
     fn default() -> Self {
@@ -51,6 +98,8 @@ impl Default for ConfigEditor {
             numeros_de_linea: true,
             modo_vim: false,
             columna_regla: None,
+            guardado_automatico: GuardadoAutomatico::Nunca,
+            segundos_guardado_automatico: SEGUNDOS_GUARDADO_AUTOMATICO_POR_DEFECTO,
         }
     }
 }
@@ -291,6 +340,8 @@ mod tests {
                 numeros_de_linea: false,
                 modo_vim: true,
                 columna_regla: Some(80),
+                guardado_automatico: GuardadoAutomatico::CadaNSegundos,
+                segundos_guardado_automatico: 10,
             },
             interfaz: ConfigInterfaz {
                 tema: "claro".into(),
@@ -327,6 +378,36 @@ mod tests {
         let config: Config = toml::from_str("[interfaz]\ntema = \"claro\"\n").unwrap();
         assert_eq!(config.interfaz.tema, "claro");
         assert_eq!(config.editor.tamano_tabulacion, 4);
+    }
+
+    #[test]
+    fn guardado_automatico_arranca_en_nunca() {
+        let config = Config::default();
+        assert_eq!(config.editor.guardado_automatico, GuardadoAutomatico::Nunca);
+        // Un config.toml viejo, anterior a este campo, tampoco lo prende.
+        let viejo: Config = toml::from_str("[editor]\ntamano_tabulacion = 2\n").unwrap();
+        assert_eq!(viejo.editor.guardado_automatico, GuardadoAutomatico::Nunca);
+        assert_eq!(viejo.editor.segundos_guardado_automatico, SEGUNDOS_GUARDADO_AUTOMATICO_POR_DEFECTO);
+    }
+
+    #[test]
+    fn guardado_automatico_se_lee_en_snake_case_desde_toml() {
+        let config: Config =
+            toml::from_str("[editor]\nguardado_automatico = \"al_perder_foco\"\n").unwrap();
+        assert_eq!(config.editor.guardado_automatico, GuardadoAutomatico::AlPerderFoco);
+        let config: Config = toml::from_str(
+            "[editor]\nguardado_automatico = \"cada_n_segundos\"\nsegundos_guardado_automatico = 5\n",
+        )
+        .unwrap();
+        assert_eq!(config.editor.guardado_automatico, GuardadoAutomatico::CadaNSegundos);
+        assert_eq!(config.editor.segundos_guardado_automatico, 5);
+    }
+
+    #[test]
+    fn rotar_guardado_automatico_da_la_vuelta_en_ambos_sentidos() {
+        assert_eq!(GuardadoAutomatico::Nunca.rotar(1), GuardadoAutomatico::AlPerderFoco);
+        assert_eq!(GuardadoAutomatico::CadaNSegundos.rotar(1), GuardadoAutomatico::Nunca);
+        assert_eq!(GuardadoAutomatico::Nunca.rotar(-1), GuardadoAutomatico::CadaNSegundos);
     }
 
     #[test]

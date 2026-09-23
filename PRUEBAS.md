@@ -592,6 +592,36 @@ con 10.000 líneas).
 - [ ] Con ajuste de línea activo (`Ctrl+,` → Editor), las líneas largas se siguen partiendo bien, con los números de línea solo en la primera fila de cada una.
 - [ ] Dos paneles (`Ctrl+\`) con archivos distintos: cada uno se resalta bien al editar en cualquiera de los dos.
 
+## Guardado automático (`Ctrl+,` → Editor, BACKLOG.md P2 #4)
+
+Tres modos: **Nunca** (por defecto), **Al perder foco** y **Cada N
+segundos**. Solo toca archivos con nombre y con cambios sin guardar.
+
+- [ ] Sin tocar la config (modo "Nunca"): editar un archivo, esperar un minuto, cambiar de panel, abrir el explorador (`Ctrl+B`): el archivo en disco NO cambia y la statusbar sigue mostrando `*`.
+- [ ] `Ctrl+,` → Editor: aparecen "Guardado automático" (Nunca) y "Guardado automático: segundos" (30 s); `←`/`→`/`Enter` recorren los tres modos (dando la vuelta) y los segundos van de a 5, entre 5 y 600. Los cambios quedan en `config.toml`.
+- [ ] Modo "Cada N segundos" con 5 s: editar y esperar — a los ~5 s el `*` desaparece y el archivo en disco tiene el cambio. Seguir tipeando sin pausa: se guarda cada ~5 s igual.
+- [ ] Modo "Al perder foco": editar y esperar — no se guarda solo. Pasar al explorador (`Ctrl+B`), dividir (`Ctrl+\`) o cambiar de panel (`Ctrl+1`/`Ctrl+2`): se guarda en ese momento.
+- [ ] Modo "Al perder foco": editar y abrir otro archivo en el mismo panel (`Ctrl+P` o `Enter` en el explorador): el archivo anterior queda guardado en disco antes de ser reemplazado. Abrir solo la paleta/buscador (sin confirmar) NO guarda.
+- [ ] Modo "Al perder foco": editar y pasar a otra ventana/pestaña de la terminal (o a otro panel de tmux con `set -g focus-events on`): se guarda. Si la terminal no soporta eventos de foco, este caso no pasa pero los demás sí.
+- [ ] Un "[Sin nombre]" (buffer nuevo, p. ej. el segundo panel tras `Ctrl+\`) con texto nunca se guarda solo ni abre "Guardar como" por su cuenta.
+- [ ] Guardado que falla (p. ej. `chmod 444` al archivo antes de editar): la statusbar muestra `ERROR: no se pudo guardar: ...` junto a la ruta, el `*` sigue ahí y el editor responde normal. Al devolver el permiso, el siguiente guardado (automático o `Ctrl+S`) funciona y el error desaparece.
+- [ ] Con "Al perder foco" y un guardado que falla, intentar abrir otro archivo en ese panel: NO se abre (no se pierden los cambios) y queda el error en la statusbar.
+- [ ] En reposo con "Cada N segundos" prendido, `tcode` no consume CPU notable (`top`/`ps`), y pegar ~500 líneas sigue siendo instantáneo.
+
+## Logs del LSP en vivo (`Ctrl+K R`, BACKLOG.md P1 #2)
+
+Para forzar líneas nuevas, un comando LSP que envuelva al real y escriba
+a stderr cada segundo (`Ctrl+,` → Lenguajes / LSP → Python → `c`), p. ej.
+un script con `( while true; do echo "latido $i" >&2; i=$((i+1)); sleep 1; done ) &`
+seguido de `pyright-langserver --stdio`.
+
+- [ ] Abrir un `.py` y `Ctrl+K R`: las líneas nuevas aparecen arriba solas, sin cerrar y reabrir; el campo dice "en vivo".
+- [ ] Escribir un filtro mientras llegan líneas: el filtro no se borra ni se pierden teclas; solo aparecen las líneas nuevas que coinciden.
+- [ ] `↓`/`AvPág` resaltan una fila y recorren hacia lo más viejo; mientras tanto la fila resaltada se queda en la misma línea de log aunque lleguen nuevas (el texto dice "↑ para volver a lo nuevo").
+- [ ] `↑` hasta pasar la primera fila vuelve a "en vivo" (sin fila resaltada, lo nuevo entra arriba).
+- [ ] Con el servidor callado (un LSP normal sin la envoltura), el visor abierto no redibuja ni consume CPU en reposo.
+- [ ] `Esc` cierra; reabrir con `Ctrl+K R` arranca otra vez en "en vivo" y sin filtro.
+
 ## Plegado de bloques (code folding)
 
 Plegar oculta las líneas de un bloque (cuerpo de función, clase, `impl`,

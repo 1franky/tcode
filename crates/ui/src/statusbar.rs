@@ -16,14 +16,19 @@ use crate::Paleta;
 /// fase posterior. Cada uno de esos elementos (salvo la ruta y el total
 /// de líneas, que se consideran base) se puede ocultar desde la sección
 /// "Interfaz" del panel de administración (PLAN.md §5.5, M4) — `interfaz`
-/// es lo que decide cuáles entran. `mensaje` es un aviso transitorio
-/// opcional que se agrega al final (ver `PanelEditor::mensaje_estado`).
+/// es lo que decide cuáles entran. `aviso_guardado` es el motivo del
+/// último guardado fallido del documento (`PanelEditor::aviso_guardado`),
+/// si hay uno: va pegado a la ruta, antes que todo lo demás, para que no
+/// quede recortado por el ancho de la barra — y no se puede ocultar.
+/// `mensaje` es un aviso transitorio opcional que se agrega al final (ver
+/// `PanelEditor::mensaje_estado`).
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
     area: Rect,
     editor: &Editor,
     ruta_mostrada: &str,
+    aviso_guardado: Option<&str>,
     paleta: &Paleta,
     diagnosticos: &[DiagnosticoSimple],
     interfaz: &ConfigInterfaz,
@@ -39,6 +44,9 @@ pub fn dibujar(
     let marca_modificado = if editor.buffer().modificado() { " *" } else { "" };
 
     let mut partes = vec![format!("{ruta_mostrada}{marca_modificado}")];
+    if let Some(aviso) = aviso_guardado {
+        partes.push(format!("ERROR: {aviso}"));
+    }
 
     if interfaz.statusbar_posicion_cursor {
         // Solo se muestra la cantidad de cursores cuando hay más de uno

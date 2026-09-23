@@ -326,7 +326,7 @@ opción por nombre):
 | **Atajos de teclado** | Ver/rebindear cualquier atajo (`Enter` sobre un comando y presionar la nueva combinación), con detección de conflictos resaltada en rojo. `Backspace` restablece uno solo al valor por defecto; hay una fila para restablecer todos. También exportar/importar el `keymap.toml` activo a/desde un archivo fijo (ver [Personalizar atajos](#personalizar-atajos)). |
 | **Temas** | Elegir tema (abre el selector con preview) y duplicar el activo para editarlo. |
 | **Lenguajes / LSP** | Habilitar/deshabilitar el servidor LSP de cada lenguaje, ver si el binario está en el `PATH` y el estado de la sesión activa (Conectado/Iniciando/Inactivo). `c` sobre una fila edita el comando+argumentos a mano (ver [LSP](#lsp-autocompletado-y-diagnósticos)); `Backspace` quita ese override. |
-| **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, modo VIM, regla vertical. |
+| **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, modo VIM, regla vertical, guardado automático. |
 | **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo). |
 
 Todos los cambios se aplican y persisten al instante en `config.toml`, sin
@@ -350,6 +350,20 @@ debajo de 20 la apaga de nuevo. Es relativa a la fila de pantalla, no a
 la línea lógica: con ajuste de línea activo se ve en la misma columna en
 todas las filas de una línea partida. El color se calcula a partir del
 tema activo (no hace falta que un tema lo declare para que se vea bien).
+
+**Guardado automático** (sección "Editor"): `Nunca` (por defecto), `Al
+perder foco` o `Cada N segundos` — `←`/`→`/`Enter` recorren los tres, y
+la fila de abajo ajusta los segundos de a 5 (entre 5 y 600, 30 por
+defecto). Solo guarda archivos con nombre y con cambios; un "[Sin
+nombre]" hay que guardarlo a mano la primera vez (`Ctrl+S`). "Al perder
+foco" guarda al cambiar de panel, al abrir otro archivo en el mismo
+panel, al pasar al explorador y — si la terminal avisa de eso — al
+cambiar a otra ventana (en tmux hace falta `set -g focus-events on`).
+Si un guardado falla (sin permiso de escritura, carpeta borrada...) el
+motivo aparece en la barra de estado como `ERROR: ...` y los cambios
+siguen en el editor; se reintenta en el próximo guardado. En
+`config.toml`: `guardado_automatico = "nunca" | "al_perder_foco" |
+"cada_n_segundos"` y `segundos_guardado_automatico = 30` bajo `[editor]`.
 
 ## LSP: autocompletado y diagnósticos
 
@@ -396,8 +410,11 @@ incluidas.
 **`Ctrl+K R`** ("LSP: Ver logs de la sesión activa" en la paleta):
 muestra lo que el servidor escribió en su stderr — útil para entender
 por qué no conecta o se comporta raro, más allá del estado "Conectado"/
-"Iniciando…"/"Inactivo". Es una foto del momento en que se abre (no en
-vivo); escribir en el campo de arriba filtra las líneas por texto. La
+"Iniciando…"/"Inactivo". Se actualiza en vivo mientras está abierto (lo
+más nuevo arriba); escribir en el campo de arriba filtra las líneas por
+texto sin cortar la actualización. `↓`/`↑`/`RePág`/`AvPág` recorren la
+lista resaltando una fila, que se queda quieta sobre su línea aunque
+lleguen nuevas; `↑` desde la primera fila vuelve a seguir lo último. La
 mayoría de los servidores reales se quedan en silencio mientras todo
 funciona bien, así que ver "sin logs" con una sesión conectada es lo
 normal, no un signo de que algo esté mal.

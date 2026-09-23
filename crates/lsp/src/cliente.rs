@@ -20,7 +20,18 @@ use crate::protocolo::{escribir_mensaje, leer_mensaje};
 /// nuevas (FIFO).
 const MAX_LINEAS_LOG: usize = 200;
 
-type BufferLogs = Arc<Mutex<VecDeque<String>>>;
+/// Líneas de stderr recordadas + cuántas llegaron en total desde que
+/// arrancó la sesión (incluidas las ya descartadas por
+/// [`MAX_LINEAS_LOG`]). El total es lo que le permite al visor en vivo
+/// (`Ctrl+K R`, BACKLOG.md P1 #2) saber cuántas líneas son nuevas desde
+/// el último vistazo aunque el buffer ya esté lleno y su largo no cambie.
+#[derive(Debug, Default)]
+struct RegistroLogs {
+    lineas: VecDeque<String>,
+    total: u64,
+}
+
+type BufferLogs = Arc<Mutex<RegistroLogs>>;
 
 /// Un mensaje que llega desde el servidor LSP, ya distinguido entre
 /// notificación (sin id, como `textDocument/publishDiagnostics`) y
@@ -75,7 +86,7 @@ impl Cliente {
         let (tx, rx) = mpsc::unbounded_channel();
         tokio::spawn(leer_en_bucle(BufReader::new(stdout), tx));
 
-        let logs: BufferLogs = Arc::new(Mutex::new(VecDeque::new()));
+        let logs: BufferLogs = Arc::new(Mutex::new(RegistroLogs::default()));
         tokio::spawn(leer_stderr_en_bucle(BufReader::new(stderr), logs.clone()));
 
         Ok(Self { proceso, stdin, siguiente_id: 1, receptor: rx, logs })
@@ -87,7 +98,15 @@ impl Cliente {
     /// nunca escribe nada — muchos LSP reales se quedan en silencio
     /// mientras todo funciona bien.
     pub fn logs(&self) -> Vec<String> {
-        self.logs.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
+        self.logs_con_total().0
+    }
+
+    /// Igual que [`Self::logs`], más el total de líneas recibidas desde
+    /// el arranque (ver [`RegistroLogs`]) — tomados bajo el mismo lock
+    /// para que no puedan quedar desfasados entre sí.
+    pub fn logs_con_total(&self) -> (Vec<String>, u64) {
+        let registro = self.logs.lock().unwrap_or_else(|e| e.into_inner());
+        (registro.lineas.iter().cloned().collect(), registro.total)
     }
 
     /// Envía un request identificado; la respuesta llega por `receptor`
@@ -222,10 +241,11 @@ async fn leer_en_bucle(mut reader: BufReader<ChildStdout>, tx: mpsc::UnboundedSe
 async fn leer_stderr_en_bucle(reader: BufReader<ChildStderr>, logs: BufferLogs) {
     let mut lineas = reader.lines();
     while let Ok(Some(linea)) = lineas.next_line().await {
-        let mut buffer = logs.lock().unwrap_or_else(|e| e.into_inner());
-        buffer.push_back(linea);
-        if buffer.len() > MAX_LINEAS_LOG {
-            buffer.pop_front();
+        let mut registro = logs.lock().unwrap_or_else(|e| e.into_inner());
+        registro.lineas.push_back(linea);
+        registro.total += 1;
+        if registro.lineas.len() > MAX_LINEAS_LOG {
+            registro.lineas.pop_front();
         }
     }
 }
@@ -409,8 +429,9 @@ mod tests {
         // buffer compartido, que empieza vacío. Se prueba acá en vez de
         // como parte del test async de más abajo para no depender de un
         // timing exacto de cuántas líneas ya llegaron.
-        let logs: BufferLogs = Arc::new(Mutex::new(VecDeque::new()));
-        assert!(logs.lock().unwrap().is_empty());
+        let logs: BufferLogs = Arc::new(Mutex::new(RegistroLogs::default()));
+        assert!(logs.lock().unwrap().lineas.is_empty());
+        assert_eq!(logs.lock().unwrap().total, 0);
     }
 
     /// `sh -c 'echo ... >&2'` escribe directo a stderr sin depender de
@@ -445,7 +466,8 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        let logs = cliente.logs();
+        let (logs, total) = cliente.logs_con_total();
+        assert_eq!(total, (MAX_LINEAS_LOG + 10) as u64, "el total cuenta también las ya descartadas");
         assert_eq!(logs.len(), MAX_LINEAS_LOG);
         assert_eq!(logs.first().unwrap(), "10"); // se descartaron 0..10
         assert_eq!(logs.last().unwrap(), &(MAX_LINEAS_LOG + 9).to_string());
