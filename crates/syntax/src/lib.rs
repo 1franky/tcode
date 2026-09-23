@@ -5,7 +5,9 @@
 //! [`Token`] resultantes en `Span`s coloreados.
 
 mod lenguaje;
+mod plegado;
 mod resaltador;
 
 pub use lenguaje::Lenguaje;
+pub use plegado::{rangos_por_indentacion, RangoPlegable};
 pub use resaltador::{Resaltador, Token, NOMBRES_RESALTADO};

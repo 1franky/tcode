@@ -20,6 +20,8 @@ use crate::Paleta;
 /// último guardado fallido del documento (`PanelEditor::aviso_guardado`),
 /// si hay uno: va pegado a la ruta, antes que todo lo demás, para que no
 /// quede recortado por el ancho de la barra — y no se puede ocultar.
+/// `mensaje` es un aviso transitorio opcional que se agrega al final (ver
+/// `PanelEditor::mensaje_estado`).
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -30,6 +32,7 @@ pub fn dibujar(
     paleta: &Paleta,
     diagnosticos: &[DiagnosticoSimple],
     interfaz: &ConfigInterfaz,
+    mensaje: Option<&str>,
 ) {
     let cursor = editor.cursor();
     // ASCII a propósito (`*`, no `●`): la statusbar se redibuja en cada
@@ -78,6 +81,13 @@ pub fn dibujar(
             }
             .to_string(),
         );
+    }
+
+    // Aviso transitorio del panel (`PanelEditor::mensaje_estado`, p. ej.
+    // "Formateado al guardar") — al final, para no correr de lugar los
+    // segmentos fijos mientras está visible.
+    if let Some(mensaje) = mensaje {
+        partes.push(mensaje.to_string());
     }
 
     // Separador ASCII (`|`, no `│`): el de box-drawing tiene ancho

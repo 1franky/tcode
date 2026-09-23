@@ -9,6 +9,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Atajos esenciales](#atajos-esenciales)
 - [Multi-cursor y selección](#multi-cursor-y-selección)
 - [Búsqueda y reemplazo](#búsqueda-y-reemplazo)
+- [Plegado de bloques](#plegado-de-bloques)
 - [Paneles divididos (splits)](#paneles-divididos-splits)
 - [Explorador de archivos](#explorador-de-archivos)
 - [Modo VIM opcional](#modo-vim-opcional)
@@ -102,6 +103,39 @@ reemplazo. Con la barra abierta:
 
 `F3`/`Shift+F3` también funcionan con la barra cerrada, repitiendo la
 última búsqueda — igual que en VSCode.
+
+## Plegado de bloques
+
+Plegar oculta las líneas de un bloque (el cuerpo de una función, clase o
+`impl`, un `if`/`for`, un objeto o array, un comentario de bloque...): su
+primera línea queda visible con un marcador ` ... ` al final, y la línea
+de cierre (`}`, `end`, `</div>`) queda debajo, igual que en VSCode.
+
+| Atajo | Alternativa | Acción |
+|---|---|---|
+| `Ctrl+Shift+[` | `Ctrl+K [` | Plegar el bloque más interno que contiene al cursor (repetirlo pliega hacia afuera) |
+| `Ctrl+Shift+]` | `Ctrl+K ]` | Desplegar el bloque del cursor |
+| `Ctrl+K Ctrl+0` | `Ctrl+K 0` | Plegar todo |
+| `Ctrl+K Ctrl+J` | | Desplegar todo |
+
+Las alternativas son para terminales sin el protocolo de teclado de
+Kitty, donde `Ctrl+Shift+[` llega como `Esc` y `Ctrl+0` como un `0`
+suelto. Los cuatro comandos también están en la paleta (`Ctrl+Shift+P`,
+"Plegado: ...").
+
+- Las flechas saltan los bloques plegados; `Shift`+flecha selecciona el
+  bloque entero.
+- Editar dentro de un bloque plegado (o borrarlo con una selección) lo
+  despliega; editar más arriba lo corre junto con su código. Escribir en
+  la primera línea del bloque no lo despliega.
+- Buscar (`Ctrl+F`/`F3`) una coincidencia que está adentro de un bloque
+  plegado lo despliega.
+- Qué se puede plegar sale del árbol de sintaxis (tree-sitter) en todos
+  los lenguajes con resaltado, salvo Markdown, que no tiene plegado. En
+  archivos sin lenguaje reconocido (texto plano, YAML, TOML...) se pliega
+  por indentación: una línea seguida de otras más indentadas.
+- El plegado es de cada panel y no se guarda: al volver a abrir el
+  archivo arranca todo desplegado.
 
 ## Paneles divididos (splits)
 
@@ -221,6 +255,32 @@ Ambos se cierran con `Esc` y se navegan con `↑`/`↓` + `Enter`.
   y viceversa. En modo tabla, `↑↓←→` mueven la celda seleccionada,
   `Tab`/`Shift+Tab` saltan a la celda siguiente/anterior (en vez de
   indentar) y `Enter`/`F2` empiezan a editar la celda actual.
+
+En modo tabla también podés ordenar, filtrar, insertar/eliminar filas y
+columnas y ajustar el ancho de las columnas. Todos son chords con
+`Ctrl+K` (y están en la paleta como "CSV: ..."); fuera de la vista de
+tabla no hacen nada.
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+K O` | Ordenar las filas por la columna seleccionada; repetirlo alterna ascendente/descendente. Detecta sola si la columna es numérica (si no, ordena como texto sin distinguir mayúsculas ni tildes). El encabezado no se mueve y las celdas vacías quedan al final |
+| `Ctrl+K /` | Filtrar: muestra solo las filas cuya celda en la columna seleccionada contiene el texto escrito (sin distinguir mayúsculas ni tildes). Una barra al pie indica el filtro activo |
+| `Esc` (con un filtro activo) | Quitar el filtro (también: `Enter` con el prompt de filtro vacío, o "CSV: Quitar filtro") |
+| `Ctrl+K ↓` / `Ctrl+K ↑` | Insertar una fila vacía debajo / arriba de la seleccionada |
+| `Ctrl+K →` / `Ctrl+K ←` | Insertar una columna vacía a la derecha / izquierda de la seleccionada |
+| `Ctrl+K E` / `Ctrl+K Shift+E` | Eliminar la fila / la columna seleccionada |
+| `Ctrl+K Shift+→` / `Ctrl+K Shift+←` | Ensanchar / angostar la columna seleccionada (de a 2) |
+| `Ctrl+K W` | Volver la columna seleccionada a su ancho automático |
+
+Ordenar e insertar/eliminar **modifican el archivo** (cada una se
+deshace con un solo `Ctrl+Z`); filtrar y el ancho de columna son solo de
+vista y no cambian nada en disco. Con un filtro activo, editar una celda
+edita la fila correcta del archivo; insertar una fila quita el filtro
+primero (si no, la fila nueva, vacía, quedaría oculta). Ordenar conserva
+el texto original de cada fila tal cual; insertar/eliminar una
+**columna** reescribe todas las filas con el quoting mínimo necesario
+(se citan solo las celdas con el delimitador, comillas o saltos de
+línea).
 
 ## Temas
 

@@ -68,6 +68,11 @@ pub struct PanelEditor {
     /// para `Ctrl+S` como para el guardado automático (BACKLOG.md P2 #4)
     /// — este último corre solo, sin ningún prompt donde mostrar el error.
     pub aviso_guardado: Option<String>,
+    /// Aviso corto y transitorio para la barra de estado de este panel
+    /// (por ahora solo lo deja el guardado con "formatear al guardar"
+    /// prendido, BACKLOG.md P2 #5: "Formateado al guardar" o por qué no
+    /// se formateó). `app` lo limpia con la siguiente tecla.
+    pub mensaje_estado: Option<String>,
 }
 
 impl PanelEditor {
@@ -82,6 +87,7 @@ impl PanelEditor {
             modo_csv,
             estado_csv: EstadoCsv::nuevo(),
             aviso_guardado: None,
+            mensaje_estado: None,
         }
     }
 
@@ -394,6 +400,12 @@ fn dibujar_panel(
 
             if panel_editor.es_csv() && panel_editor.modo_csv == ModoCsv::Tabla {
                 let tabla = panel_editor.tabla_csv();
+                // Un `Ctrl+Z` (global, no pasa por la vista) o un filtro
+                // que dejó menos filas pueden dejar la selección fuera de
+                // la tabla: se recorta acá, justo antes de dibujar, igual
+                // para cualquier cosa que haya cambiado el buffer.
+                let num_visibles = panel_editor.estado_csv.filas_visibles(&tabla).len();
+                panel_editor.estado_csv.recortar(num_visibles, tabla.num_columnas());
                 vista_csv::dibujar(
                     frame,
                     partes[0],
@@ -413,6 +425,7 @@ fn dibujar_panel(
                         paleta,
                         &panel_editor.diagnosticos,
                         interfaz,
+                        panel_editor.mensaje_estado.as_deref(),
                     );
                 }
                 return;
@@ -507,6 +520,7 @@ fn dibujar_panel(
                     paleta,
                     &panel_editor.diagnosticos,
                     interfaz,
+                    panel_editor.mensaje_estado.as_deref(),
                 );
             }
         }

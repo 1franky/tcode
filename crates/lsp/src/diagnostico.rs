@@ -71,7 +71,7 @@ impl DiagnosticoSimple {
 /// dos, corriendo todo lo que venga después si no se los cuenta bien.
 /// `utf16_offset` más allá del final de la línea (algunos servidores lo
 /// usan para "fin de línea") devuelve la cantidad total de caracteres.
-fn utf16_a_indice_char(linea: &str, utf16_offset: u32) -> u32 {
+pub(crate) fn utf16_a_indice_char(linea: &str, utf16_offset: u32) -> u32 {
     let mut unidades_utf16 = 0u32;
     for (idx_char, c) in linea.chars().enumerate() {
         if unidades_utf16 >= utf16_offset {

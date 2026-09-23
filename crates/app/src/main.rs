@@ -32,6 +32,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use lsp_types::FormattingOptions;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio::time::MissedTickBehavior;
@@ -44,13 +45,13 @@ use tcode_config::{
 };
 use tcode_core::{
     analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo,
-    EstadoVim, Modo,
+    EstadoVim, Modo, Pliegue,
 };
 use tcode_fs::{BuscadorArchivos, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador, ModoPromptExplorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_lsp::EstadoLogsLsp;
 use tcode_syntax::{Lenguaje, Resaltador};
-use tcode_ui::{DireccionSplit, FilaLenguajeLsp, Layout as PanelLayout, ModoCsv, Paleta, PanelEditor};
+use tcode_ui::{ancho_columna_csv, DireccionSplit, FilaLenguajeLsp, Layout as PanelLayout, ModoCsv, Paleta, PanelEditor};
 
 type Backend = CrosstermBackend<Stdout>;
 
@@ -302,6 +303,21 @@ struct EstadoApp {
     /// que el primer guardado llegue N segundos DESPUÉS de prenderlo y no
     /// de golpe en el próximo tick.
     ultimo_autoguardado: Instant,
+    /// `archivo.guardar` pedido sobre un archivo con ruta, pendiente de
+    /// ejecutarse al principio de la próxima vuelta del bucle de
+    /// `ejecutar` (`guardar_archivo_activo`). No se guarda ahí mismo
+    /// porque `procesar_comando` es síncrona y guardar puede tener que
+    /// esperar la respuesta del LSP a `textDocument/formatting`
+    /// ("formatear al guardar", BACKLOG.md P2 #5); se ejecuta antes de
+    /// procesar cualquier otra tecla, así que el orden de los eventos no
+    /// cambia (`Ctrl+S` seguido de `Ctrl+Q` en la misma ráfaga guarda
+    /// primero).
+    guardado_pendiente: bool,
+    /// Resaltador de sintaxis (árbol de tree-sitter incremental por
+    /// documento). Vive acá, no suelto en `ejecutar`, porque además de
+    /// dibujar lo usan los comandos de plegado (BACKLOG.md P2 #7) para
+    /// sacar los rangos plegables del mismo árbol, sin volver a parsear.
+    resaltador: Resaltador,
 }
 
 fn sin_modificadores(key: KeyEvent) -> bool {
@@ -316,7 +332,6 @@ async fn ejecutar(
     explorador: Explorador,
     ruta_arg: Option<&str>,
 ) -> Result<()> {
-    let mut resaltador = Resaltador::nuevo();
     let mut resolvedor = Resolvedor::nuevo(keymap.clone());
     let mut eventos = EventStream::new();
 
@@ -366,6 +381,8 @@ async fn ejecutar(
         prompt_explorador: EstadoPromptExplorador::nuevo(),
         confirmar_borrado: EstadoConfirmarBorrado::nuevo(),
         ultimo_autoguardado: Instant::now(),
+        guardado_pendiente: false,
+        resaltador: Resaltador::nuevo(),
     };
 
     // Ver `forzar_redibujado_completo`: en Windows, si la "forma" de la
@@ -404,6 +421,9 @@ async fn ejecutar(
     let mut ultimo_foco = firma_foco(layout, &estado);
 
     loop {
+        if std::mem::take(&mut estado.guardado_pendiente) {
+            let _ = guardar_archivo_activo(layout, &mut estado).await;
+        }
         let foco_actual = firma_foco(layout, &estado);
         if foco_actual != ultimo_foco {
             if estado.config.editor.guardado_automatico == GuardadoAutomatico::AlPerderFoco {
@@ -444,7 +464,7 @@ async fn ejecutar(
                     frame,
                     layout,
                     &estado.paleta,
-                    &mut resaltador,
+                    &mut estado.resaltador,
                     &estado.explorador,
                     &estado.paleta_comandos,
                     &estado.buscador_archivos,
@@ -507,6 +527,10 @@ async fn ejecutar(
             }
             _ => continue,
         };
+
+        // El aviso transitorio de la barra de estado (p. ej. "Formateado
+        // al guardar") dura hasta la próxima tecla.
+        layout.panel_activo_mut().mensaje_estado = None;
 
         // El editor visual de tema (`Ctrl+K Ctrl+P`, PLAN.md §7) es otra
         // vista a pantalla completa que captura el teclado por completo:
@@ -660,6 +684,11 @@ async fn ejecutar(
                         }
                         KeyCode::Backspace if estado.panel_admin.seccion_actual() == Seccion::Lenguajes => {
                             quitar_comando_lsp_seleccionado(&mut estado);
+                        }
+                        KeyCode::Char('f')
+                            if sin_modificadores(key) && estado.panel_admin.seccion_actual() == Seccion::Lenguajes =>
+                        {
+                            alternar_formatear_al_guardar_seleccionado(&mut estado);
                         }
                         KeyCode::Enter | KeyCode::Left | KeyCode::Right
                             if estado.panel_admin.seccion_actual() == Seccion::Interfaz =>
@@ -860,7 +889,7 @@ async fn ejecutar(
             match key.code {
                 KeyCode::Esc => estado.guardar_como.cerrar(),
                 KeyCode::Backspace => estado.guardar_como.borrar(),
-                KeyCode::Enter => guardar_como_confirmar(layout, &mut estado.guardar_como),
+                KeyCode::Enter => guardar_como_confirmar(layout, &mut estado).await,
                 KeyCode::Char(c) if sin_modificadores(key) => estado.guardar_como.escribir(c),
                 _ => {}
             }
@@ -966,6 +995,25 @@ async fn ejecutar(
                 KeyCode::Backspace => layout.panel_activo_mut().estado_csv.borrar(),
                 KeyCode::Enter => confirmar_edicion_celda_csv(layout, true),
                 KeyCode::Char(c) if sin_modificadores(key) => layout.panel_activo_mut().estado_csv.escribir(c),
+                _ => {}
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
+        // Prompt de filtro de la vista CSV/TSV (`Ctrl+K /`, BACKLOG.md P2
+        // #9): mismo patrón modal que la edición de celda de arriba.
+        if layout.panel_activo().estado_csv.prompt_filtro().is_some() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => {
+                    layout.panel_activo_mut().estado_csv.cerrar_prompt_filtro();
+                }
+                KeyCode::Backspace => layout.panel_activo_mut().estado_csv.borrar_en_prompt_filtro(),
+                KeyCode::Enter => confirmar_filtro_csv(layout),
+                KeyCode::Char(c) if sin_modificadores(key) => {
+                    layout.panel_activo_mut().estado_csv.escribir_en_prompt_filtro(c)
+                }
                 _ => {}
             }
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
@@ -1137,12 +1185,17 @@ fn autoguardar(layout: &mut PanelLayout) -> bool {
     intento
 }
 
-/// El único camino de "guardar este documento en su ruta" — lo usan
-/// tanto `archivo.guardar` (`Ctrl+S`) como el guardado automático, para
-/// que cualquier paso extra al guardar (p. ej. formatear al guardar,
-/// BACKLOG.md P2 #5) se agregue en un solo lugar y valga para los dos.
+/// La escritura a disco de un documento en su ruta — el último paso
+/// tanto de `archivo.guardar` (`Ctrl+S`, vía `guardar_archivo_activo`,
+/// que antes formatea si corresponde) como del guardado automático.
 /// Deja el motivo del error en `aviso_guardado` (statusbar) si falla, y
 /// lo limpia si funciona.
+///
+/// El guardado automático NO formatea (llama acá directo, sin pasar por
+/// `formatear_antes_de_guardar`): con "cada N segundos" reformatearía el
+/// código mientras se escribe, moviendo el texto bajo el cursor — mismo
+/// criterio que VSCode, donde "format on save" no corre con el
+/// autoguardado por demora. Para formatear, `Ctrl+S`.
 fn guardar_panel(panel: &mut PanelEditor) -> Result<()> {
     let resultado = panel.editor.guardar();
     panel.aviso_guardado = resultado.as_ref().err().map(|e| format!("no se pudo guardar: {e:#}"));
@@ -1167,6 +1220,7 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
         || estado.logs_lsp.activo()
         || estado.prompt_explorador.activo()
         || layout.panel_activo().estado_csv.editando()
+        || layout.panel_activo().estado_csv.prompt_filtro().is_some()
         || (estado.panel_admin.activo() && estado.panel_admin.editando_comando_lsp().is_some());
     if prompt_de_texto {
         teclas.extend(
@@ -1273,6 +1327,31 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             }
             Accion::Continuar
         }
+        // Plegado (BACKLOG.md P2 #7, PLAN.md §4): los rangos plegables
+        // salen del árbol de tree-sitter que ya mantiene el resaltador
+        // (o de la indentación, sin gramática) y se calculan a pedido,
+        // solo al plegar. Ni en el explorador ni en la vista de tabla
+        // CSV hay líneas de código que plegar.
+        "plegar.actual" | "plegar.todo" => {
+            if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
+                let candidatos = rangos_plegables_del_activo(layout, &mut estado.resaltador);
+                let editor = layout.editor_activo_mut();
+                if id == "plegar.todo" {
+                    editor.plegar_todo(&candidatos);
+                } else {
+                    editor.plegar_en_cursor(&candidatos);
+                }
+            }
+            Accion::Continuar
+        }
+        "plegar.desplegar" => {
+            layout.editor_activo_mut().desplegar_en_cursor();
+            Accion::Continuar
+        }
+        "plegar.desplegar_todo" => {
+            layout.editor_activo_mut().desplegar_todo();
+            Accion::Continuar
+        }
         "buscar.en_archivo" | "buscar.reemplazar" => {
             let texto = layout.editor_activo().buffer().a_texto();
             estado.estado_busqueda.abrir(id == "buscar.reemplazar", &texto);
@@ -1314,7 +1393,8 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             if layout.editor_activo().buffer().ruta().is_none() {
                 estado.guardar_como.abrir("");
             } else {
-                let _ = guardar_panel(layout.panel_activo_mut());
+                // Ver `EstadoApp::guardado_pendiente`.
+                estado.guardado_pendiente = true;
             }
             Accion::Continuar
         }
@@ -1400,6 +1480,14 @@ fn ejecutar_comando(
             return Accion::Continuar;
         }
         "explorador.enfocar_editor" => {
+            // En la vista de tabla CSV/TSV con un filtro activo, `Esc`
+            // lo quita (BACKLOG.md P2 #9) — es lo que anuncia la barra
+            // del filtro. Solo con el foco ya en el editor: con el foco
+            // en el explorador, `Esc` sigue significando "volver al
+            // editor" y nada más.
+            if *foco == Foco::Editor && layout.panel_activo().modo_csv == ModoCsv::Tabla && quitar_filtro_csv(layout) {
+                return Accion::Continuar;
+            }
             // `Esc` siempre significa "volver a un solo cursor" también
             // (PLAN.md §11 M3, `cursor.una_seleccion`) — no hace falta un
             // atajo aparte: si ya había uno solo, esto no hace nada.
@@ -1560,13 +1648,25 @@ fn abrir_ruta_desde_explorador(layout: &mut PanelLayout, foco: &mut Foco, ruta: 
 /// hoja de cálculo) y `Enter`/`F2` para empezar a editar la celda actual
 /// — la edición en sí (escribir/confirmar/cancelar) la captura un bloque
 /// modal aparte en el bucle principal, igual que la barra de búsqueda.
+///
+/// También los comandos propios de la tabla (BACKLOG.md P2 #9), que solo
+/// tienen efecto acá (desde la paleta, en cualquier otro archivo o en
+/// modo texto, no hacen nada): ordenar, filtrar, insertar/eliminar filas
+/// y columnas — estas cuatro modifican el archivo, cada una como UNA
+/// sola edición (`aplicar_edicion_csv`), así que se deshace con un único
+/// `Ctrl+Z` — y el ancho manual de columna (solo de vista, como el
+/// filtro). Con un filtro activo, `estado_csv.fila()` es una posición
+/// entre las filas visibles: todo lo que lee o escribe el archivo usa
+/// `EstadoCsv::fila_real`.
 fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
     let delimitador = delimitador_por_extension(&layout.panel_activo().ruta_mostrada);
     let texto = layout.panel_activo().editor.buffer().a_texto();
     let tabla = analizar_csv(&texto, delimitador).unwrap_or_default();
-    let (num_filas, num_columnas) = (tabla.num_filas(), tabla.num_columnas());
-
     let panel = layout.panel_activo_mut();
+    let num_filas = panel.estado_csv.filas_visibles(&tabla).len();
+    let num_columnas = tabla.num_columnas();
+    let columna = panel.estado_csv.columna();
+
     match comando {
         "cursor.arriba" => panel.estado_csv.mover_arriba(),
         "cursor.abajo" => panel.estado_csv.mover_abajo(num_filas),
@@ -1576,12 +1676,122 @@ fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
         "editor.desindentar" => panel.estado_csv.shift_tab(num_columnas),
         "editor.nueva_linea" | "csv.editar_celda" => {
             let valor_actual =
-                tabla.filas.get(panel.estado_csv.fila()).and_then(|f| f.celdas.get(panel.estado_csv.columna()));
+                panel.estado_csv.fila_real(&tabla).and_then(|r| tabla.filas[r].celdas.get(columna));
             panel.estado_csv.iniciar_edicion(valor_actual.map(String::as_str).unwrap_or(""));
         }
+        "csv.ordenar" => {
+            let ascendente = panel.estado_csv.siguiente_orden(columna);
+            aplicar_edicion_csv(panel, tcode_core::csv::ordenar_por_columna(&texto, &tabla, columna, ascendente));
+        }
+        "csv.filtrar" => {
+            let inicial = match panel.estado_csv.filtro() {
+                Some(filtro) if filtro.columna == columna => filtro.texto.clone(),
+                _ => String::new(),
+            };
+            panel.estado_csv.abrir_prompt_filtro(&inicial);
+        }
+        "csv.quitar_filtro" => {
+            panel.estado_csv.quitar_filtro(&tabla);
+        }
+        // Insertar una fila con un filtro activo quita el filtro primero:
+        // la fila nueva está vacía, así que (salvo coincidencia) el
+        // filtro la ocultaría apenas creada — insertar algo que no se ve
+        // es peor que perder el filtro, que se vuelve a poner con dos
+        // teclas. `quitar_filtro` deja la selección sobre la misma fila
+        // real, así que la posición de inserción no cambia.
+        "csv.insertar_fila_debajo" | "csv.insertar_fila_arriba" => {
+            panel.estado_csv.quitar_filtro(&tabla);
+            let actual = panel.estado_csv.fila_real(&tabla);
+            let indice = match (actual, comando == "csv.insertar_fila_debajo") {
+                (Some(r), true) => r + 1,
+                (Some(r), false) => r,
+                (None, _) => 0,
+            };
+            aplicar_edicion_csv(panel, tcode_core::csv::insertar_fila(&texto, &tabla, indice).ok());
+            // Seleccionar la fila recién insertada (sin filtro, fila
+            // visible == fila real). `mover_abajo` avanza de a una.
+            if comando == "csv.insertar_fila_debajo" && actual.is_some() {
+                panel.estado_csv.mover_abajo(tabla.num_filas() + 1);
+            }
+        }
+        "csv.eliminar_fila" => {
+            if let Some(r) = panel.estado_csv.fila_real(&tabla) {
+                aplicar_edicion_csv(panel, tcode_core::csv::eliminar_fila(&texto, &tabla, r));
+            }
+        }
+        "csv.insertar_columna_derecha" | "csv.insertar_columna_izquierda" => {
+            let indice = if comando == "csv.insertar_columna_derecha" && num_columnas > 0 { columna + 1 } else { columna };
+            if aplicar_edicion_csv(panel, tcode_core::csv::insertar_columna(&texto, &tabla, indice).ok().flatten()) {
+                panel.estado_csv.columna_insertada(indice);
+                if indice > columna {
+                    panel.estado_csv.mover_derecha(num_columnas + 1);
+                }
+            }
+        }
+        "csv.eliminar_columna" => {
+            if aplicar_edicion_csv(panel, tcode_core::csv::eliminar_columna(&texto, &tabla, columna).ok().flatten()) {
+                panel.estado_csv.columna_eliminada(columna);
+            }
+        }
+        "csv.ensanchar_columna" | "csv.angostar_columna" if num_columnas > 0 => {
+            let actual = ancho_columna_csv(&tabla, &panel.estado_csv, columna);
+            let nuevo = if comando == "csv.ensanchar_columna" {
+                actual + PASO_ANCHO_COLUMNA_CSV
+            } else {
+                actual.saturating_sub(PASO_ANCHO_COLUMNA_CSV)
+            };
+            panel.estado_csv.fijar_ancho(columna, nuevo);
+        }
+        "csv.restablecer_ancho" => panel.estado_csv.restablecer_ancho(columna),
         _ => {}
     }
     Accion::Continuar
+}
+
+/// Cuántas columnas de terminal ensancha/angosta cada `Ctrl+K Shift+→`/
+/// `Ctrl+K Shift+←` en la vista CSV. De a 1 haría falta repetir el chord
+/// decenas de veces para leer una celda larga; de a 2 sigue siendo fino
+/// y la mitad de tedioso.
+const PASO_ANCHO_COLUMNA_CSV: usize = 2;
+
+/// Aplica una edición de la vista CSV (ordenar, insertar/eliminar) sobre
+/// el buffer como UN solo reemplazo — un solo snapshot en el historial,
+/// un solo `Ctrl+Z` para deshacerla. Devuelve si había algo que aplicar
+/// (`None` = la operación no cambiaba nada, p. ej. ordenar algo ya
+/// ordenado), para que quien llama solo actualice su estado de vista en
+/// ese caso.
+fn aplicar_edicion_csv(panel: &mut tcode_ui::PanelEditor, edicion: Option<tcode_core::EdicionCsv>) -> bool {
+    let Some(edicion) = edicion else { return false };
+    panel.editor.reemplazar_rango_bytes(edicion.inicio_byte, edicion.fin_byte, &edicion.reemplazo);
+    true
+}
+
+/// `Enter` con el prompt de filtro de la vista CSV abierto: aplica el
+/// texto escrito como filtro sobre la columna seleccionada, o quita el
+/// filtro si quedó vacío (así el mismo prompt sirve para las dos cosas,
+/// además de `Esc` con la tabla enfocada).
+fn confirmar_filtro_csv(layout: &mut PanelLayout) {
+    let delimitador = delimitador_por_extension(&layout.panel_activo().ruta_mostrada);
+    let tabla = analizar_csv(&layout.panel_activo().editor.buffer().a_texto(), delimitador).unwrap_or_default();
+    let estado_csv = &mut layout.panel_activo_mut().estado_csv;
+    let Some(texto) = estado_csv.cerrar_prompt_filtro() else { return };
+    if texto.is_empty() {
+        estado_csv.quitar_filtro(&tabla);
+    } else {
+        let columna = estado_csv.columna();
+        estado_csv.filtrar(columna, &texto);
+    }
+}
+
+/// Quita el filtro de la vista CSV del panel activo, si había uno
+/// (devuelve si lo había) — `Esc` con la tabla enfocada.
+fn quitar_filtro_csv(layout: &mut PanelLayout) -> bool {
+    if layout.panel_activo().estado_csv.filtro().is_none() {
+        return false;
+    }
+    let delimitador = delimitador_por_extension(&layout.panel_activo().ruta_mostrada);
+    let tabla = analizar_csv(&layout.panel_activo().editor.buffer().a_texto(), delimitador).unwrap_or_default();
+    layout.panel_activo_mut().estado_csv.quitar_filtro(&tabla)
 }
 
 /// `Enter` con el prompt "Guardar como" abierto: intenta escribir el
@@ -1592,22 +1802,97 @@ fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
 /// pestaña, detección de lenguaje) y cierra el prompt; si falla (permiso
 /// denegado, directorio inexistente...) el prompt queda abierto con el
 /// motivo, para poder corregir la ruta sin perder lo ya escrito.
-fn guardar_como_confirmar(layout: &mut PanelLayout, guardar_como: &mut EstadoGuardarComo) {
-    let ruta = guardar_como.ruta().trim();
+///
+/// Con "formatear al guardar" prendido para el lenguaje del archivo
+/// (el de su ruta ANTERIOR — es el lenguaje del contenido y el de la
+/// sesión LSP abierta sobre él; un buffer "[Sin nombre]" no tiene
+/// ninguno) se formatea antes de escribir, igual que con `Ctrl+S`.
+async fn guardar_como_confirmar(layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let ruta = estado.guardar_como.ruta().trim();
     if ruta.is_empty() {
-        guardar_como.establecer_error("la ruta no puede estar vacía".to_string());
+        estado.guardar_como.establecer_error("la ruta no puede estar vacía".to_string());
         return;
     }
     let ruta = ruta.to_string();
+    formatear_antes_de_guardar(layout, estado).await;
     match layout.editor_activo_mut().guardar_como(ruta.clone()) {
         Ok(()) => {
             let panel = layout.panel_activo_mut();
             panel.ruta_mostrada = ruta;
             panel.aviso_guardado = None;
-            guardar_como.cerrar();
+            estado.guardar_como.cerrar();
         }
-        Err(e) => guardar_como.establecer_error(e.to_string()),
+        Err(e) => estado.guardar_como.establecer_error(e.to_string()),
     }
+}
+
+/// Camino ÚNICO para guardar el archivo del panel activo en su propia
+/// ruta (`archivo.guardar`, `Ctrl+S`): primero "formatear al guardar" si
+/// corresponde (`formatear_antes_de_guardar`), después escribir a disco.
+/// Cualquier otro disparador de guardado del archivo activo (p. ej. el
+/// guardado automático, BACKLOG.md P2 #4) debería pasar por acá en vez
+/// de llamar a `Editor::guardar` directo, para respetar la misma
+/// configuración. Un panel que NO es el activo no puede formatearse (la
+/// única sesión LSP es la del panel activo, ver `lsp.rs`): para esos,
+/// `Editor::guardar` directo es lo correcto. Falla igual que
+/// `Editor::guardar` (buffer sin ruta, error de disco); formatear nunca
+/// hace fallar el guardado.
+async fn guardar_archivo_activo(layout: &mut PanelLayout, estado: &mut EstadoApp) -> Result<()> {
+    formatear_antes_de_guardar(layout, estado).await;
+    guardar_panel(layout.panel_activo_mut())
+}
+
+/// "Formatear al guardar" (PLAN.md §5 "Editor", BACKLOG.md P2 #5): si
+/// está prendido para el lenguaje del archivo activo (`f` en "Lenguajes
+/// / LSP" del panel de administración), le pide `textDocument/
+/// formatting` al LSP y aplica el resultado como UNA sola edición
+/// deshacible (`Editor::aplicar_ediciones`: un `Ctrl+Z` después de
+/// guardar vuelve al texto sin formatear). Con la opción apagada no hace
+/// absolutamente nada — ni siquiera sincroniza con el LSP —, así que
+/// guardar se comporta exactamente igual que antes de esta pieza.
+///
+/// Nunca bloquea el guardado: si no hay LSP, todavía está iniciando, no
+/// soporta formatear, devuelve error o no responde a tiempo
+/// (`EstadoLsp::pedir_formateo`, ~2 s como mucho), simplemente no se
+/// formatea y el aviso de la barra de estado dice por qué.
+async fn formatear_antes_de_guardar(layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let Some(lenguaje) = Lenguaje::detectar_por_extension(&layout.panel_activo().ruta_mostrada) else { return };
+    if !estado.config.lenguajes.formatear_al_guardar(lenguaje.id()) {
+        return;
+    }
+
+    // Mismo paso que el bucle hace una vez por frame: sin esto, lo
+    // tipeado desde el último frame todavía no le llegó al servidor, y
+    // sus posiciones se referirían a un texto viejo.
+    sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+    let ruta = layout.panel_activo().ruta_mostrada.clone();
+    let texto = layout.editor_activo().buffer().a_texto();
+    // rustfmt/prettier/etc. suelen tener su propia config por proyecto
+    // que manda sobre esto; es lo que se usa cuando no la hay.
+    let opciones = FormattingOptions {
+        tab_size: estado.config.editor.tamano_tabulacion as u32,
+        insert_spaces: estado.config.editor.usar_espacios,
+        ..Default::default()
+    };
+
+    let mensaje = match estado.lsp.pedir_formateo(&ruta, &texto, opciones, layout).await {
+        Ok(ediciones) => {
+            let ediciones: Vec<_> = ediciones.into_iter().map(|e| (e.inicio_byte..e.fin_byte, e.texto)).collect();
+            let editor = layout.editor_activo_mut();
+            if !editor.aplicar_ediciones(&ediciones) {
+                // Ya estaba formateado: nada que avisar.
+                return;
+            }
+            // En modo Normal (VIM) el cursor no puede quedar después del
+            // último carácter de la línea — reaplica ese recorte.
+            if editor.modo() == Modo::Normal {
+                editor.entrar_modo_normal();
+            }
+            "Formateado al guardar".to_string()
+        }
+        Err(motivo) => format!("Sin formatear: {motivo}"),
+    };
+    layout.panel_activo_mut().mensaje_estado = Some(mensaje);
 }
 
 /// `Enter` con el prompt de texto del explorador abierto (`Ctrl+K N`/
@@ -1638,7 +1923,11 @@ fn confirmar_prompt_explorador(explorador: &mut Explorador, prompt: &mut EstadoP
 /// `Enter` con una celda de la vista CSV/TSV en edición: reemplaza la
 /// fila completa reserializada (ver `tcode_core::csv::serializar_fila`)
 /// en el buffer, y si `avanzar` es `true` mueve la selección a la fila
-/// siguiente (como confirmar una celda en una hoja de cálculo).
+/// siguiente (como confirmar una celda en una hoja de cálculo). Con un
+/// filtro activo edita la fila REAL detrás de la fila visible
+/// seleccionada (`EstadoCsv::fila_real`); si el valor nuevo ya no
+/// coincide con el filtro, la fila deja de verse — el filtro se evalúa
+/// siempre sobre el contenido actual, como en una hoja de cálculo.
 fn confirmar_edicion_celda_csv(layout: &mut PanelLayout, avanzar: bool) {
     let panel = layout.panel_activo_mut();
     let Some(nuevo_valor) = panel.estado_csv.confirmar_edicion() else { return };
@@ -1646,7 +1935,7 @@ fn confirmar_edicion_celda_csv(layout: &mut PanelLayout, avanzar: bool) {
     let delimitador = delimitador_por_extension(&panel.ruta_mostrada);
     let texto = panel.editor.buffer().a_texto();
     let Ok(tabla) = analizar_csv(&texto, delimitador) else { return };
-    let Some(fila) = tabla.filas.get(panel.estado_csv.fila()) else { return };
+    let Some(fila) = panel.estado_csv.fila_real(&tabla).map(|r| &tabla.filas[r]) else { return };
 
     let mut celdas = fila.celdas.clone();
     if panel.estado_csv.columna() >= celdas.len() {
@@ -1658,9 +1947,13 @@ fn confirmar_edicion_celda_csv(layout: &mut PanelLayout, avanzar: bool) {
     panel.editor.reemplazar_rango_bytes(fila.inicio_byte, fila.fin_byte, &nueva_fila_texto);
 
     if avanzar {
-        let num_filas =
-            analizar_csv(&panel.editor.buffer().a_texto(), delimitador).map(|t| t.num_filas()).unwrap_or(0);
-        panel.estado_csv.mover_abajo(num_filas);
+        let tabla_nueva = analizar_csv(&panel.editor.buffer().a_texto(), delimitador).unwrap_or_default();
+        let num_filas = panel.estado_csv.filas_visibles(&tabla_nueva).len();
+        // Si la fila editada dejó de pasar el filtro, desapareció y la
+        // siguiente ya ocupa su lugar: avanzar además se la saltearía.
+        if num_filas == panel.estado_csv.filas_visibles(&tabla).len() {
+            panel.estado_csv.mover_abajo(num_filas);
+        }
     }
 }
 
@@ -1818,6 +2111,7 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
                 en_path,
                 habilitado: estado.config.lenguajes.lsp_habilitado(lenguaje.id()),
                 personalizado: estado.config.lenguajes.comando_configurado(lenguaje.id()).is_some(),
+                formatear_al_guardar: estado.config.lenguajes.formatear_al_guardar(lenguaje.id()),
                 estado: estado_texto,
             }
         })
@@ -1885,6 +2179,17 @@ fn lenguaje_seleccionado_en_lenguajes(panel: &tcode_config::EstadoPanelAdmin) ->
         return None;
     }
     Lenguaje::TODOS.get(panel.campo()).copied()
+}
+
+/// `f` sobre una fila de "Lenguajes / LSP": prende/apaga "formatear al
+/// guardar" para ese lenguaje (BACKLOG.md P2 #5) y lo persiste al
+/// instante, igual que el resto de la sección. Se puede prender aunque
+/// el lenguaje no tenga LSP configurado todavía: sin sesión, guardar
+/// simplemente avisa que no formateó (ver `formatear_antes_de_guardar`).
+fn alternar_formatear_al_guardar_seleccionado(estado: &mut EstadoApp) {
+    let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
+    estado.config.lenguajes.alternar_formatear_al_guardar(lenguaje.id());
+    let _ = tcode_config::guardar(&estado.config);
 }
 
 /// `c` sobre una fila de "Lenguajes / LSP": empieza a editar su comando
@@ -2042,6 +2347,21 @@ fn insertar_tabulacion(editor: &mut Editor, config: &Config) {
     } else {
         editor.insertar_char('\t');
     }
+}
+
+/// Rangos plegables del documento del panel activo, como `Pliegue`s del
+/// `core` (ver `Resaltador::rangos_plegables`). La clave del documento es
+/// la misma ruta que usa `vista_codigo` al resaltar, así se reutiliza su
+/// árbol ya parseado.
+fn rangos_plegables_del_activo(layout: &PanelLayout, resaltador: &mut Resaltador) -> Vec<Pliegue> {
+    let panel = layout.panel_activo();
+    let ruta = &panel.ruta_mostrada;
+    let fuente = panel.editor.buffer().a_texto();
+    resaltador
+        .rangos_plegables(ruta, Lenguaje::detectar_por_extension(ruta), &fuente)
+        .into_iter()
+        .map(|r| Pliegue { inicio: r.inicio, fin: r.fin })
+        .collect()
 }
 
 /// Mueve el cursor del editor activo a la coincidencia de búsqueda

@@ -200,17 +200,29 @@ async fn leer_en_bucle(mut reader: BufReader<ChildStdout>, tx: mpsc::UnboundedSe
             Err(_) => break, // el proceso murió o el stream se rompió
         };
 
-        let mensaje = if let Some(id) = valor.get("id").and_then(Value::as_i64) {
+        // Un mensaje con `method` es una notificación o un REQUEST del
+        // servidor hacia nosotros (`workspace/configuration`,
+        // `window/workDoneProgress/create`...), nunca una respuesta —
+        // aunque traiga `id`. Antes se miraba primero el `id` y un
+        // request del servidor se confundía con la respuesta a una
+        // petición nuestra con el mismo número; con una sola petición en
+        // vuelo (`initialize`) daba igual, pero `textDocument/formatting`
+        // (BACKLOG.md P2 #5) correlaciona por id y podía tomar un request
+        // ajeno por su respuesta. Los requests del servidor se pasan como
+        // notificación: `tcode` no responde ninguno todavía (igual que
+        // antes), y quien procesa los mensajes ignora los métodos que no
+        // conoce.
+        let mensaje = if let Some(metodo) = valor.get("method").and_then(Value::as_str) {
+            MensajeEntrante::Notificacion {
+                metodo: metodo.to_string(),
+                params: valor.get("params").cloned().unwrap_or(Value::Null),
+            }
+        } else if let Some(id) = valor.get("id").and_then(Value::as_i64) {
             match valor.get("error") {
                 Some(error) => MensajeEntrante::Respuesta { id, resultado: Err(error.clone()) },
                 None => {
                     MensajeEntrante::Respuesta { id, resultado: Ok(valor.get("result").cloned().unwrap_or(Value::Null)) }
                 }
-            }
-        } else if let Some(metodo) = valor.get("method").and_then(Value::as_str) {
-            MensajeEntrante::Notificacion {
-                metodo: metodo.to_string(),
-                params: valor.get("params").cloned().unwrap_or(Value::Null),
             }
         } else {
             continue;
@@ -374,6 +386,23 @@ mod tests {
         // proceso_no_salga_solo` más abajo) — usar `cerrar` acá lo
         // haría tardar `TIMEOUT_CIERRE_EDUCADO` entero sin necesidad,
         // porque `cat` nunca sale solo tras `exit`.
+        cliente.matar().await;
+    }
+
+    /// Un request CON `method` e `id` (lo que `cat` devuelve al hacer eco
+    /// de una `peticion` nuestra — equivalente a un request del servidor
+    /// hacia el cliente) no se tiene que confundir con la respuesta a una
+    /// petición propia con el mismo id: llega como notificación.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn un_request_del_servidor_con_id_no_se_toma_por_una_respuesta() {
+        let mut cliente = Cliente::lanzar("cat", &[], &[]).await.expect("cat debería existir en cualquier Unix");
+        cliente.peticion("workspace/configuration", json!({ "items": [] })).await.unwrap();
+
+        match cliente.receptor.recv().await.expect("cat debería hacer eco del mensaje") {
+            MensajeEntrante::Notificacion { metodo, .. } => assert_eq!(metodo, "workspace/configuration"),
+            MensajeEntrante::Respuesta { .. } => panic!("un mensaje con `method` nunca es una respuesta"),
+        }
         cliente.matar().await;
     }
 
