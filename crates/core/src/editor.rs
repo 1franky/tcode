@@ -232,6 +232,21 @@ impl Editor {
         self.editar_cada_cursor(|_, seleccion| (seleccion, texto.clone()));
     }
 
+    /// Inserta un texto completo (típicamente lo pegado desde el
+    /// portapapeles de la terminal, vía bracketed paste) en la posición de
+    /// CADA cursor, como UNA sola edición: un solo paso de deshacer y sin
+    /// pasar por `editor.nueva_linea` por cada salto de línea (que además
+    /// de lento, re-indentaría cada línea pegada). Los finales de línea
+    /// `\r\n`/`\r` se normalizan a `\n`, igual que al cargar un archivo
+    /// (ver `Buffer`): el buffer en memoria siempre usa `\n`.
+    pub fn insertar_texto(&mut self, texto: &str) {
+        if texto.is_empty() {
+            return;
+        }
+        let texto = texto.replace("\r\n", "\n").replace('\r', "\n");
+        self.editar_cada_cursor(|_, seleccion| (seleccion, texto.clone()));
+    }
+
     /// Backspace: si el cursor tiene selección la borra; si no, borra
     /// hacia atrás un carácter (fusionando con la línea anterior si
     /// estaba al inicio de línea) — para cada cursor a la vez.
@@ -616,6 +631,28 @@ mod tests {
         assert_eq!(editor.cursores().len(), 1);
         assert!(!editor.tiene_multiples_cursores());
         assert!(!editor.cursores()[0].tiene_seleccion());
+    }
+
+    #[test]
+    fn insertar_texto_pega_todo_en_un_solo_paso_de_deshacer() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "a");
+        editor.insertar_texto("uno\r\ndos\rtres\n");
+        assert_eq!(editor.buffer().a_texto(), "auno\ndos\ntres\n");
+        assert_eq!((editor.cursor().linea, editor.cursor().columna), (3, 0));
+
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "a");
+    }
+
+    #[test]
+    fn insertar_texto_reemplaza_la_seleccion() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "gato perro");
+        editor.inicio_archivo();
+        editor.seleccionar_siguiente_ocurrencia(); // selecciona "gato"
+        editor.insertar_texto("lobo");
+        assert_eq!(editor.buffer().a_texto(), "lobo perro");
     }
 
     #[test]

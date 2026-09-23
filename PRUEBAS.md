@@ -544,6 +544,23 @@ relacionado (tabla CSV con muchas columnas comprimida a 1-2 caracteres
 por falta de scroll horizontal) — ya arreglado, ver la sección "Scroll
 horizontal con muchas columnas" en M3 — Vista CSV/TSV más arriba.
 
+## Rendimiento: pegar texto grande y mantener teclas apretadas
+
+Antes pegar ~500 líneas tardaba más de un minuto y medio (se veía entrar
+"línea por línea"), y mantener apretada una flecha congelaba la pantalla
+para después saltar de golpe más allá de donde se quería ir. Medido en
+tmux con un `.rs` de 500 líneas: pegar pasó de 104,6 s a 0,02 s, y 300
+flechas seguidas de 1 s a 0,02 s.
+
+- [ ] Copiar ~500 líneas de código de otro programa y pegarlas en un archivo (`Cmd+V`/`Ctrl+Shift+V` de la terminal): aparecen todas de una vez, sin demora visible.
+- [ ] Lo pegado queda idéntico al original: la indentación NO se acumula línea tras línea (antes cada salto de línea pasaba por `Enter`).
+- [ ] Un solo `Ctrl+Z` deshace el pegado completo (no línea por línea ni carácter por carácter).
+- [ ] Pegar con una selección activa reemplaza la selección.
+- [ ] Mantener apretada `↓` en un archivo largo y soltarla: el cursor se detiene donde se soltó, sin congelarse ni seguir de largo.
+- [ ] Pegar con la paleta (`Ctrl+Shift+P`), el buscador (`Ctrl+P`) o "Guardar como" abiertos: el texto va al campo del prompt, sin saltos de línea (y sin confirmarlo solo).
+- [ ] Pegar con la confirmación de borrado del explorador abierta NO confirma el borrado aunque lo pegado empiece con `y`.
+- [ ] Con un LSP activo (p. ej. un `.py` con pyright), pegar código con un error: el diagnóstico aparece igual que al tipearlo.
+
 ---
 
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca

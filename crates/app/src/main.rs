@@ -18,12 +18,14 @@
 mod lsp;
 mod vim;
 
+use std::collections::VecDeque;
 use std::io::{self, Stdout};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{
-    Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -198,7 +200,10 @@ fn iniciar_terminal() -> Result<(Terminal<Backend>, bool)> {
     configurar_consola_utf8();
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    // Bracketed paste: lo pegado desde el portapapeles de la terminal
+    // llega como UN evento `Event::Paste` con todo el texto, en vez de
+    // una tecla por carácter (ver `pegar_texto`).
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
 
     let protocolo_kitty = supports_keyboard_enhancement().unwrap_or(false);
     if protocolo_kitty {
@@ -213,7 +218,7 @@ fn finalizar_terminal(terminal: &mut Terminal<Backend>, protocolo_kitty: bool) -
         execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     }
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), DisableBracketedPaste, LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
 }
@@ -346,65 +351,98 @@ async fn ejecutar(
         confirmar_borrado: EstadoConfirmarBorrado::nuevo(),
     };
 
-    // El archivo abierto al arrancar también dispara el LSP si su
-    // lenguaje tiene uno configurado.
-    sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
-
     // Ver `forzar_redibujado_completo`: en Windows, si la "forma" de la
     // pantalla cambió (otro archivo activo, otro número de paneles, el
     // explorador se mostró/ocultó), se limpia antes del próximo draw.
     let mut necesita_redibujado = false;
 
+    // Teclas generadas por la app en vez de por la terminal: lo pegado
+    // mientras hay un prompt de una línea abierto se reparte en teclas
+    // sueltas (ver `pegar_texto`). Se procesan antes que cualquier
+    // evento nuevo de la terminal.
+    let mut teclas_sinteticas: VecDeque<KeyEvent> = VecDeque::new();
+    let mut ultimo_dibujo = Instant::now();
+
     loop {
-        if necesita_redibujado {
-            forzar_redibujado_completo(terminal)?;
-            necesita_redibujado = false;
+        // Si ya hay más teclas esperando (una flecha mantenida apretada,
+        // o lo pegado en una terminal sin bracketed paste), se procesan
+        // TODAS antes de volver a dibujar. Dibujar entre cada una hacía
+        // que la cola creciera más rápido de lo que se vaciaba: la
+        // pantalla se congelaba y después el cursor "se ponía al día" de
+        // golpe, pasándose de donde se quería ir. Igual se dibuja cada
+        // tanto durante una ráfaga larga para que no parezca colgado.
+        let hay_mas_eventos = !teclas_sinteticas.is_empty() || crossterm::event::poll(Duration::ZERO).unwrap_or(false);
+        if !hay_mas_eventos || ultimo_dibujo.elapsed() >= INTERVALO_MAXIMO_SIN_DIBUJAR {
+            // Una vez por frame, no por tecla: avisa al LSP del archivo
+            // activo (relanzándolo si cambió de lenguaje) y le manda el
+            // texto completo si cambió. Por tecla significaba copiar y
+            // serializar el archivo entero en cada carácter tipeado.
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+
+            if necesita_redibujado {
+                forzar_redibujado_completo(terminal)?;
+                necesita_redibujado = false;
+            }
+
+            // Barato (5 lenguajes): se recalcula cada frame en vez de
+            // cachearlo, para que el estado en vivo del cliente LSP
+            // (conectado/iniciando) se vea siempre actualizado en la
+            // sección "Lenguajes / LSP" mientras el panel está abierto ahí.
+            let filas_lenguajes = filas_lenguajes_lsp(&estado);
+
+            terminal.draw(|frame| {
+                tcode_ui::dibujar(
+                    frame,
+                    layout,
+                    &estado.paleta,
+                    &mut resaltador,
+                    &estado.explorador,
+                    &estado.paleta_comandos,
+                    &estado.buscador_archivos,
+                    &estado.estado_busqueda,
+                    &estado.guardar_como,
+                    &estado.selector_tema,
+                    &estado.panel_admin,
+                    &estado.config,
+                    &estado.keymap,
+                    &filas_lenguajes,
+                    &estado.editor_tema,
+                    &estado.logs_lsp,
+                    &estado.prompt_explorador,
+                    &estado.confirmar_borrado,
+                )
+            })?;
+            ultimo_dibujo = Instant::now();
         }
-
-        // Barato (5 lenguajes): se recalcula cada frame en vez de
-        // cachearlo, para que el estado en vivo del cliente LSP
-        // (conectado/iniciando) se vea siempre actualizado en la
-        // sección "Lenguajes / LSP" mientras el panel está abierto ahí.
-        let filas_lenguajes = filas_lenguajes_lsp(&estado);
-
-        terminal.draw(|frame| {
-            tcode_ui::dibujar(
-                frame,
-                layout,
-                &estado.paleta,
-                &mut resaltador,
-                &estado.explorador,
-                &estado.paleta_comandos,
-                &estado.buscador_archivos,
-                &estado.estado_busqueda,
-                &estado.guardar_como,
-                &estado.selector_tema,
-                &estado.panel_admin,
-                &estado.config,
-                &estado.keymap,
-                &filas_lenguajes,
-                &estado.editor_tema,
-                &estado.logs_lsp,
-                &estado.prompt_explorador,
-                &estado.confirmar_borrado,
-            )
-        })?;
 
         let firma_antes = firma_estructural(layout, &estado.explorador);
 
-        let key = tokio::select! {
-            evento = eventos.next() => {
-                match evento {
-                    Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => key,
-                    _ => continue,
+        let evento = match teclas_sinteticas.pop_front() {
+            Some(key) => Event::Key(key),
+            None => tokio::select! {
+                evento = eventos.next() => {
+                    match evento {
+                        Some(Ok(evento)) => evento,
+                        _ => continue,
+                    }
                 }
-            }
-            mensaje = estado.lsp.siguiente_mensaje() => {
-                if let Some(mensaje) = mensaje {
-                    estado.lsp.procesar_mensaje(mensaje, layout).await;
+                mensaje = estado.lsp.siguiente_mensaje() => {
+                    if let Some(mensaje) = mensaje {
+                        estado.lsp.procesar_mensaje(mensaje, layout).await;
+                    }
+                    continue;
                 }
+            },
+        };
+
+        let key = match evento {
+            Event::Key(key) if key.kind == KeyEventKind::Press => key,
+            Event::Paste(texto) => {
+                pegar_texto(&texto, layout, &mut estado, &mut teclas_sinteticas);
+                necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
                 continue;
             }
+            _ => continue,
         };
 
         // El editor visual de tema (`Ctrl+K Ctrl+P`, PLAN.md §7) es otra
@@ -471,7 +509,6 @@ async fn ejecutar(
                     _ => {}
                 },
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -606,7 +643,6 @@ async fn ejecutar(
                     },
                 }
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -632,7 +668,6 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.paleta_comandos.escribir(c),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -652,7 +687,6 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.buscador_archivos.escribir(c),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -691,7 +725,6 @@ async fn ejecutar(
                 }
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -742,7 +775,6 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.estado_busqueda.escribir(c, &texto),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -762,7 +794,6 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.guardar_como.escribir(c),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -778,7 +809,6 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.logs_lsp.escribir(c),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -799,7 +829,6 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.prompt_explorador.escribir(c),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -823,7 +852,6 @@ async fn ejecutar(
                 }
                 _ => estado.confirmar_borrado.cerrar(),
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -847,7 +875,6 @@ async fn ejecutar(
                 }
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -867,7 +894,6 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => layout.panel_activo_mut().estado_csv.escribir(c),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -889,7 +915,6 @@ async fn ejecutar(
             editor.colapsar_cursores();
             editor.entrar_modo_normal();
             estado.confirmar_salida = false;
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -913,7 +938,6 @@ async fn ejecutar(
             };
             if manejada {
                 estado.confirmar_salida = false;
-                sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
                 necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
                 continue;
             }
@@ -953,12 +977,57 @@ async fn ejecutar(
             }
         }
 
-        sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
         necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
     }
 
     estado.lsp.cerrar().await;
     Ok(())
+}
+
+/// Cada cuánto se dibuja igual durante una ráfaga larga de eventos (ver
+/// el bucle de `ejecutar`): lo suficiente para que se vea avanzar, sin
+/// volver a dibujar por cada tecla.
+const INTERVALO_MAXIMO_SIN_DIBUJAR: Duration = Duration::from_millis(50);
+
+/// Texto pegado desde la terminal (`Event::Paste`, bracketed paste). Con
+/// el editor enfocado y sin ningún overlay abierto se inserta entero de
+/// una vez (`Editor::insertar_texto`: una sola edición, un solo paso de
+/// deshacer, sin re-indentar cada línea). En un prompt de una línea
+/// (paleta, buscadores, "Guardar como"...) se reparte en teclas sueltas
+/// que el bucle procesa como si se hubieran tipeado, sin los saltos de
+/// línea — un `Enter` en medio confirmaría el prompt a medio pegar. En
+/// cualquier otro lado (confirmación de borrado, salto rápido del
+/// explorador, menús de una tecla) se ignora: ahí cada carácter es una
+/// acción, no texto.
+fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, teclas: &mut VecDeque<KeyEvent>) {
+    let prompt_de_texto = estado.paleta_comandos.activa()
+        || estado.buscador_archivos.activo()
+        || estado.estado_busqueda.activa()
+        || estado.guardar_como.activa()
+        || estado.logs_lsp.activo()
+        || estado.prompt_explorador.activo()
+        || layout.panel_activo().estado_csv.editando()
+        || (estado.panel_admin.activo() && estado.panel_admin.editando_comando_lsp().is_some());
+    if prompt_de_texto {
+        teclas.extend(
+            texto
+                .chars()
+                .filter(|c| !c.is_control())
+                .map(|c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)),
+        );
+        return;
+    }
+
+    let otro_modal = estado.editor_tema.activo()
+        || estado.panel_admin.activo()
+        || estado.selector_tema.activa()
+        || estado.confirmar_borrado.activo()
+        || estado.explorador.modo_salto();
+    if otro_modal || estado.foco != Foco::Editor || layout.panel_activo().modo_csv == ModoCsv::Tabla {
+        return;
+    }
+    estado.confirmar_salida = false;
+    layout.editor_activo_mut().insertar_texto(texto);
 }
 
 /// Le avisa al `EstadoLsp` cuál es el archivo/contenido activos ahora

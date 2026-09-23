@@ -88,18 +88,38 @@ pub struct Token {
 /// configuración de cada lenguaje (parsear las queries de highlights.scm
 /// tiene costo, cachearla evita repetirlo en cada frame).
 ///
-/// Recalcula el árbol completo en cada llamada a `resaltar` — el parsing
+/// Recalcula el árbol completo cuando el texto cambió — el parsing
 /// incremental real de tree-sitter (reutilizar el árbol anterior con los
 /// rangos editados) es una optimización de rendimiento pendiente para
-/// cuando haga falta con archivos grandes; no es necesaria para M1.
+/// cuando haga falta con archivos grandes. Lo que sí se evita es repetir
+/// el parseo cuando el texto NO cambió (mover el cursor, scroll,
+/// redibujar por un mensaje del LSP): ver `cache`.
 pub struct Resaltador {
     highlighter: Highlighter,
     configs: HashMap<Lenguaje, HighlightConfiguration>,
+    /// Últimos resultados de `resaltar`, el más reciente primero. La UI
+    /// llama a `resaltar` en cada frame con el archivo completo; sin esto
+    /// cada flecha re-parseaba todo el archivo aunque el texto fuera
+    /// idéntico. Varias entradas (no una sola) porque en un mismo frame
+    /// se resaltan varias fuentes distintas: un panel por split, y cada
+    /// bloque de código de la vista Markdown.
+    cache: Vec<EntradaCache>,
 }
+
+struct EntradaCache {
+    lenguaje: Lenguaje,
+    fuente: String,
+    tokens: Vec<Token>,
+}
+
+/// Cuántos resultados recuerda `Resaltador::cache` — alcanza de sobra
+/// para los paneles de un split más los bloques de código visibles de
+/// una vista Markdown, sin retener memoria sin límite.
+const TAMANO_CACHE: usize = 16;
 
 impl Resaltador {
     pub fn nuevo() -> Self {
-        Self { highlighter: Highlighter::new(), configs: HashMap::new() }
+        Self { highlighter: Highlighter::new(), configs: HashMap::new(), cache: Vec::new() }
     }
 
     fn construir_config(lenguaje: Lenguaje) -> Result<HighlightConfiguration> {
@@ -203,10 +223,23 @@ impl Resaltador {
     /// "plano" para el resaltador, como espacios o puntuación sin captura)
     /// simplemente no aparecen en el resultado.
     pub fn resaltar(&mut self, lenguaje: Lenguaje, fuente: &str) -> Result<Vec<Token>> {
+        if let Some(pos) = self.cache.iter().position(|e| e.lenguaje == lenguaje && e.fuente == fuente) {
+            let entrada = self.cache.remove(pos);
+            let tokens = entrada.tokens.clone();
+            self.cache.insert(0, entrada);
+            return Ok(tokens);
+        }
+        let tokens = self.resaltar_sin_cache(lenguaje, fuente)?;
+        self.cache.insert(0, EntradaCache { lenguaje, fuente: fuente.to_string(), tokens: tokens.clone() });
+        self.cache.truncate(TAMANO_CACHE);
+        Ok(tokens)
+    }
+
+    fn resaltar_sin_cache(&mut self, lenguaje: Lenguaje, fuente: &str) -> Result<Vec<Token>> {
         self.config_para(lenguaje)?;
         // Se separan los campos para no pedir prestado `self` dos veces
         // (una vez para `configs`, otra para `highlighter`) al mismo tiempo.
-        let Resaltador { highlighter, configs } = self;
+        let Resaltador { highlighter, configs, .. } = self;
         let config = configs.get(&lenguaje).expect("config_para ya la insertó");
 
         let mut tokens = Vec::new();
@@ -246,6 +279,22 @@ mod tests {
             .iter()
             .map(|t| (t.nombre, fuente[t.inicio..t.fin].to_string()))
             .collect()
+    }
+
+    #[test]
+    fn la_cache_no_devuelve_tokens_de_otro_texto() {
+        let mut resaltador = Resaltador::nuevo();
+        let a = "fn main() {}\n";
+        let b = "let x = 1;\n";
+        let tokens_a = nombres_en(&resaltador.resaltar(Lenguaje::Rust, a).unwrap(), a);
+        let tokens_b = nombres_en(&resaltador.resaltar(Lenguaje::Rust, b).unwrap(), b);
+        assert_ne!(tokens_a, tokens_b);
+        // Segunda vuelta: sale de la cache, idéntico al cálculo original.
+        assert_eq!(nombres_en(&resaltador.resaltar(Lenguaje::Rust, a).unwrap(), a), tokens_a);
+        assert_eq!(nombres_en(&resaltador.resaltar(Lenguaje::Rust, b).unwrap(), b), tokens_b);
+        // Mismo texto, otro lenguaje: no debe reutilizar la entrada de Rust.
+        let tokens_py = resaltador.resaltar(Lenguaje::Python, a).unwrap();
+        assert_ne!(nombres_en(&tokens_py, a), tokens_a);
     }
 
     #[test]
