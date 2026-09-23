@@ -9,6 +9,7 @@ use tree_sitter::{
 };
 
 use crate::lenguaje::Lenguaje;
+use crate::plegado::{rangos_de_arbol, rangos_por_indentacion, RangoPlegable};
 
 /// Nombres de token canónicos, en el mismo vocabulario que
 /// `tcode_config::TemaSintaxis` (PLAN.md §7: keyword, string, number,
@@ -348,18 +349,29 @@ impl Resaltador {
         fuente: &str,
         rango: Range<usize>,
     ) -> Result<Vec<Token>> {
-        self.resaltar_documento_versionado(clave, lenguaje, None, || fuente.to_string(), rango)
+        self.resaltar_documento_tramos(clave, lenguaje, fuente, &[rango])
     }
 
-    /// Igual que [`Resaltador::resaltar_documento`], pero sabiendo la
-    /// revisión del texto (`tcode_core::Buffer::revision`): si coincide
-    /// con la de la llamada anterior para la misma `clave`, el texto es
-    /// el mismo y se consulta directo el árbol guardado — sin pedir el
-    /// texto (`obtener_fuente` ni se llama, así que la vista de código se
-    /// ahorra `Buffer::a_texto()`) ni compararlo byte a byte con el
-    /// anterior. Es el caso de casi todos los frames: mover el cursor,
-    /// scrollear, cualquier redibujado sin edición (BACKLOG.md P1 #14).
-    /// `revision: None` = desconocida, se compara el texto como siempre.
+    /// Igual que [`Resaltador::resaltar_documento`], pero para varios
+    /// tramos del documento (en orden, sin solaparse) de una sola vez:
+    /// con bloques plegados (BACKLOG.md P2 #7) lo visible son pedazos
+    /// separados por miles de líneas ocultas, y resaltar desde la primera
+    /// fila visible hasta la última recorrería también todo lo oculto. Un
+    /// token que cruza de un tramo al siguiente (un comentario de bloque
+    /// largo) se recorta para que el resultado siga ordenado y sin
+    /// solapes.
+    pub fn resaltar_documento_tramos(
+        &mut self,
+        clave: &str,
+        lenguaje: Lenguaje,
+        fuente: &str,
+        tramos: &[Range<usize>],
+    ) -> Result<Vec<Token>> {
+        self.resaltar_documento_tramos_versionado(clave, lenguaje, None, || fuente.to_string(), tramos)
+    }
+
+    /// [`Resaltador::resaltar_documento`] sabiendo la revisión del texto
+    /// (ver [`Resaltador::resaltar_documento_tramos_versionado`]).
     pub fn resaltar_documento_versionado(
         &mut self,
         clave: &str,
@@ -368,6 +380,79 @@ impl Resaltador {
         obtener_fuente: impl FnOnce() -> String,
         rango: Range<usize>,
     ) -> Result<Vec<Token>> {
+        self.resaltar_documento_tramos_versionado(clave, lenguaje, revision, obtener_fuente, &[rango])
+    }
+
+    /// Igual que [`Resaltador::resaltar_documento_tramos`], pero sabiendo
+    /// la revisión del texto (`tcode_core::Buffer::revision`): si coincide
+    /// con la de la llamada anterior para la misma `clave`, el texto es
+    /// el mismo y se consulta directo el árbol guardado — sin pedir el
+    /// texto (`obtener_fuente` ni se llama, así que la vista de código se
+    /// ahorra `Buffer::a_texto()`) ni compararlo byte a byte con el
+    /// anterior. Es el caso de casi todos los frames: mover el cursor,
+    /// scrollear, cualquier redibujado sin edición (BACKLOG.md P1 #14).
+    /// `revision: None` = desconocida, se compara el texto como siempre.
+    pub fn resaltar_documento_tramos_versionado(
+        &mut self,
+        clave: &str,
+        lenguaje: Lenguaje,
+        revision: Option<u64>,
+        obtener_fuente: impl FnOnce() -> String,
+        tramos: &[Range<usize>],
+    ) -> Result<Vec<Token>> {
+        self.actualizar_documento(clave, lenguaje, revision, obtener_fuente)?;
+        let documento = &self.documentos[clave];
+        let (arbol, fuente) = (&documento.arbol, documento.fuente.as_str());
+        let config = &self.configs[&lenguaje];
+        let mut tokens: Vec<Token> = Vec::new();
+        for rango in tramos {
+            let inicio = rango.start.min(fuente.len());
+            let fin = rango.end.clamp(inicio, fuente.len());
+            let hasta = tokens.last().map_or(0, |t| t.fin);
+            for mut token in tokens_de_capturas(&mut self.cursor, config, arbol, fuente, inicio..fin) {
+                if token.fin <= hasta {
+                    continue;
+                }
+                token.inicio = token.inicio.max(hasta);
+                tokens.push(token);
+            }
+        }
+        Ok(tokens)
+    }
+
+    /// Rangos plegables del documento `clave` (BACKLOG.md P2 #7, ver
+    /// `crate::plegado`), a partir del mismo árbol incremental que usa el
+    /// resaltado — no hace falta volver a parsear el archivo. Sin
+    /// lenguaje (o si el parseo falla), por indentación. Si el último
+    /// re-parseo se pasó de [`PRESUPUESTO_PARSEO`] (un archivo lleno de
+    /// errores de sintaxis), el árbol está atrasado y los rangos son
+    /// aproximados en lo recién editado, igual que los colores.
+    pub fn rangos_plegables(&mut self, clave: &str, lenguaje: Option<Lenguaje>, fuente: &str) -> Vec<RangoPlegable> {
+        let Some(lenguaje) = lenguaje else {
+            return rangos_por_indentacion(fuente);
+        };
+        if self.actualizar_documento(clave, lenguaje, None, || fuente.to_string()).is_err() {
+            return rangos_por_indentacion(fuente);
+        }
+        rangos_de_arbol(&self.documentos[clave].arbol, lenguaje, fuente)
+    }
+
+    /// Deja en `self.documentos[clave]` el árbol del texto actual. Con
+    /// `revision` igual a la de la llamada anterior no hace nada (ni pide
+    /// el texto). Si no, pide el texto (`obtener_fuente`): la primera vez
+    /// parsea el texto completo; las siguientes calcula qué cambió
+    /// respecto del texto de la llamada anterior (prefijo y sufijo
+    /// comunes: una tecla, un pegado o un "reemplazar todo" son siempre
+    /// UNA región contigua o se tratan como tal) y re-parsea de forma
+    /// incremental reutilizando el árbol anterior, con el tope de
+    /// [`PRESUPUESTO_PARSEO`]. Si el texto no cambió, no se parsea nada.
+    fn actualizar_documento(
+        &mut self,
+        clave: &str,
+        lenguaje: Lenguaje,
+        revision: Option<u64>,
+        obtener_fuente: impl FnOnce() -> String,
+    ) -> Result<()> {
         self.preparar(lenguaje)?;
         self.reloj += 1;
 
@@ -376,31 +461,30 @@ impl Resaltador {
             Some(doc) if revision.is_some() && doc.revision == revision => doc,
             anterior => {
                 let fuente = obtener_fuente();
-                let (arbol, parseo_cancelado) = match anterior {
-                    Some(doc) if doc.fuente == fuente => (doc.arbol, doc.parseo_cancelado),
+                let (arbol, parseo_cancelado, revision) = match anterior {
+                    // Mismo texto: si quien llama no sabe la revisión
+                    // (`rangos_plegables`), se conserva la que ya había
+                    // para que el próximo frame de la vista de código
+                    // siga salteándose la comparación.
+                    Some(doc) if doc.fuente == fuente => (doc.arbol, doc.parseo_cancelado, revision.or(doc.revision)),
                     Some(mut doc) => {
                         doc.arbol.edit(&edicion_entre(&doc.fuente, &fuente));
                         let reintentar = doc.parseo_cancelado.is_none_or(|t| t.elapsed() >= REINTENTO_TRAS_CANCELAR);
                         match reintentar.then(|| self.reparsear_con_presupuesto(&fuente, &doc.arbol)).flatten() {
-                            Some(arbol) => (arbol, None),
-                            None if reintentar => (doc.arbol, Some(Instant::now())),
-                            None => (doc.arbol, doc.parseo_cancelado),
+                            Some(arbol) => (arbol, None, revision),
+                            None if reintentar => (doc.arbol, Some(Instant::now()), revision),
+                            None => (doc.arbol, doc.parseo_cancelado, revision),
                         }
                     }
                     None => (
                         self.parser.parse(&fuente, None).ok_or_else(|| anyhow!("tree-sitter no pudo parsear"))?,
                         None,
+                        revision,
                     ),
                 };
                 Documento { lenguaje, fuente, arbol, revision, parseo_cancelado, ultimo_uso: 0 }
             }
         };
-
-        let config = &self.configs[&lenguaje];
-        let fuente = &documento.fuente;
-        let inicio = rango.start.min(fuente.len());
-        let fin = rango.end.clamp(inicio, fuente.len());
-        let tokens = tokens_de_capturas(&mut self.cursor, config, &documento.arbol, fuente, inicio..fin);
 
         if self.documentos.len() >= MAX_DOCUMENTOS {
             if let Some(mas_viejo) = self.documentos.iter().min_by_key(|(_, d)| d.ultimo_uso).map(|(k, _)| k.clone()) {
@@ -408,7 +492,7 @@ impl Resaltador {
             }
         }
         self.documentos.insert(clave.to_string(), Documento { ultimo_uso: self.reloj, ..documento });
-        Ok(tokens)
+        Ok(())
     }
 }
 
@@ -688,56 +772,79 @@ mod tests {
         }
     }
 
+    /// Con código VÁLIDO, el árbol incremental tiene que ser idéntico al
+    /// de parsear de cero. Con errores de sintaxis no se puede exigir: la
+    /// recuperación de errores de tree-sitter depende del camino de
+    /// ediciones por el que se llegó al texto (pasa igual en Helix, Zed o
+    /// Neovim), y se vuelve a alinear en cuanto el código es válido otra
+    /// vez. Por eso cada edición aleatoria (que casi siempre rompe la
+    /// sintaxis) se revierte con otra edición chica, y se compara en el
+    /// texto válido resultante — eso sí ejercita `edicion_entre` y el
+    /// parseo incremental con ediciones chicas en cualquier posición. Las
+    /// líneas en blanco agregadas en los cortes de línea no rompen la
+    /// sintaxis y se acumulan, para que los offsets del documento vayan
+    /// cambiando entre paso y paso.
     #[test]
     fn el_resaltado_incremental_coincide_con_parsear_de_cero() {
         for lenguaje in [Lenguaje::Rust, Lenguaje::Python, Lenguaje::Markdown] {
             let mut resaltador = Resaltador::nuevo();
-            let mut referencia = Resaltador::nuevo();
+            let mut parser = Parser::new();
+            parser.set_language(&Resaltador::construir_config(lenguaje).unwrap().language).unwrap();
             let mut texto = muestra(lenguaje).to_string();
+            assert!(!parser.parse(&texto, None).unwrap().root_node().has_error(), "{lenguaje:?}: la muestra no es válida");
             // Generador pseudoaleatorio fijo: el test es reproducible.
             let mut semilla: u64 = 0x5eed;
             let mut azar = |max: usize| {
                 semilla = semilla.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                 ((semilla >> 33) as usize) % max.max(1)
             };
-            let insertos = ["x", "\n", "{", "}", "\"", "/*", "# ", "fn f() {}\n", "    ", "é"];
-            for paso in 0..120 {
-                let mut en = azar(texto.len() + 1);
-                while !texto.is_char_boundary(en) {
-                    en -= 1;
+            let limite_de_caracter = |texto: &str, mut i: usize| {
+                while !texto.is_char_boundary(i) {
+                    i -= 1;
                 }
+                i
+            };
+            let insertos = ["x", "\n", "{", "}", "\"", "/*", "# ", "fn f() {}\n", "    ", "é"];
+            let resaltar = |resaltador: &mut Resaltador, texto: &str, en: usize| {
+                let rango = en.saturating_sub(1000)..(en + 1000).min(texto.len());
+                (resaltador.resaltar_documento("doc", lenguaje, texto, rango.clone()).unwrap(), rango)
+            };
+            for paso in 0..60 {
+                // Edición que rompe (o no) la sintaxis, y su reversión.
+                let en = limite_de_caracter(&texto, azar(texto.len() + 1));
+                let valido = texto.clone();
                 match paso % 3 {
                     0 => texto.insert_str(en, insertos[azar(insertos.len())]),
                     1 => {
-                        let mut fin = (en + azar(40)).min(texto.len());
-                        while !texto.is_char_boundary(fin) {
-                            fin -= 1;
-                        }
+                        let fin = limite_de_caracter(&texto, (en + azar(40)).min(texto.len()));
                         texto.replace_range(en..fin, "");
                     }
                     _ => {
-                        // Pegar un bloque sacado de otra parte del texto.
-                        let mut desde = azar(texto.len());
-                        while !texto.is_char_boundary(desde) {
-                            desde -= 1;
-                        }
-                        let mut hasta = (desde + azar(300)).min(texto.len());
-                        while !texto.is_char_boundary(hasta) {
-                            hasta -= 1;
-                        }
+                        let desde = limite_de_caracter(&texto, azar(texto.len()));
+                        let hasta = limite_de_caracter(&texto, (desde + azar(300)).min(texto.len()));
                         let bloque = texto[desde..hasta].to_string();
                         texto.insert_str(en, &bloque);
                     }
                 }
-                // "Pantalla" de ~2000 bytes alrededor de la edición.
-                let inicio = en.saturating_sub(1000);
-                let fin = (en + 1000).min(texto.len());
-                let incremental = resaltador.resaltar_documento("doc", lenguaje, &texto, inicio..fin).unwrap();
-                let de_cero = referencia.resaltar(lenguaje, &texto).unwrap();
+                resaltar(&mut resaltador, &texto, en);
+                texto = valido;
+
+                // Línea en blanco en un corte de línea: sigue siendo válido.
+                if let Some(corte) = texto[..en].rfind('\n') {
+                    texto.insert(corte + 1, '\n');
+                }
+
+                let (incremental, rango) = resaltar(&mut resaltador, &texto, en);
+                let arbol_incremental = resaltador.documentos["doc"].arbol.root_node().to_sexp();
+                let arbol_de_cero = parser.parse(&texto, None).unwrap().root_node().to_sexp();
+                assert!(arbol_incremental == arbol_de_cero, "{lenguaje:?}, paso {paso}: el árbol incremental difiere");
+                let de_cero = tokens_de_referencia(lenguaje, &texto);
+                let de_cero: Vec<Token> =
+                    de_cero.into_iter().map(|(inicio, fin, nombre)| Token { inicio, fin, nombre }).collect();
                 assert_eq!(
-                    nombre_por_byte(&incremental, inicio..fin),
-                    nombre_por_byte(&de_cero, inicio..fin),
-                    "{lenguaje:?}, paso {paso}: el incremental difiere de parsear de cero"
+                    nombre_por_byte(&incremental, rango.clone()),
+                    nombre_por_byte(&de_cero, rango),
+                    "{lenguaje:?}, paso {paso}: el resaltado incremental difiere de parsear de cero"
                 );
             }
         }

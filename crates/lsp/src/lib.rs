@@ -11,11 +11,13 @@
 mod cliente;
 mod diagnostico;
 mod estado_logs;
+mod formateo;
 mod protocolo;
 mod sincronizacion;
 
 pub use cliente::{comando_para, Cliente, MensajeEntrante};
 pub use diagnostico::{parsear_diagnosticos, DiagnosticoSimple, Severidad};
 pub use estado_logs::EstadoLogsLsp;
+pub use formateo::{parsear_ediciones_formateo, soporta_formateo, EdicionTexto};
 pub use protocolo::{escribir_mensaje, leer_mensaje};
 pub use sincronizacion::{cambio_entre, ModoSincronizacion};

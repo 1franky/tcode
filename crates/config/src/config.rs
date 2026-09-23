@@ -40,7 +40,54 @@ pub struct ConfigEditor {
     /// esta columna" o "apagada" sin un segundo estado que pueda quedar
     /// inconsistente (p. ej. "prendida" pero con la columna en 0).
     pub columna_regla: Option<usize>,
+    /// Guardado automático (PLAN.md §5.4, BACKLOG.md P2 #4). `Nunca` por
+    /// defecto — no le cambia el comportamiento a nadie que no lo prenda
+    /// a propósito. Solo afecta a buffers CON ruta y modificados (un
+    /// "[Sin nombre]" no tiene dónde escribirse sin preguntar).
+    pub guardado_automatico: GuardadoAutomatico,
+    /// Cada cuántos segundos guarda `GuardadoAutomatico::CadaNSegundos`
+    /// — un campo aparte (en vez de un dato dentro de la variante) para
+    /// que el TOML quede plano y legible a mano
+    /// (`guardado_automatico = "cada_n_segundos"` +
+    /// `segundos_guardado_automatico = 30`), y para que el número se
+    /// recuerde aunque se cambie de modo y se vuelva. Ignorado en los
+    /// otros dos modos.
+    pub segundos_guardado_automatico: u64,
 }
+
+/// Modos de guardado automático de PLAN.md §5.4 ("nunca / al perder foco
+/// / cada N segundos"). "Perder foco" = el panel/archivo activo cambia
+/// (otro panel de un split, abrir otro archivo, pasar al explorador) o la
+/// terminal avisa que perdió el foco (si soporta esos eventos) — lo
+/// decide `app`, este crate solo guarda la elección.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GuardadoAutomatico {
+    #[default]
+    Nunca,
+    AlPerderFoco,
+    CadaNSegundos,
+}
+
+impl GuardadoAutomatico {
+    pub const TODOS: [GuardadoAutomatico; 3] =
+        [GuardadoAutomatico::Nunca, GuardadoAutomatico::AlPerderFoco, GuardadoAutomatico::CadaNSegundos];
+
+    /// El modo siguiente (`delta` > 0) o anterior (`delta` < 0) en
+    /// [`Self::TODOS`], dando la vuelta en los extremos — así `←`/`→`/
+    /// `Enter` en el panel de administración recorren los tres sin
+    /// quedarse trabados en una punta.
+    pub fn rotar(self, delta: i32) -> Self {
+        let total = Self::TODOS.len() as i32;
+        let actual = Self::TODOS.iter().position(|m| *m == self).unwrap_or(0) as i32;
+        Self::TODOS[(actual + delta).rem_euclid(total) as usize]
+    }
+}
+
+/// Valor por defecto de `segundos_guardado_automatico` — suficientemente
+/// seguido como para no perder mucho si algo se cuelga, suficientemente
+/// espaciado como para no estar escribiendo a disco todo el tiempo.
+pub const SEGUNDOS_GUARDADO_AUTOMATICO_POR_DEFECTO: u64 = 30;
 
 impl Default for ConfigEditor {
     fn default() -> Self {
@@ -51,6 +98,8 @@ impl Default for ConfigEditor {
             numeros_de_linea: true,
             modo_vim: false,
             columna_regla: None,
+            guardado_automatico: GuardadoAutomatico::Nunca,
+            segundos_guardado_automatico: SEGUNDOS_GUARDADO_AUTOMATICO_POR_DEFECTO,
         }
     }
 }
@@ -138,6 +187,14 @@ pub struct ConfigLenguajes {
     /// Comando personalizado por lenguaje — si un id no está acá, se
     /// usa el que trae `tcode_lsp::comando_para` (si alguno).
     pub lsp_comando: HashMap<String, ComandoLsp>,
+    /// Ids de lenguaje con "formatear al guardar" prendido (PLAN.md §5
+    /// "Editor", BACKLOG.md P2 #5): al guardar un archivo de uno de
+    /// estos lenguajes se le pide `textDocument/formatting` al LSP
+    /// activo antes de escribir a disco. Lista de los PRENDIDOS (no de
+    /// los apagados, al revés que `lsp_deshabilitado`) porque el
+    /// default es apagado para todos — reformatear el archivo de alguien
+    /// sin que lo haya pedido sería un cambio de comportamiento sorpresa.
+    pub formatear_al_guardar: Vec<String>,
 }
 
 impl ConfigLenguajes {
@@ -152,6 +209,22 @@ impl ConfigLenguajes {
             self.lsp_deshabilitado.remove(pos);
         } else {
             self.lsp_deshabilitado.push(id_lenguaje.to_string());
+        }
+    }
+
+    /// `true` si `id_lenguaje` tiene "formatear al guardar" prendido —
+    /// `false` por defecto para todos (ver doc del campo).
+    pub fn formatear_al_guardar(&self, id_lenguaje: &str) -> bool {
+        self.formatear_al_guardar.iter().any(|l| l == id_lenguaje)
+    }
+
+    /// Prende "formatear al guardar" para `id_lenguaje` si estaba
+    /// apagado, o viceversa (`f` en "Lenguajes / LSP").
+    pub fn alternar_formatear_al_guardar(&mut self, id_lenguaje: &str) {
+        if let Some(pos) = self.formatear_al_guardar.iter().position(|l| l == id_lenguaje) {
+            self.formatear_al_guardar.remove(pos);
+        } else {
+            self.formatear_al_guardar.push(id_lenguaje.to_string());
         }
     }
 
@@ -267,6 +340,8 @@ mod tests {
                 numeros_de_linea: false,
                 modo_vim: true,
                 columna_regla: Some(80),
+                guardado_automatico: GuardadoAutomatico::CadaNSegundos,
+                segundos_guardado_automatico: 10,
             },
             interfaz: ConfigInterfaz {
                 tema: "claro".into(),
@@ -288,6 +363,7 @@ mod tests {
                         env: BTreeMap::from([("RUST_LOG".to_string(), "debug".to_string())]),
                     },
                 )]),
+                formatear_al_guardar: vec!["rust".to_string()],
             },
         };
         let texto = toml::to_string_pretty(&original).unwrap();
@@ -305,6 +381,36 @@ mod tests {
     }
 
     #[test]
+    fn guardado_automatico_arranca_en_nunca() {
+        let config = Config::default();
+        assert_eq!(config.editor.guardado_automatico, GuardadoAutomatico::Nunca);
+        // Un config.toml viejo, anterior a este campo, tampoco lo prende.
+        let viejo: Config = toml::from_str("[editor]\ntamano_tabulacion = 2\n").unwrap();
+        assert_eq!(viejo.editor.guardado_automatico, GuardadoAutomatico::Nunca);
+        assert_eq!(viejo.editor.segundos_guardado_automatico, SEGUNDOS_GUARDADO_AUTOMATICO_POR_DEFECTO);
+    }
+
+    #[test]
+    fn guardado_automatico_se_lee_en_snake_case_desde_toml() {
+        let config: Config =
+            toml::from_str("[editor]\nguardado_automatico = \"al_perder_foco\"\n").unwrap();
+        assert_eq!(config.editor.guardado_automatico, GuardadoAutomatico::AlPerderFoco);
+        let config: Config = toml::from_str(
+            "[editor]\nguardado_automatico = \"cada_n_segundos\"\nsegundos_guardado_automatico = 5\n",
+        )
+        .unwrap();
+        assert_eq!(config.editor.guardado_automatico, GuardadoAutomatico::CadaNSegundos);
+        assert_eq!(config.editor.segundos_guardado_automatico, 5);
+    }
+
+    #[test]
+    fn rotar_guardado_automatico_da_la_vuelta_en_ambos_sentidos() {
+        assert_eq!(GuardadoAutomatico::Nunca.rotar(1), GuardadoAutomatico::AlPerderFoco);
+        assert_eq!(GuardadoAutomatico::CadaNSegundos.rotar(1), GuardadoAutomatico::Nunca);
+        assert_eq!(GuardadoAutomatico::Nunca.rotar(-1), GuardadoAutomatico::CadaNSegundos);
+    }
+
+    #[test]
     fn todos_los_lenguajes_empiezan_habilitados() {
         let lenguajes = ConfigLenguajes::default();
         assert!(lenguajes.lsp_habilitado("python"));
@@ -319,6 +425,32 @@ mod tests {
 
         lenguajes.alternar_lsp("python");
         assert!(lenguajes.lsp_habilitado("python"));
+    }
+
+    #[test]
+    fn formatear_al_guardar_arranca_apagado_para_todos() {
+        let lenguajes = ConfigLenguajes::default();
+        assert!(!lenguajes.formatear_al_guardar("rust"));
+        assert!(!lenguajes.formatear_al_guardar("python"));
+    }
+
+    #[test]
+    fn alternar_formatear_al_guardar_prende_y_apaga_solo_ese_lenguaje() {
+        let mut lenguajes = ConfigLenguajes::default();
+        lenguajes.alternar_formatear_al_guardar("rust");
+        assert!(lenguajes.formatear_al_guardar("rust"));
+        assert!(!lenguajes.formatear_al_guardar("python"));
+
+        lenguajes.alternar_formatear_al_guardar("rust");
+        assert!(!lenguajes.formatear_al_guardar("rust"));
+    }
+
+    #[test]
+    fn config_vieja_sin_formatear_al_guardar_sigue_parseando() {
+        // Un config.toml escrito antes de esta opción no la tiene: tiene
+        // que parsear igual, con todo apagado (`#[serde(default)]`).
+        let config: Config = toml::from_str("[lenguajes]\nlsp_deshabilitado = [\"python\"]\n").unwrap();
+        assert!(config.lenguajes.formatear_al_guardar.is_empty());
     }
 
     #[test]
