@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{Config, GuardadoAutomatico};
 
 /// Las 6 secciones de PLAN.md §5 menos "Extensiones" (fase 2, fuera de
 /// alcance de M4). El orden es el de la tabla del plan.
@@ -61,6 +61,8 @@ pub enum CampoEditor {
     IndicadoresGit,
     ModoVim,
     ColumnaRegla,
+    GuardadoAutomatico,
+    SegundosGuardadoAutomatico,
 }
 
 /// Columna con la que arranca la regla vertical (BACKLOG.md P1 #5) al
@@ -73,9 +75,17 @@ const COLUMNA_REGLA_POR_DEFECTO: usize = 80;
 /// sentido práctico en una terminal.
 const COLUMNA_REGLA_MIN: i32 = 20;
 const COLUMNA_REGLA_MAX: i32 = 300;
+/// Paso y rango de "Guardado automático: segundos" (BACKLOG.md P2
+/// #4): de a 5 para que llegar a un minuto o dos no sean decenas de
+/// flechazos; por debajo de 5 s sería escribir a disco casi en cada
+/// pausa al tipear, por encima de 10 minutos deja de parecerse a un
+/// guardado "automático".
+const PASO_SEGUNDOS_GUARDADO: i64 = 5;
+const SEGUNDOS_GUARDADO_MIN: i64 = 5;
+const SEGUNDOS_GUARDADO_MAX: i64 = 600;
 
 impl CampoEditor {
-    pub const TODOS: [CampoEditor; 7] = [
+    pub const TODOS: [CampoEditor; 9] = [
         CampoEditor::TamanoTabulacion,
         CampoEditor::UsarEspacios,
         CampoEditor::AjusteLinea,
@@ -83,6 +93,8 @@ impl CampoEditor {
         CampoEditor::IndicadoresGit,
         CampoEditor::ModoVim,
         CampoEditor::ColumnaRegla,
+        CampoEditor::GuardadoAutomatico,
+        CampoEditor::SegundosGuardadoAutomatico,
     ];
 
     pub fn nombre(&self) -> &'static str {
@@ -94,6 +106,8 @@ impl CampoEditor {
             CampoEditor::IndicadoresGit => "Indicadores de git en el gutter",
             CampoEditor::ModoVim => "Modo VIM (hjkl, Normal/Insertar)",
             CampoEditor::ColumnaRegla => "Regla vertical (columna)",
+            CampoEditor::GuardadoAutomatico => "Guardado automático",
+            CampoEditor::SegundosGuardadoAutomatico => "Guardado automático: segundos",
         }
     }
 
@@ -103,8 +117,28 @@ impl CampoEditor {
         match self {
             CampoEditor::ModoVim => Some("Alcance inicial: sin operadores combinables (dw, d$), sin conteos (3dd), sin :"),
             CampoEditor::ColumnaRegla => Some("← en 'Apagada' no hace nada; → o Enter la prende en 80"),
+            CampoEditor::GuardadoAutomatico => Some("Solo archivos con nombre; foco = otro panel/archivo/ventana"),
+            CampoEditor::SegundosGuardadoAutomatico => Some("Solo se usa en el modo 'cada N segundos'; ←/→ de a 5"),
             _ => None,
         }
+    }
+
+    /// Clave de este campo dentro de `[editor]` en `config.toml` — la
+    /// usa el panel para marcar la fila si una `.tcode/config.toml` de
+    /// proyecto la pisa (`ConfigProyecto::pisa`, BACKLOG.md P2 #8).
+    pub fn clave_toml(&self) -> (&'static str, &'static str) {
+        let clave = match self {
+            CampoEditor::TamanoTabulacion => "tamano_tabulacion",
+            CampoEditor::UsarEspacios => "usar_espacios",
+            CampoEditor::AjusteLinea => "ajuste_linea",
+            CampoEditor::NumerosDeLinea => "numeros_de_linea",
+            CampoEditor::IndicadoresGit => "indicadores_git",
+            CampoEditor::ModoVim => "modo_vim",
+            CampoEditor::ColumnaRegla => "columna_regla",
+            CampoEditor::GuardadoAutomatico => "guardado_automatico",
+            CampoEditor::SegundosGuardadoAutomatico => "segundos_guardado_automatico",
+        };
+        ("editor", clave)
     }
 
     /// Valor actual como texto, para dibujarlo en la fila.
@@ -119,6 +153,8 @@ impl CampoEditor {
             CampoEditor::ColumnaRegla => {
                 config.editor.columna_regla.map(|c| c.to_string()).unwrap_or_else(|| "Apagada".to_string())
             }
+            CampoEditor::GuardadoAutomatico => etiqueta_guardado_automatico(config.editor.guardado_automatico).to_string(),
+            CampoEditor::SegundosGuardadoAutomatico => format!("{} s", config.editor.segundos_guardado_automatico),
         }
     }
 
@@ -158,7 +194,23 @@ impl CampoEditor {
                         if nuevo < COLUMNA_REGLA_MIN { None } else { Some(nuevo.min(COLUMNA_REGLA_MAX) as usize) };
                 }
             },
+            CampoEditor::GuardadoAutomatico => {
+                config.editor.guardado_automatico = config.editor.guardado_automatico.rotar(delta);
+            }
+            CampoEditor::SegundosGuardadoAutomatico => {
+                let nuevo = config.editor.segundos_guardado_automatico as i64 + delta as i64 * PASO_SEGUNDOS_GUARDADO;
+                config.editor.segundos_guardado_automatico =
+                    nuevo.clamp(SEGUNDOS_GUARDADO_MIN, SEGUNDOS_GUARDADO_MAX) as u64;
+            }
         }
+    }
+}
+
+fn etiqueta_guardado_automatico(modo: GuardadoAutomatico) -> &'static str {
+    match modo {
+        GuardadoAutomatico::Nunca => "Nunca",
+        GuardadoAutomatico::AlPerderFoco => "Al perder foco",
+        GuardadoAutomatico::CadaNSegundos => "Cada N segundos",
     }
 }
 
@@ -224,6 +276,21 @@ impl CampoInterfaz {
             CampoInterfaz::StatusbarDiagnosticos => "Statusbar: resumen de diagnósticos LSP",
             CampoInterfaz::StatusbarModo => "Statusbar: modo",
         }
+    }
+
+    /// Clave de este campo dentro de `[interfaz]` — ver
+    /// `CampoEditor::clave_toml`.
+    pub fn clave_toml(&self) -> (&'static str, &'static str) {
+        let clave = match self {
+            CampoInterfaz::MostrarStatusbar => "mostrar_statusbar",
+            CampoInterfaz::StatusbarPosicionCursor => "statusbar_posicion_cursor",
+            CampoInterfaz::StatusbarCodificacion => "statusbar_codificacion",
+            CampoInterfaz::StatusbarEol => "statusbar_eol",
+            CampoInterfaz::StatusbarLenguaje => "statusbar_lenguaje",
+            CampoInterfaz::StatusbarDiagnosticos => "statusbar_diagnosticos",
+            CampoInterfaz::StatusbarModo => "statusbar_modo",
+        };
+        ("interfaz", clave)
     }
 
     pub fn valor_actual(&self, config: &Config) -> String {
@@ -731,6 +798,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn clave_toml_de_cada_campo_existe_en_config_toml() {
+        // Si una `clave_toml` tuviera un typo, la marca "[proyecto: ...]"
+        // del panel nunca aparecería para esa fila, sin ningún error.
+        let mut config = Config::default();
+        config.editor.columna_regla = Some(80); // `None` no se serializa
+        let tabla = toml::Table::try_from(&config).unwrap();
+        let claves = CampoEditor::TODOS.iter().map(|c| c.clave_toml()).chain(CampoInterfaz::TODOS.iter().map(|c| c.clave_toml()));
+        for (seccion, clave) in claves {
+            assert!(tabla[seccion].as_table().unwrap().contains_key(clave), "{seccion}.{clave} no existe");
+        }
+    }
+
+    #[test]
     fn abrir_arranca_en_la_barra_con_la_primera_seccion() {
         let mut panel = EstadoPanelAdmin::nueva();
         panel.abrir();
@@ -965,6 +1045,34 @@ mod tests {
         config.editor.tamano_tabulacion = 16;
         CampoEditor::TamanoTabulacion.aplicar(&mut config, 1);
         assert_eq!(config.editor.tamano_tabulacion, 16);
+    }
+
+    #[test]
+    fn campo_guardado_automatico_arranca_en_nunca_y_rota_los_tres_modos() {
+        let mut config = Config::default();
+        assert_eq!(CampoEditor::GuardadoAutomatico.valor_actual(&config), "Nunca");
+        CampoEditor::GuardadoAutomatico.aplicar(&mut config, 1);
+        assert_eq!(CampoEditor::GuardadoAutomatico.valor_actual(&config), "Al perder foco");
+        CampoEditor::GuardadoAutomatico.aplicar(&mut config, 1);
+        assert_eq!(CampoEditor::GuardadoAutomatico.valor_actual(&config), "Cada N segundos");
+        CampoEditor::GuardadoAutomatico.aplicar(&mut config, 1);
+        assert_eq!(config.editor.guardado_automatico, GuardadoAutomatico::Nunca);
+        CampoEditor::GuardadoAutomatico.aplicar(&mut config, -1);
+        assert_eq!(config.editor.guardado_automatico, GuardadoAutomatico::CadaNSegundos);
+    }
+
+    #[test]
+    fn campo_segundos_guardado_automatico_va_de_a_5_y_se_recorta() {
+        let mut config = Config::default();
+        assert_eq!(CampoEditor::SegundosGuardadoAutomatico.valor_actual(&config), "30 s");
+        CampoEditor::SegundosGuardadoAutomatico.aplicar(&mut config, 1);
+        assert_eq!(config.editor.segundos_guardado_automatico, 35);
+        config.editor.segundos_guardado_automatico = 5;
+        CampoEditor::SegundosGuardadoAutomatico.aplicar(&mut config, -1);
+        assert_eq!(config.editor.segundos_guardado_automatico, 5);
+        config.editor.segundos_guardado_automatico = 600;
+        CampoEditor::SegundosGuardadoAutomatico.aplicar(&mut config, 1);
+        assert_eq!(config.editor.segundos_guardado_automatico, 600);
     }
 
     #[test]

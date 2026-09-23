@@ -26,7 +26,7 @@ use ratatui::layout::{Constraint, Direction, Layout as LayoutRatatui};
 use ratatui::Frame;
 
 use tcode_commands::EstadoPaleta;
-use tcode_config::{Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema};
+use tcode_config::{Config, ConfigProyecto, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema};
 use tcode_core::{EstadoBusqueda, EstadoGuardarComo};
 use tcode_fs::{BuscadorArchivos, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador};
 use tcode_keymap::Keymap;
@@ -36,6 +36,7 @@ use tcode_syntax::Resaltador;
 pub use paleta::Paleta;
 pub use paneles::{DireccionSplit, Layout, ModoCsv, ModoMarkdown, PanelEditor};
 pub use panel_admin::FilaLenguajeLsp;
+pub use vista_csv::ancho_columna as ancho_columna_csv;
 
 /// Ancho fijo (en columnas) del panel lateral del explorador cuando está
 /// visible.
@@ -74,6 +75,15 @@ pub(crate) const BORDE_ASCII: ratatui::symbols::border::Set = ratatui::symbols::
 #[derive(Default)]
 pub struct EstadoUi {
     scroll: usize,
+    /// Solo para `vista_codigo` con ajuste de línea activo: con el ajuste,
+    /// `scroll` es la línea LÓGICA de arriba de todo y esto la sub-fila
+    /// de esa línea desde la que se empieza a ver (una línea larga puede
+    /// quedar cortada por el borde de arriba). Guardar el scroll relativo
+    /// a una línea, en vez de como índice de fila visual sobre todo el
+    /// archivo, es lo que evita partir en filas el archivo entero en cada
+    /// frame (BACKLOG.md P1 #14, `vista_codigo::ajustar_scroll_con_ajuste`).
+    /// Sin ajuste vale siempre 0.
+    subfila_scroll: usize,
 }
 
 /// Dibuja un frame completo. El panel de administración (`Ctrl+,`,
@@ -106,6 +116,8 @@ pub fn dibujar(
     selector_tema: &EstadoSelectorTema,
     panel_admin_estado: &EstadoPanelAdmin,
     config: &Config,
+    config_global: &Config,
+    config_proyecto: Option<&ConfigProyecto>,
     keymap: &Keymap,
     filas_lenguajes: &[FilaLenguajeLsp],
     editor_tema: &EstadoEditorTema,
@@ -121,7 +133,8 @@ pub fn dibujar(
     }
 
     if panel_admin_estado.activo() {
-        panel_admin::dibujar(frame, area_total, panel_admin_estado, config, keymap, filas_lenguajes, paleta);
+        let capas = panel_admin::CapasPanel { efectiva: config, global: config_global, proyecto: config_proyecto };
+        panel_admin::dibujar(frame, area_total, panel_admin_estado, &capas, keymap, filas_lenguajes, paleta);
         return;
     }
 

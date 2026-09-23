@@ -9,6 +9,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Atajos esenciales](#atajos-esenciales)
 - [Multi-cursor y selección](#multi-cursor-y-selección)
 - [Búsqueda y reemplazo](#búsqueda-y-reemplazo)
+- [Plegado de bloques](#plegado-de-bloques)
 - [Paneles divididos (splits)](#paneles-divididos-splits)
 - [Explorador de archivos](#explorador-de-archivos)
 - [Modo VIM opcional](#modo-vim-opcional)
@@ -19,6 +20,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [LSP: autocompletado y diagnósticos](#lsp-autocompletado-y-diagnósticos)
 - [Personalizar atajos](#personalizar-atajos)
 - [Dónde vive la configuración](#dónde-vive-la-configuración)
+- [Config por proyecto](#config-por-proyecto)
 
 ## Primeros pasos
 
@@ -102,6 +104,39 @@ reemplazo. Con la barra abierta:
 
 `F3`/`Shift+F3` también funcionan con la barra cerrada, repitiendo la
 última búsqueda — igual que en VSCode.
+
+## Plegado de bloques
+
+Plegar oculta las líneas de un bloque (el cuerpo de una función, clase o
+`impl`, un `if`/`for`, un objeto o array, un comentario de bloque...): su
+primera línea queda visible con un marcador ` ... ` al final, y la línea
+de cierre (`}`, `end`, `</div>`) queda debajo, igual que en VSCode.
+
+| Atajo | Alternativa | Acción |
+|---|---|---|
+| `Ctrl+Shift+[` | `Ctrl+K [` | Plegar el bloque más interno que contiene al cursor (repetirlo pliega hacia afuera) |
+| `Ctrl+Shift+]` | `Ctrl+K ]` | Desplegar el bloque del cursor |
+| `Ctrl+K Ctrl+0` | `Ctrl+K 0` | Plegar todo |
+| `Ctrl+K Ctrl+J` | | Desplegar todo |
+
+Las alternativas son para terminales sin el protocolo de teclado de
+Kitty, donde `Ctrl+Shift+[` llega como `Esc` y `Ctrl+0` como un `0`
+suelto. Los cuatro comandos también están en la paleta (`Ctrl+Shift+P`,
+"Plegado: ...").
+
+- Las flechas saltan los bloques plegados; `Shift`+flecha selecciona el
+  bloque entero.
+- Editar dentro de un bloque plegado (o borrarlo con una selección) lo
+  despliega; editar más arriba lo corre junto con su código. Escribir en
+  la primera línea del bloque no lo despliega.
+- Buscar (`Ctrl+F`/`F3`) una coincidencia que está adentro de un bloque
+  plegado lo despliega.
+- Qué se puede plegar sale del árbol de sintaxis (tree-sitter) en todos
+  los lenguajes con resaltado, salvo Markdown, que no tiene plegado. En
+  archivos sin lenguaje reconocido (texto plano, YAML, TOML...) se pliega
+  por indentación: una línea seguida de otras más indentadas.
+- El plegado es de cada panel y no se guarda: al volver a abrir el
+  archivo arranca todo desplegado.
 
 ## Paneles divididos (splits)
 
@@ -222,6 +257,32 @@ Ambos se cierran con `Esc` y se navegan con `↑`/`↓` + `Enter`.
   `Tab`/`Shift+Tab` saltan a la celda siguiente/anterior (en vez de
   indentar) y `Enter`/`F2` empiezan a editar la celda actual.
 
+En modo tabla también podés ordenar, filtrar, insertar/eliminar filas y
+columnas y ajustar el ancho de las columnas. Todos son chords con
+`Ctrl+K` (y están en la paleta como "CSV: ..."); fuera de la vista de
+tabla no hacen nada.
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+K O` | Ordenar las filas por la columna seleccionada; repetirlo alterna ascendente/descendente. Detecta sola si la columna es numérica (si no, ordena como texto sin distinguir mayúsculas ni tildes). El encabezado no se mueve y las celdas vacías quedan al final |
+| `Ctrl+K /` | Filtrar: muestra solo las filas cuya celda en la columna seleccionada contiene el texto escrito (sin distinguir mayúsculas ni tildes). Una barra al pie indica el filtro activo |
+| `Esc` (con un filtro activo) | Quitar el filtro (también: `Enter` con el prompt de filtro vacío, o "CSV: Quitar filtro") |
+| `Ctrl+K ↓` / `Ctrl+K ↑` | Insertar una fila vacía debajo / arriba de la seleccionada |
+| `Ctrl+K →` / `Ctrl+K ←` | Insertar una columna vacía a la derecha / izquierda de la seleccionada |
+| `Ctrl+K E` / `Ctrl+K Shift+E` | Eliminar la fila / la columna seleccionada |
+| `Ctrl+K Shift+→` / `Ctrl+K Shift+←` | Ensanchar / angostar la columna seleccionada (de a 2) |
+| `Ctrl+K W` | Volver la columna seleccionada a su ancho automático |
+
+Ordenar e insertar/eliminar **modifican el archivo** (cada una se
+deshace con un solo `Ctrl+Z`); filtrar y el ancho de columna son solo de
+vista y no cambian nada en disco. Con un filtro activo, editar una celda
+edita la fila correcta del archivo; insertar una fila quita el filtro
+primero (si no, la fila nueva, vacía, quedaría oculta). Ordenar conserva
+el texto original de cada fila tal cual; insertar/eliminar una
+**columna** reescribe todas las filas con el quoting mínimo necesario
+(se citan solo las celdas con el delimitador, comillas o saltos de
+línea).
+
 ## Temas
 
 `tcode` trae 13 temas incluidos (Dracula, Monokai, One Dark, Nord,
@@ -266,7 +327,7 @@ opción por nombre):
 | **Atajos de teclado** | Ver/rebindear cualquier atajo (`Enter` sobre un comando y presionar la nueva combinación), con detección de conflictos resaltada en rojo. `Backspace` restablece uno solo al valor por defecto; hay una fila para restablecer todos. También exportar/importar el `keymap.toml` activo a/desde un archivo fijo (ver [Personalizar atajos](#personalizar-atajos)). |
 | **Temas** | Elegir tema (abre el selector con preview) y duplicar el activo para editarlo. |
 | **Lenguajes / LSP** | Habilitar/deshabilitar el servidor LSP de cada lenguaje, ver si el binario está en el `PATH` y el estado de la sesión activa (Conectado/Iniciando/Inactivo). `c` sobre una fila edita el comando+argumentos a mano (ver [LSP](#lsp-autocompletado-y-diagnósticos)); `Backspace` quita ese override. |
-| **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, indicadores de git, modo VIM, regla vertical. |
+| **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, indicadores de git, modo VIM, regla vertical, guardado automático. |
 | **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo). |
 
 Todos los cambios se aplican y persisten al instante en `config.toml`, sin
@@ -281,6 +342,14 @@ mitad "fuente" de la vista Markdown dividida (`Ctrl+K V`) — esa mitad
 comparte el desplazamiento vertical con el preview de al lado, que no
 sabe de filas partidas; funciona normal viendo el mismo archivo sin
 dividir.
+
+Con archivos muy grandes y MUCHOS errores de sintaxis para su lenguaje
+(p. ej. código de otro lenguaje guardado con la extensión equivocada),
+volver a analizar el archivo después de cada tecla puede tardar más de
+un segundo: en ese caso `tcode` corta el análisis a los 250 ms, sigue
+con los colores anteriores y lo reintenta cada 2 segundos — tipear
+sigue fluido, y los colores de lo recién editado pueden quedar
+aproximados un momento.
 
 **Regla vertical** (sección "Editor"): marca una columna fija del código
 con un fondo distinto — la guía de ancho de línea de siempre (80/100/
@@ -315,6 +384,20 @@ Detalles:
 - Con los números de línea apagados, la columna de git se sigue viendo
   sola (si el archivo está en un repo); para ocultarla está este mismo
   toggle.
+
+**Guardado automático** (sección "Editor"): `Nunca` (por defecto), `Al
+perder foco` o `Cada N segundos` — `←`/`→`/`Enter` recorren los tres, y
+la fila de abajo ajusta los segundos de a 5 (entre 5 y 600, 30 por
+defecto). Solo guarda archivos con nombre y con cambios; un "[Sin
+nombre]" hay que guardarlo a mano la primera vez (`Ctrl+S`). "Al perder
+foco" guarda al cambiar de panel, al abrir otro archivo en el mismo
+panel, al pasar al explorador y — si la terminal avisa de eso — al
+cambiar a otra ventana (en tmux hace falta `set -g focus-events on`).
+Si un guardado falla (sin permiso de escritura, carpeta borrada...) el
+motivo aparece en la barra de estado como `ERROR: ...` y los cambios
+siguen en el editor; se reintenta en el próximo guardado. En
+`config.toml`: `guardado_automatico = "nunca" | "al_perder_foco" |
+"cada_n_segundos"` y `segundos_guardado_automatico = 30` bajo `[editor]`.
 
 ## LSP: autocompletado y diagnósticos
 
@@ -358,11 +441,18 @@ después un `--` suelto, por ejemplo
 Volver a editar la fila con `c` precarga la línea completa, variables
 incluidas.
 
+Si el servidor lo soporta (pyright, por ejemplo), `tcode` le manda solo
+lo que cambió en cada edición en vez del archivo entero — con archivos
+de miles de líneas, tipear no se frena por el LSP.
+
 **`Ctrl+K R`** ("LSP: Ver logs de la sesión activa" en la paleta):
 muestra lo que el servidor escribió en su stderr — útil para entender
 por qué no conecta o se comporta raro, más allá del estado "Conectado"/
-"Iniciando…"/"Inactivo". Es una foto del momento en que se abre (no en
-vivo); escribir en el campo de arriba filtra las líneas por texto. La
+"Iniciando…"/"Inactivo". Se actualiza en vivo mientras está abierto (lo
+más nuevo arriba); escribir en el campo de arriba filtra las líneas por
+texto sin cortar la actualización. `↓`/`↑`/`RePág`/`AvPág` recorren la
+lista resaltando una fila, que se queda quieta sobre su línea aunque
+lleguen nuevas; `↑` desde la primera fila vuelve a seguir lo último. La
 mayoría de los servidores reales se quedan en silencio mientras todo
 funciona bien, así que ver "sin logs" con una sesión conectada es lo
 normal, no un signo de que algo esté mal.
@@ -401,3 +491,40 @@ Ahí adentro: `config.toml` (ajustes de editor/interfaz/lenguajes),
 embebidos) y `themes/` (temas propios o duplicados para editar). Todos se
 crean automáticamente con valores por defecto la primera vez que hacen
 falta — nunca hay que crearlos a mano para empezar a usar `tcode`.
+
+## Config por proyecto
+
+Además de la global, cada proyecto puede tener su propia
+`.tcode/config.toml` con **solo** lo que quiera cambiar respecto de tu
+config — por ejemplo, tabulación de 2 y sin números de línea en un repo
+en particular:
+
+```toml
+[editor]
+tamano_tabulacion = 2
+numeros_de_linea = false
+```
+
+- **Dónde se busca**: al arrancar, desde la carpeta del archivo que
+  abriste (o la carpeta actual si no abriste ninguno) hacia arriba,
+  hasta la raíz del repo git (la carpeta con `.git`) o la del disco. Se
+  usa la primera que aparezca. `config.recargar` (`Ctrl+K Ctrl+L`) la
+  vuelve a buscar y leer.
+- **Cómo se mezcla**: clave por clave. Las secciones (`[editor]`,
+  `[interfaz]`, `[lenguajes]`...) se combinan con las de tu config
+  global; un valor suelto o una lista del proyecto reemplaza al de la
+  global.
+- **El panel de administración (`Ctrl+,`) sigue editando solo tu config
+  global**: nunca copia valores del proyecto a ella. Si hay una config
+  de proyecto activa, el panel lo avisa arriba (con su ruta y qué
+  claves pisa), y las filas pisadas muestran el valor en uso como
+  `[proyecto: ...]` al lado del valor de tu global.
+- **Seguridad**: una config de proyecto **no puede** definir comandos de
+  LSP (`[lenguajes.lsp_comando.*]`, con sus variables de entorno) — se
+  ignoran, para que abrir un repo ajeno nunca ejecute un programa que
+  eligió otra persona. Tampoco puede volver a habilitar un LSP que
+  tengas deshabilitado en tu global (sí puede deshabilitar otros).
+- **Errores**: si el archivo tiene un error (TOML mal formado o un valor
+  del tipo equivocado), se ignora entero y se sigue con tu config
+  global; el motivo aparece en la cabecera del panel de administración.
+  Las claves que `tcode` no conoce se ignoran y se listan ahí mismo.
