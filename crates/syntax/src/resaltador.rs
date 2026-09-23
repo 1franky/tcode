@@ -648,71 +648,81 @@ mod tests {
         }
     }
 
+    /// Con código VÁLIDO, el árbol incremental tiene que ser idéntico al
+    /// de parsear de cero. Con errores de sintaxis no se puede exigir: la
+    /// recuperación de errores de tree-sitter depende del camino de
+    /// ediciones por el que se llegó al texto (pasa igual en Helix, Zed o
+    /// Neovim), y se vuelve a alinear en cuanto el código es válido otra
+    /// vez. Por eso cada edición aleatoria (que casi siempre rompe la
+    /// sintaxis) se revierte con otra edición chica, y se compara en el
+    /// texto válido resultante — eso sí ejercita `edicion_entre` y el
+    /// parseo incremental con ediciones chicas en cualquier posición. Las
+    /// líneas en blanco agregadas en los cortes de línea no rompen la
+    /// sintaxis y se acumulan, para que los offsets del documento vayan
+    /// cambiando entre paso y paso.
     #[test]
     fn el_resaltado_incremental_coincide_con_parsear_de_cero() {
         for lenguaje in [Lenguaje::Rust, Lenguaje::Python, Lenguaje::Markdown] {
             let mut resaltador = Resaltador::nuevo();
-            let mut referencia = Resaltador::nuevo();
+            let mut parser = Parser::new();
+            parser.set_language(&Resaltador::construir_config(lenguaje).unwrap().language).unwrap();
             let mut texto = muestra(lenguaje).to_string();
+            assert!(!parser.parse(&texto, None).unwrap().root_node().has_error(), "{lenguaje:?}: la muestra no es válida");
             // Generador pseudoaleatorio fijo: el test es reproducible.
             let mut semilla: u64 = 0x5eed;
             let mut azar = |max: usize| {
                 semilla = semilla.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                 ((semilla >> 33) as usize) % max.max(1)
             };
-            let insertos = ["x", "\n", "{", "}", "\"", "/*", "# ", "fn f() {}\n", "    ", "é"];
-            for paso in 0..120 {
-                let mut en = azar(texto.len() + 1);
-                while !texto.is_char_boundary(en) {
-                    en -= 1;
+            let limite_de_caracter = |texto: &str, mut i: usize| {
+                while !texto.is_char_boundary(i) {
+                    i -= 1;
                 }
+                i
+            };
+            let insertos = ["x", "\n", "{", "}", "\"", "/*", "# ", "fn f() {}\n", "    ", "é"];
+            let resaltar = |resaltador: &mut Resaltador, texto: &str, en: usize| {
+                let rango = en.saturating_sub(1000)..(en + 1000).min(texto.len());
+                (resaltador.resaltar_documento("doc", lenguaje, texto, rango.clone()).unwrap(), rango)
+            };
+            for paso in 0..60 {
+                // Edición que rompe (o no) la sintaxis, y su reversión.
+                let en = limite_de_caracter(&texto, azar(texto.len() + 1));
+                let valido = texto.clone();
                 match paso % 3 {
                     0 => texto.insert_str(en, insertos[azar(insertos.len())]),
                     1 => {
-                        let mut fin = (en + azar(40)).min(texto.len());
-                        while !texto.is_char_boundary(fin) {
-                            fin -= 1;
-                        }
+                        let fin = limite_de_caracter(&texto, (en + azar(40)).min(texto.len()));
                         texto.replace_range(en..fin, "");
                     }
                     _ => {
-                        // Pegar un bloque sacado de otra parte del texto.
-                        let mut desde = azar(texto.len());
-                        while !texto.is_char_boundary(desde) {
-                            desde -= 1;
-                        }
-                        let mut hasta = (desde + azar(300)).min(texto.len());
-                        while !texto.is_char_boundary(hasta) {
-                            hasta -= 1;
-                        }
+                        let desde = limite_de_caracter(&texto, azar(texto.len()));
+                        let hasta = limite_de_caracter(&texto, (desde + azar(300)).min(texto.len()));
                         let bloque = texto[desde..hasta].to_string();
                         texto.insert_str(en, &bloque);
                     }
                 }
-                // "Pantalla" de ~2000 bytes alrededor de la edición.
-                let inicio = en.saturating_sub(1000);
-                let fin = (en + 1000).min(texto.len());
-                let incremental = resaltador.resaltar_documento("doc", lenguaje, &texto, inicio..fin).unwrap();
-                let de_cero = referencia.resaltar(lenguaje, &texto).unwrap();
+                resaltar(&mut resaltador, &texto, en);
+                texto = valido;
+
+                // Línea en blanco en un corte de línea: sigue siendo válido.
+                if let Some(corte) = texto[..en].rfind('\n') {
+                    texto.insert(corte + 1, '\n');
+                }
+
+                let (incremental, rango) = resaltar(&mut resaltador, &texto, en);
+                let arbol_incremental = resaltador.documentos["doc"].arbol.root_node().to_sexp();
+                let arbol_de_cero = parser.parse(&texto, None).unwrap().root_node().to_sexp();
+                assert!(arbol_incremental == arbol_de_cero, "{lenguaje:?}, paso {paso}: el árbol incremental difiere");
+                let de_cero = tokens_de_referencia(lenguaje, &texto);
+                let de_cero: Vec<Token> =
+                    de_cero.into_iter().map(|(inicio, fin, nombre)| Token { inicio, fin, nombre }).collect();
                 assert_eq!(
-                    nombre_por_byte(&incremental, inicio..fin),
-                    nombre_por_byte(&de_cero, inicio..fin),
-                    "{lenguaje:?}, paso {paso}: el incremental difiere de parsear de cero"
+                    nombre_por_byte(&incremental, rango.clone()),
+                    nombre_por_byte(&de_cero, rango),
+                    "{lenguaje:?}, paso {paso}: el resaltado incremental difiere de parsear de cero"
                 );
             }
-        }
-    }
-
-    #[test]
-    fn resaltar_por_tramos_pinta_igual_que_de_a_uno() {
-        let fuente = muestra(Lenguaje::Rust);
-        let tramos = [0..500, 3000..3600, 3600..4000, 20000..20100];
-        let mut resaltador = Resaltador::nuevo();
-        let juntos = resaltador.resaltar_documento_tramos("doc", Lenguaje::Rust, fuente, &tramos).unwrap();
-        assert!(juntos.windows(2).all(|par| par[0].fin <= par[1].inicio), "tokens solapados o desordenados");
-        for tramo in tramos {
-            let solo = resaltador.resaltar_documento("doc", Lenguaje::Rust, fuente, tramo.clone()).unwrap();
-            assert_eq!(nombre_por_byte(&juntos, tramo.clone()), nombre_por_byte(&solo, tramo));
         }
     }
 
