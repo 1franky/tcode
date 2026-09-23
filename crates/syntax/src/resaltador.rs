@@ -1,9 +1,12 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::ops::Range;
+use std::ops::{ControlFlow, Range};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use tree_sitter::{InputEdit, Language, Parser, Point, Query, QueryCursor, StreamingIterator, Tree};
+use tree_sitter::{
+    InputEdit, Language, ParseOptions, ParseState, Parser, Point, Query, QueryCursor, StreamingIterator, Tree,
+};
 
 use crate::lenguaje::Lenguaje;
 use crate::plegado::{rangos_de_arbol, rangos_por_indentacion, RangoPlegable};
@@ -120,6 +123,11 @@ pub struct Resaltador {
     /// Markdown resalta sus bloques de código en cada frame; sin esto se
     /// re-parsearían aunque el texto fuera idéntico.
     cache: Vec<EntradaCache>,
+    /// Tiempo máximo de un re-parseo incremental (ver
+    /// [`PRESUPUESTO_PARSEO`]); campo en vez de usar la constante directo
+    /// para que los tests puedan forzar el camino "se pasó del
+    /// presupuesto".
+    presupuesto_parseo: Duration,
 }
 
 struct ConfigLenguaje {
@@ -135,6 +143,16 @@ struct Documento {
     lenguaje: Lenguaje,
     fuente: String,
     arbol: Tree,
+    /// Revisión de `fuente` según quien llama (ver
+    /// [`Resaltador::resaltar_documento_versionado`]), `None` si no la
+    /// informó.
+    revision: Option<u64>,
+    /// `Some(momento)` si el último re-parseo intentado se pasó de
+    /// [`PRESUPUESTO_PARSEO`] y se canceló: `arbol` quedó "atrasado"
+    /// (editado con `Tree::edit` para que sus posiciones sigan al texto,
+    /// pero sin re-parsear lo cambiado) y no se vuelve a intentar hasta
+    /// que pase [`REINTENTO_TRAS_CANCELAR`] desde ese momento.
+    parseo_cancelado: Option<Instant>,
     ultimo_uso: u64,
 }
 
@@ -154,6 +172,27 @@ const TAMANO_CACHE: usize = 16;
 /// archivos abiertos en los paneles de un split.
 const MAX_DOCUMENTOS: usize = 16;
 
+/// Tiempo máximo que puede tardar re-parsear un documento después de una
+/// edición antes de cancelarlo y seguir con el árbol anterior (BACKLOG.md
+/// P1 #14). Un archivo con MUCHOS errores de sintaxis para su lenguaje
+/// (p. ej. Rust guardado como `.py`) hace que la recuperación de errores
+/// de tree-sitter tarde lo mismo que parsear de cero aunque sea
+/// incremental: con 10.000 líneas, ~1,7 s por tecla, con la pantalla
+/// congelada. Un archivo válido nunca llega a esto: re-parsear tras una
+/// tecla tarda unos pocos ms y pegar 10.000 líneas de una ~150 ms — de
+/// ahí el margen. Solo aplica al re-parseo incremental: el primer parseo
+/// de un documento no tiene árbol anterior al que volver y se hace
+/// entero.
+const PRESUPUESTO_PARSEO: Duration = Duration::from_millis(250);
+
+/// Después de cancelar un re-parseo por [`PRESUPUESTO_PARSEO`], cuánto
+/// esperar antes de volver a intentarlo. Mientras tanto cada frame usa el
+/// árbol atrasado (colores aproximados en lo editado: en un archivo
+/// lleno de errores ya lo eran), así que tipear sigue fluido, con una
+/// pausa de a lo sumo el presupuesto cada tanto en vez de en cada tecla.
+/// Un intento que termina a tiempo vuelve todo a la normalidad.
+const REINTENTO_TRAS_CANCELAR: Duration = Duration::from_secs(2);
+
 impl Resaltador {
     pub fn nuevo() -> Self {
         Self {
@@ -163,6 +202,7 @@ impl Resaltador {
             documentos: HashMap::new(),
             reloj: 0,
             cache: Vec::new(),
+            presupuesto_parseo: PRESUPUESTO_PARSEO,
         }
     }
 
@@ -327,8 +367,42 @@ impl Resaltador {
         fuente: &str,
         tramos: &[Range<usize>],
     ) -> Result<Vec<Token>> {
-        self.actualizar_documento(clave, lenguaje, fuente)?;
-        let arbol = &self.documentos[clave].arbol;
+        self.resaltar_documento_tramos_versionado(clave, lenguaje, None, || fuente.to_string(), tramos)
+    }
+
+    /// [`Resaltador::resaltar_documento`] sabiendo la revisión del texto
+    /// (ver [`Resaltador::resaltar_documento_tramos_versionado`]).
+    pub fn resaltar_documento_versionado(
+        &mut self,
+        clave: &str,
+        lenguaje: Lenguaje,
+        revision: Option<u64>,
+        obtener_fuente: impl FnOnce() -> String,
+        rango: Range<usize>,
+    ) -> Result<Vec<Token>> {
+        self.resaltar_documento_tramos_versionado(clave, lenguaje, revision, obtener_fuente, &[rango])
+    }
+
+    /// Igual que [`Resaltador::resaltar_documento_tramos`], pero sabiendo
+    /// la revisión del texto (`tcode_core::Buffer::revision`): si coincide
+    /// con la de la llamada anterior para la misma `clave`, el texto es
+    /// el mismo y se consulta directo el árbol guardado — sin pedir el
+    /// texto (`obtener_fuente` ni se llama, así que la vista de código se
+    /// ahorra `Buffer::a_texto()`) ni compararlo byte a byte con el
+    /// anterior. Es el caso de casi todos los frames: mover el cursor,
+    /// scrollear, cualquier redibujado sin edición (BACKLOG.md P1 #14).
+    /// `revision: None` = desconocida, se compara el texto como siempre.
+    pub fn resaltar_documento_tramos_versionado(
+        &mut self,
+        clave: &str,
+        lenguaje: Lenguaje,
+        revision: Option<u64>,
+        obtener_fuente: impl FnOnce() -> String,
+        tramos: &[Range<usize>],
+    ) -> Result<Vec<Token>> {
+        self.actualizar_documento(clave, lenguaje, revision, obtener_fuente)?;
+        let documento = &self.documentos[clave];
+        let (arbol, fuente) = (&documento.arbol, documento.fuente.as_str());
         let config = &self.configs[&lenguaje];
         let mut tokens: Vec<Token> = Vec::new();
         for rango in tramos {
@@ -349,42 +423,66 @@ impl Resaltador {
     /// Rangos plegables del documento `clave` (BACKLOG.md P2 #7, ver
     /// `crate::plegado`), a partir del mismo árbol incremental que usa el
     /// resaltado — no hace falta volver a parsear el archivo. Sin
-    /// lenguaje (o si el parseo falla), por indentación.
+    /// lenguaje (o si el parseo falla), por indentación. Si el último
+    /// re-parseo se pasó de [`PRESUPUESTO_PARSEO`] (un archivo lleno de
+    /// errores de sintaxis), el árbol está atrasado y los rangos son
+    /// aproximados en lo recién editado, igual que los colores.
     pub fn rangos_plegables(&mut self, clave: &str, lenguaje: Option<Lenguaje>, fuente: &str) -> Vec<RangoPlegable> {
         let Some(lenguaje) = lenguaje else {
             return rangos_por_indentacion(fuente);
         };
-        if self.actualizar_documento(clave, lenguaje, fuente).is_err() {
+        if self.actualizar_documento(clave, lenguaje, None, || fuente.to_string()).is_err() {
             return rangos_por_indentacion(fuente);
         }
         rangos_de_arbol(&self.documentos[clave].arbol, lenguaje, fuente)
     }
 
-    /// Deja en `self.documentos[clave]` el árbol de `fuente`: la primera
-    /// vez parsea el texto completo; las siguientes calcula qué cambió
+    /// Deja en `self.documentos[clave]` el árbol del texto actual. Con
+    /// `revision` igual a la de la llamada anterior no hace nada (ni pide
+    /// el texto). Si no, pide el texto (`obtener_fuente`): la primera vez
+    /// parsea el texto completo; las siguientes calcula qué cambió
     /// respecto del texto de la llamada anterior (prefijo y sufijo
     /// comunes: una tecla, un pegado o un "reemplazar todo" son siempre
     /// UNA región contigua o se tratan como tal) y re-parsea de forma
-    /// incremental reutilizando el árbol anterior. Si el texto no cambió,
-    /// no se parsea nada.
-    fn actualizar_documento(&mut self, clave: &str, lenguaje: Lenguaje, fuente: &str) -> Result<()> {
+    /// incremental reutilizando el árbol anterior, con el tope de
+    /// [`PRESUPUESTO_PARSEO`]. Si el texto no cambió, no se parsea nada.
+    fn actualizar_documento(
+        &mut self,
+        clave: &str,
+        lenguaje: Lenguaje,
+        revision: Option<u64>,
+        obtener_fuente: impl FnOnce() -> String,
+    ) -> Result<()> {
         self.preparar(lenguaje)?;
         self.reloj += 1;
 
         let anterior = self.documentos.remove(clave).filter(|d| d.lenguaje == lenguaje);
-        let (arbol, fuente) = match anterior {
-            Some(doc) if doc.fuente == fuente => (doc.arbol, doc.fuente),
-            Some(mut doc) => {
-                doc.arbol.edit(&edicion_entre(&doc.fuente, fuente));
-                let arbol = self
-                    .parser
-                    .parse(fuente, Some(&doc.arbol))
-                    .ok_or_else(|| anyhow!("tree-sitter no pudo parsear"))?;
-                (arbol, fuente.to_string())
-            }
-            None => {
-                let arbol = self.parser.parse(fuente, None).ok_or_else(|| anyhow!("tree-sitter no pudo parsear"))?;
-                (arbol, fuente.to_string())
+        let documento = match anterior {
+            Some(doc) if revision.is_some() && doc.revision == revision => doc,
+            anterior => {
+                let fuente = obtener_fuente();
+                let (arbol, parseo_cancelado, revision) = match anterior {
+                    // Mismo texto: si quien llama no sabe la revisión
+                    // (`rangos_plegables`), se conserva la que ya había
+                    // para que el próximo frame de la vista de código
+                    // siga salteándose la comparación.
+                    Some(doc) if doc.fuente == fuente => (doc.arbol, doc.parseo_cancelado, revision.or(doc.revision)),
+                    Some(mut doc) => {
+                        doc.arbol.edit(&edicion_entre(&doc.fuente, &fuente));
+                        let reintentar = doc.parseo_cancelado.is_none_or(|t| t.elapsed() >= REINTENTO_TRAS_CANCELAR);
+                        match reintentar.then(|| self.reparsear_con_presupuesto(&fuente, &doc.arbol)).flatten() {
+                            Some(arbol) => (arbol, None, revision),
+                            None if reintentar => (doc.arbol, Some(Instant::now()), revision),
+                            None => (doc.arbol, doc.parseo_cancelado, revision),
+                        }
+                    }
+                    None => (
+                        self.parser.parse(&fuente, None).ok_or_else(|| anyhow!("tree-sitter no pudo parsear"))?,
+                        None,
+                        revision,
+                    ),
+                };
+                Documento { lenguaje, fuente, arbol, revision, parseo_cancelado, ultimo_uso: 0 }
             }
         };
 
@@ -393,8 +491,34 @@ impl Resaltador {
                 self.documentos.remove(&mas_viejo);
             }
         }
-        self.documentos.insert(clave.to_string(), Documento { lenguaje, fuente, arbol, ultimo_uso: self.reloj });
+        self.documentos.insert(clave.to_string(), Documento { ultimo_uso: self.reloj, ..documento });
         Ok(())
+    }
+}
+
+impl Resaltador {
+    /// Re-parsea `fuente` de forma incremental desde `anterior` (ya
+    /// editado con `Tree::edit`), cancelando si tarda más que
+    /// `presupuesto_parseo` (ver [`PRESUPUESTO_PARSEO`]) — `None` en ese
+    /// caso. Un parseo cancelado deja estado a medio hacer en el parser
+    /// (tree-sitter lo retomaría en la próxima llamada si el texto fuera
+    /// el mismo, que acá no se puede garantizar): se descarta con `reset`.
+    fn reparsear_con_presupuesto(&mut self, fuente: &str, anterior: &Tree) -> Option<Tree> {
+        let inicio = Instant::now();
+        let presupuesto = self.presupuesto_parseo;
+        let mut vigilar = |_: &ParseState| {
+            if inicio.elapsed() > presupuesto { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
+        };
+        let bytes = fuente.as_bytes();
+        let arbol = self.parser.parse_with_options(
+            &mut |i, _| if i < bytes.len() { &bytes[i..] } else { &[] },
+            Some(anterior),
+            Some(ParseOptions::new().progress_callback(&mut vigilar)),
+        );
+        if arbol.is_none() {
+            self.parser.reset();
+        }
+        arbol
     }
 }
 
@@ -878,5 +1002,73 @@ mod tests {
         resaltador.resaltar(Lenguaje::Rust, "fn a() {}\n").unwrap();
         resaltador.resaltar(Lenguaje::Rust, "fn b() {}\n").unwrap();
         assert_eq!(resaltador.configs.len(), 1);
+    }
+
+    /// Con la misma revisión, `resaltar_documento_versionado` no pide el
+    /// texto (la vista de código se ahorra `Buffer::a_texto()`); con una
+    /// revisión nueva lo pide y re-parsea, igual que sin revisión.
+    #[test]
+    fn resaltar_documento_versionado_no_pide_el_texto_si_la_revision_no_cambio() {
+        let mut resaltador = Resaltador::nuevo();
+        let v1 = "fn a() {}\n";
+        let v2 = "fn a() { 1 }\n// fin\n";
+        let pedidos = std::cell::Cell::new(0);
+        let mut resaltar = |revision: u64, fuente: &str| {
+            let obtener = || {
+                pedidos.set(pedidos.get() + 1);
+                fuente.to_string()
+            };
+            resaltador.resaltar_documento_versionado("doc", Lenguaje::Rust, Some(revision), obtener, 0..usize::MAX)
+        };
+
+        let primero = resaltar(1, v1).unwrap();
+        assert_eq!(pedidos.get(), 1);
+        // Misma revisión: se reutiliza el texto guardado aunque quien
+        // llama "tenga" otro (nunca pasa en la práctica: misma revisión
+        // implica mismo texto) — prueba que de verdad no se lo pidió.
+        let repetido = resaltar(1, "texto que no se debería leer").unwrap();
+        assert_eq!(pedidos.get(), 1);
+        assert_eq!(como_tuplas(&repetido), como_tuplas(&primero));
+
+        let editado = resaltar(2, v2).unwrap();
+        assert_eq!(pedidos.get(), 2);
+        let desde_cero = Resaltador::nuevo().resaltar(Lenguaje::Rust, v2).unwrap();
+        assert_eq!(como_tuplas(&editado), como_tuplas(&desde_cero));
+    }
+
+    /// Si re-parsear se pasa del presupuesto, se sigue con el árbol
+    /// anterior (editado): nunca falla ni se rompe, los tokens quedan
+    /// dentro del texto nuevo y en orden, y cuando un re-parseo vuelve a
+    /// terminar a tiempo el resultado es otra vez exactamente el de
+    /// parsear de cero.
+    #[test]
+    fn reparseo_que_se_pasa_del_presupuesto_sigue_con_el_arbol_anterior() {
+        let mut resaltador = Resaltador::nuevo();
+        // Lo bastante grande como para que el parser llegue a consultar
+        // el callback de progreso antes de terminar.
+        let base: String = (0..400).map(|i| format!("fn f{i}(a: i32) -> i32 {{ a + {i} }}\n")).collect();
+        resaltador.resaltar_documento("doc", Lenguaje::Rust, &base, 0..base.len()).unwrap();
+
+        resaltador.presupuesto_parseo = Duration::ZERO;
+        let mut texto = base.clone();
+        for i in 0..20 {
+            let medio = (texto.len() / 2 + i..).find(|&b| texto.is_char_boundary(b)).unwrap();
+            texto.insert_str(medio, "é😀 x");
+            let tokens = resaltador.resaltar_documento("doc", Lenguaje::Rust, &texto, 0..texto.len()).unwrap();
+            assert!(tokens.iter().all(|t| t.inicio <= t.fin && t.fin <= texto.len()));
+            assert!(tokens.windows(2).all(|par| par[0].fin <= par[1].inicio));
+        }
+        assert!(resaltador.documentos["doc"].parseo_cancelado.is_some(), "el presupuesto 0 debería haber cancelado");
+
+        // Presupuesto normal y ya pasado el tiempo de reintento: vuelve a
+        // re-parsear y coincide con parsear de cero.
+        resaltador.presupuesto_parseo = PRESUPUESTO_PARSEO;
+        resaltador.documentos.get_mut("doc").unwrap().parseo_cancelado =
+            Some(Instant::now() - REINTENTO_TRAS_CANCELAR);
+        texto.push_str("// fin\n");
+        let tokens = resaltador.resaltar_documento("doc", Lenguaje::Rust, &texto, 0..texto.len()).unwrap();
+        let desde_cero = Resaltador::nuevo().resaltar(Lenguaje::Rust, &texto).unwrap();
+        assert_eq!(como_tuplas(&tokens), como_tuplas(&desde_cero));
+        assert!(resaltador.documentos["doc"].parseo_cancelado.is_none());
     }
 }

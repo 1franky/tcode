@@ -17,11 +17,11 @@ use anyhow::Result;
 use lsp_types::{
     ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingClientCapabilities,
     DocumentFormattingParams, FormattingOptions, InitializeParams, InitializedParams, TextDocumentClientCapabilities,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
+    TextDocumentIdentifier, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
 };
 use serde_json::json;
 use tcode_config::Config;
-use tcode_lsp::{Cliente, EdicionTexto, MensajeEntrante};
+use tcode_lsp::{Cliente, EdicionTexto, MensajeEntrante, ModoSincronizacion};
 use tcode_syntax::Lenguaje;
 use tcode_ui::Layout as PanelLayout;
 
@@ -30,8 +30,10 @@ enum Fase {
     /// Se envió `initialize` con este id, se espera su respuesta.
     Iniciando { id_initialize: i64 },
     /// `initialize`/`initialized`/`didOpen` completos: se pueden mandar
-    /// `didChange` y se procesan diagnósticos entrantes.
-    Listo { version: i32 },
+    /// `didChange` y se procesan diagnósticos entrantes. `modo` es cómo
+    /// pidió el servidor recibir esos cambios (texto completo o solo el
+    /// rango editado, ver `ModoSincronizacion::desde_initialize`).
+    Listo { version: i32, modo: ModoSincronizacion },
 }
 
 struct SesionLsp {
@@ -47,6 +49,13 @@ struct SesionLsp {
     fase: Fase,
     uri: Uri,
     ultimo_texto_enviado: String,
+    /// `Buffer::revision` de `ultimo_texto_enviado`, si se conoce: con la
+    /// misma revisión el texto es el mismo, y `sincronizar_contenido` no
+    /// necesita ni copiarlo ni compararlo (BACKLOG.md P1 #14). `None`
+    /// hasta el primer envío con la sesión lista — el texto de `didOpen`
+    /// es el del momento del lanzamiento, y lo tipeado mientras el
+    /// servidor arrancaba sale en el primer `didChange`.
+    ultima_revision_enviada: Option<u64>,
     /// Si el servidor anunció `documentFormattingProvider` al responder
     /// `initialize` (BACKLOG.md P2 #5) — `false` hasta entonces, y para
     /// siempre en servidores que no formatean (pyright). Se mira ANTES de
@@ -99,8 +108,12 @@ impl EstadoLsp {
     /// vieja y arranca una nueva. Si el nuevo archivo no tiene lenguaje
     /// con LSP (o está deshabilitado, o el server configurado no se pudo
     /// lanzar — no está instalado), simplemente no queda sesión activa —
-    /// el editor sigue funcionando igual, sin LSP.
-    pub async fn actualizar_para_archivo(&mut self, ruta: &str, contenido: &str, config: &Config) {
+    /// el editor sigue funcionando igual, sin LSP. `contenido` da el
+    /// texto actual del archivo, y solo se llama si de verdad hay que
+    /// lanzar una sesión nueva — esto corre en cada frame, y copiar el
+    /// archivo entero cuando no hace falta era parte del costo por frame
+    /// con archivos grandes (BACKLOG.md P1 #14).
+    pub async fn actualizar_para_archivo(&mut self, ruta: &str, contenido: impl FnOnce() -> String, config: &Config) {
         let lenguaje = Lenguaje::detectar_por_extension(ruta);
         let lenguaje_efectivo = lenguaje.filter(|l| config.lenguajes.lsp_habilitado(l.id()));
         let comando_efectivo_actual = lenguaje_efectivo.and_then(|l| comando_efectivo(l, config));
@@ -163,7 +176,8 @@ impl EstadoLsp {
             comando_usado: (comando, args, env),
             fase: Fase::Iniciando { id_initialize },
             uri,
-            ultimo_texto_enviado: contenido.to_string(),
+            ultimo_texto_enviado: contenido(),
+            ultima_revision_enviada: None,
             soporta_formateo: false,
         });
     }
@@ -189,6 +203,7 @@ impl EstadoLsp {
             MensajeEntrante::Respuesta { id, resultado } => {
                 if let Fase::Iniciando { id_initialize } = sesion.fase {
                     if let (true, Ok(resultado)) = (id == id_initialize, &resultado) {
+                        let modo = ModoSincronizacion::desde_initialize(resultado);
                         sesion.soporta_formateo = tcode_lsp::soporta_formateo(resultado);
                         let _ = sesion.cliente.notificacion("initialized", InitializedParams {}).await;
                         let _ = sesion
@@ -205,7 +220,7 @@ impl EstadoLsp {
                                 },
                             )
                             .await;
-                        sesion.fase = Fase::Listo { version: 1 };
+                        sesion.fase = Fase::Listo { version: 1, modo };
                     }
                 }
             }
@@ -227,27 +242,38 @@ impl EstadoLsp {
     }
 
     /// Si el contenido del archivo activo cambió desde el último envío,
-    /// notifica `textDocument/didChange` con el texto completo (full
-    /// sync — más simple y suficientemente rápido para M2; la
-    /// sincronización incremental queda como optimización futura).
-    pub async fn sincronizar_contenido(&mut self, texto_actual: &str) {
+    /// notifica `textDocument/didChange`. `revision` es la del `Buffer`
+    /// activo (`Buffer::revision`) y `texto_actual` da su texto: si la
+    /// revisión es la del último envío no se hace nada — ni copiar ni
+    /// comparar el archivo, el caso de casi todos los frames. Si cambió,
+    /// se manda solo el rango editado cuando el servidor anunció
+    /// sincronización incremental, o el texto completo si no
+    /// (`tcode_lsp::cambio_entre`) — con pyright y 10.000 líneas, mandar
+    /// y que el servidor procese el texto entero por cada frame con
+    /// cambios era el costo más grande que quedaba al tipear.
+    pub async fn sincronizar_contenido(&mut self, revision: u64, texto_actual: impl FnOnce() -> String) {
         let Some(sesion) = &mut self.sesion else { return };
-        let Fase::Listo { version } = &mut sesion.fase else { return };
-        if texto_actual == sesion.ultimo_texto_enviado {
+        let Fase::Listo { version, modo } = &mut sesion.fase else { return };
+        if sesion.ultima_revision_enviada == Some(revision) {
             return;
         }
+        let texto_actual = texto_actual();
+        let Some(cambio) = tcode_lsp::cambio_entre(&sesion.ultimo_texto_enviado, &texto_actual, *modo) else {
+            sesion.ultima_revision_enviada = Some(revision);
+            return;
+        };
 
         *version += 1;
         let params = DidChangeTextDocumentParams {
             text_document: VersionedTextDocumentIdentifier { uri: sesion.uri.clone(), version: *version },
-            content_changes: vec![TextDocumentContentChangeEvent {
-                range: None,
-                range_length: None,
-                text: texto_actual.to_string(),
-            }],
+            content_changes: vec![cambio],
         };
         if sesion.cliente.notificacion("textDocument/didChange", params).await.is_ok() {
-            sesion.ultimo_texto_enviado = texto_actual.to_string();
+            // Hace falta el texto entero igual: es la base del próximo
+            // cambio incremental y de la conversión UTF-16 → carácter de
+            // los diagnósticos (`procesar_mensaje`).
+            sesion.ultimo_texto_enviado = texto_actual;
+            sesion.ultima_revision_enviada = Some(revision);
         }
     }
 

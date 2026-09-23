@@ -343,6 +343,14 @@ comparte el desplazamiento vertical con el preview de al lado, que no
 sabe de filas partidas; funciona normal viendo el mismo archivo sin
 dividir.
 
+Con archivos muy grandes y MUCHOS errores de sintaxis para su lenguaje
+(p. ej. código de otro lenguaje guardado con la extensión equivocada),
+volver a analizar el archivo después de cada tecla puede tardar más de
+un segundo: en ese caso `tcode` corta el análisis a los 250 ms, sigue
+con los colores anteriores y lo reintenta cada 2 segundos — tipear
+sigue fluido, y los colores de lo recién editado pueden quedar
+aproximados un momento.
+
 **Regla vertical** (sección "Editor"): marca una columna fija del código
 con un fondo distinto — la guía de ancho de línea de siempre (80/100/
 120...). Apagada por defecto; `→`/`Enter` sobre la fila la prende en la
@@ -407,6 +415,10 @@ después un `--` suelto, por ejemplo
 `[+N var(s) de entorno]` junto al comando cuando hay alguna configurada.
 Volver a editar la fila con `c` precarga la línea completa, variables
 incluidas.
+
+Si el servidor lo soporta (pyright, por ejemplo), `tcode` le manda solo
+lo que cambió en cada edición en vez del archivo entero — con archivos
+de miles de líneas, tipear no se frena por el LSP.
 
 **`Ctrl+K R`** ("LSP: Ver logs de la sesión activa" en la paleta):
 muestra lo que el servidor escribió en su stderr — útil para entender

@@ -75,6 +75,15 @@ pub(crate) const BORDE_ASCII: ratatui::symbols::border::Set = ratatui::symbols::
 #[derive(Default)]
 pub struct EstadoUi {
     scroll: usize,
+    /// Solo para `vista_codigo` con ajuste de línea activo: con el ajuste,
+    /// `scroll` es la línea LÓGICA de arriba de todo y esto la sub-fila
+    /// de esa línea desde la que se empieza a ver (una línea larga puede
+    /// quedar cortada por el borde de arriba). Guardar el scroll relativo
+    /// a una línea, en vez de como índice de fila visual sobre todo el
+    /// archivo, es lo que evita partir en filas el archivo entero en cada
+    /// frame (BACKLOG.md P1 #14, `vista_codigo::ajustar_scroll_con_ajuste`).
+    /// Sin ajuste vale siempre 0.
+    subfila_scroll: usize,
 }
 
 /// Dibuja un frame completo. El panel de administración (`Ctrl+,`,

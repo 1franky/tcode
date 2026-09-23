@@ -496,8 +496,8 @@ async fn ejecutar(
         let dibujar = !std::mem::take(&mut omitir_dibujo);
         if dibujar && (!hay_mas_eventos || ultimo_dibujo.elapsed() >= INTERVALO_MAXIMO_SIN_DIBUJAR) {
             // Una vez por frame, no por tecla: avisa al LSP del archivo
-            // activo (relanzándolo si cambió de lenguaje) y le manda el
-            // texto completo si cambió. Por tecla significaba copiar y
+            // activo (relanzándolo si cambió de lenguaje) y le manda lo
+            // que cambió, si algo cambió. Por tecla significaba copiar y
             // serializar el archivo entero en cada carácter tipeado.
             sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
 
@@ -1304,11 +1304,16 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
 /// habilitó/deshabilitó desde el panel de administración, sección
 /// "Lenguajes / LSP", PLAN.md §5.3 — `config` es lo que decide eso), y
 /// notifica `didChange` si el texto cambió desde el último envío.
+///
+/// El texto se pide solo si hace falta (sesión nueva, o revisión del
+/// buffer distinta de la del último envío): esto corre en cada frame, y
+/// antes copiaba el archivo entero en todos, incluso sin LSP activo
+/// (BACKLOG.md P1 #14).
 async fn sincronizar_lsp(layout: &PanelLayout, lsp: &mut lsp::EstadoLsp, config: &Config) {
     let panel = layout.panel_activo();
-    let contenido = panel.editor.buffer().a_texto();
-    lsp.actualizar_para_archivo(&panel.ruta_mostrada, &contenido, config).await;
-    lsp.sincronizar_contenido(&contenido).await;
+    let buffer = panel.editor.buffer();
+    lsp.actualizar_para_archivo(&panel.ruta_mostrada, || buffer.a_texto(), config).await;
+    lsp.sincronizar_contenido(buffer.revision(), || buffer.a_texto()).await;
 }
 
 /// Punto de entrada único para ejecutar un id de comando, venga de un

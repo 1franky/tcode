@@ -592,6 +592,28 @@ con 10.000 líneas).
 - [ ] Con ajuste de línea activo (`Ctrl+,` → Editor), las líneas largas se siguen partiendo bien, con los números de línea solo en la primera fila de cada una.
 - [ ] Dos paneles (`Ctrl+\`) con archivos distintos: cada uno se resalta bien al editar en cualquiera de los dos.
 
+### Archivos grandes: LSP incremental, ajuste de línea y archivos con muchos errores
+
+Segunda parte (BACKLOG.md P1 #14). Si el servidor lo anuncia (pyright
+sí), `didChange` lleva solo el tramo editado en vez del archivo entero;
+moverse sin editar ya no copia el archivo en cada frame (ni para el
+resaltado ni para el LSP); con ajuste de línea solo se parten en filas
+las líneas visibles. Medido en tmux con 10.000 líneas, mediana por
+frame: `.py` con pyright tipeando 8,7 → 5,3 ms (con ajuste 14,6 → 5,5
+ms); moviéndose con ajuste de línea `.rs` 5,3 → 1,4 ms y `.py` 7,6 → 1,9
+ms. Un `.py` que en realidad es código Rust (lleno de errores de
+sintaxis) pasó de ~1,3 s por tecla a ~7 ms: el re-parseo que tarda más
+de 250 ms se cancela y se sigue con los colores anteriores, y se
+reintenta cada 2 s.
+
+- [ ] En un `.py` con pyright, tipear un nombre inexistente en una línea que tenga acentos y emoji ANTES de ese punto (p. ej. `x = "😀 ñ" + no_existe`): aparece el error subrayado en esa línea y la barra de estado lo cuenta.
+- [ ] Borrarlo: el error desaparece. Hacer varias ediciones más (unir dos líneas con `Backspace` al inicio de una, `Enter`, pegar un bloque, `Ctrl+Z`) dejando el archivo válido: la barra de estado termina sin errores, igual que `pyright archivo.py` sobre lo guardado.
+- [ ] Con ajuste de línea activo en un archivo largo con muchas líneas más anchas que la terminal: bajar con `↓` más allá de la pantalla, `Ctrl+End`, `Ctrl+Home`, y `End` en una línea partida — el cursor queda siempre visible, en la fila correcta, sin saltos raros de scroll respecto de la versión anterior.
+- [ ] Con ajuste de línea activo, editar una línea partida (agregarle texto hasta que ocupe una fila más, y borrarlo): lo de abajo se corre bien y el cursor sigue en su lugar.
+- [ ] Con ajuste de línea activo en un archivo grande, plegar un bloque (`Ctrl+K [`) que ocupa más de una pantalla, moverse por encima y por debajo, `Ctrl+End`/`Ctrl+Home`, y desplegar: las líneas plegadas no se ven ni ocupan filas, el cursor nunca queda fuera de la pantalla y al desplegar todo vuelve a su lugar.
+- [ ] Con formatear al guardar activo y rust-analyzer: desordenar la indentación de un `.rs`, guardar (queda formateado), tipear algo más con acentos y volver a guardar: formatea de nuevo sin romper el archivo (el LSP recibe las ediciones incrementales también después de aplicar el formateo).
+- [ ] Abrir un archivo grande de código Rust renombrado a `.py` (miles de líneas) y tipear en el medio: las teclas aparecen al instante (antes se trababa más de un segundo por tecla); los colores de lo recién editado pueden quedar aproximados hasta unos segundos después — en un archivo así ya eran incorrectos igual.
+
 ## Config por proyecto (`.tcode/config.toml`)
 
 Una `.tcode/config.toml` en el proyecto pisa, clave por clave, la config
