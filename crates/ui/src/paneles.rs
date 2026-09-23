@@ -384,6 +384,12 @@ fn dibujar_panel(
 
             if panel_editor.es_csv() && panel_editor.modo_csv == ModoCsv::Tabla {
                 let tabla = panel_editor.tabla_csv();
+                // Un `Ctrl+Z` (global, no pasa por la vista) o un filtro
+                // que dejó menos filas pueden dejar la selección fuera de
+                // la tabla: se recorta acá, justo antes de dibujar, igual
+                // para cualquier cosa que haya cambiado el buffer.
+                let num_visibles = panel_editor.estado_csv.filas_visibles(&tabla).len();
+                panel_editor.estado_csv.recortar(num_visibles, tabla.num_columnas());
                 vista_csv::dibujar(
                     frame,
                     partes[0],

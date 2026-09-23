@@ -7,6 +7,7 @@ use crate::buffer::Buffer;
 use crate::busqueda::{buscar_coincidencias, OpcionesBusqueda};
 use crate::cursor::{Cursor, CursorMultiple};
 use crate::history::Historia;
+use crate::plegado::{tramo_que_oculta, Plegado, Pliegue};
 
 /// Modo de edición actual. `tcode` es no-modal por defecto (PLAN.md §4):
 /// hasta M4 solo existía `Insertar` — la paleta de comandos (M2) y la
@@ -41,6 +42,10 @@ pub struct Editor {
     cursores: Vec<CursorMultiple>,
     historia: Historia,
     modo: Modo,
+    /// Bloques plegados (BACKLOG.md P2 #7) — acá y no en la UI porque
+    /// cada edición y cada movimiento del cursor tienen que respetarlos
+    /// (desplazarlos, desplegarlos, saltar las líneas ocultas).
+    plegado: Plegado,
 }
 
 impl Editor {
@@ -50,6 +55,7 @@ impl Editor {
             cursores: vec![CursorMultiple::sin_seleccion(Cursor::nuevo())],
             historia: Historia::nueva(),
             modo: Modo::Insertar,
+            plegado: Plegado::default(),
         }
     }
 
@@ -59,6 +65,7 @@ impl Editor {
             cursores: vec![CursorMultiple::sin_seleccion(Cursor::nuevo())],
             historia: Historia::nueva(),
             modo: Modo::Insertar,
+            plegado: Plegado::default(),
         })
     }
 
@@ -194,7 +201,7 @@ impl Editor {
         for i in indices {
             let seleccion = self.rango_bytes(i);
             let (rango, reemplazo) = calcular(&self.buffer, seleccion);
-            self.buffer.reemplazar_rango_bytes(rango.start, rango.end, &reemplazo);
+            self.reemplazar_y_ajustar_pliegues(rango.clone(), &reemplazo);
 
             // Toda edición ya aplicada quedó, por construcción (se
             // procesa de mayor a menor offset original y las selecciones
@@ -213,6 +220,29 @@ impl Editor {
         }
 
         self.fusionar_cursores_duplicados();
+        self.revelar_cursores();
+    }
+
+    /// Reemplaza `rango` (bytes) por `reemplazo` en el buffer y ajusta
+    /// los pliegues a las líneas que cambiaron (ver
+    /// `Plegado::ajustar_por_edicion`). Todas las ediciones de texto
+    /// pasan por acá (salvo deshacer/rehacer, que reemplazan el rope
+    /// entero — ver `ajustar_pliegues_tras_reemplazo_de_rope`).
+    fn reemplazar_y_ajustar_pliegues(&mut self, rango: Range<usize>, reemplazo: &str) {
+        if self.plegado.esta_vacio() {
+            self.buffer.reemplazar_rango_bytes(rango.start, rango.end, reemplazo);
+            return;
+        }
+        let (inicio, columna_inicio) = self.buffer.linea_columna_desde_byte(rango.start);
+        let (fin_viejo, columna_fin) = self.buffer.linea_columna_desde_byte(rango.end);
+        let fin_nuevo = inicio + reemplazo.matches('\n').count();
+        // Termina al principio de `fin_viejo` y lo que queda antes de esa
+        // línea termina en salto de línea: su contenido no cambia, solo
+        // se corre (ver `Plegado::ajustar_por_edicion`).
+        let toca_fin =
+            !(columna_fin == 0 && (reemplazo.ends_with('\n') || (reemplazo.is_empty() && columna_inicio == 0)));
+        self.buffer.reemplazar_rango_bytes(rango.start, rango.end, reemplazo);
+        self.plegado.ajustar_por_edicion(inicio, fin_viejo, fin_nuevo, toca_fin);
     }
 
     /// Quita cursores que terminaron en la misma posición tras una
@@ -320,18 +350,22 @@ impl Editor {
 
     pub fn mover_izquierda(&mut self) {
         self.mover_cada_cursor(Cursor::mover_izquierda);
+        self.saltar_pliegues(Salto::Izquierda, false);
     }
 
     pub fn mover_derecha(&mut self) {
         self.mover_cada_cursor(Cursor::mover_derecha);
+        self.saltar_pliegues(Salto::Derecha, false);
     }
 
     pub fn mover_arriba(&mut self) {
         self.mover_cada_cursor(Cursor::mover_arriba);
+        self.saltar_pliegues(Salto::Arriba, false);
     }
 
     pub fn mover_abajo(&mut self) {
         self.mover_cada_cursor(Cursor::mover_abajo);
+        self.saltar_pliegues(Salto::Abajo, false);
     }
 
     pub fn inicio_linea(&mut self) {
@@ -345,21 +379,25 @@ impl Editor {
     /// `Shift+Left`: extiende la selección un carácter a la izquierda.
     pub fn seleccionar_izquierda(&mut self) {
         self.extender_cada_cursor(Cursor::mover_izquierda);
+        self.saltar_pliegues(Salto::Izquierda, true);
     }
 
     /// `Shift+Right`: extiende la selección un carácter a la derecha.
     pub fn seleccionar_derecha(&mut self) {
         self.extender_cada_cursor(Cursor::mover_derecha);
+        self.saltar_pliegues(Salto::Derecha, true);
     }
 
     /// `Shift+Up`: extiende la selección una línea hacia arriba.
     pub fn seleccionar_arriba(&mut self) {
         self.extender_cada_cursor(Cursor::mover_arriba);
+        self.saltar_pliegues(Salto::Arriba, true);
     }
 
     /// `Shift+Down`: extiende la selección una línea hacia abajo.
     pub fn seleccionar_abajo(&mut self) {
         self.extender_cada_cursor(Cursor::mover_abajo);
+        self.saltar_pliegues(Salto::Abajo, true);
     }
 
     /// `Shift+Home`: extiende la selección hasta el inicio de la línea.
@@ -378,6 +416,7 @@ impl Editor {
 
     pub fn fin_archivo(&mut self) {
         self.mover_cada_cursor(Cursor::fin_archivo);
+        self.saltar_pliegues(Salto::Arriba, false);
     }
 
     /// Mueve el cursor principal a la posición del offset de bytes
@@ -388,6 +427,9 @@ impl Editor {
     pub fn mover_cursor_a_byte(&mut self, offset_byte: usize) {
         let (linea, columna) = self.buffer.linea_columna_desde_byte(offset_byte);
         self.cursores = vec![CursorMultiple::sin_seleccion(Cursor { linea, columna })];
+        // Saltar a una coincidencia de búsqueda (o a cualquier posición)
+        // que cae dentro de un bloque plegado lo despliega.
+        self.revelar_cursores();
     }
 
     /// Reemplaza el texto en el rango de bytes `[inicio, fin)` por
@@ -396,7 +438,7 @@ impl Editor {
     /// cursor/selección adicional (ver `mover_cursor_a_byte`).
     pub fn reemplazar_rango_bytes(&mut self, inicio_byte: usize, fin_byte: usize, reemplazo: &str) {
         self.registrar_snapshot();
-        self.buffer.reemplazar_rango_bytes(inicio_byte, fin_byte, reemplazo);
+        self.reemplazar_y_ajustar_pliegues(inicio_byte..fin_byte, reemplazo);
         self.mover_cursor_a_byte(inicio_byte + reemplazo.len());
     }
 
@@ -464,7 +506,7 @@ impl Editor {
 
         self.registrar_snapshot();
         for (rango, nuevo) in ordenadas.iter().rev() {
-            self.buffer.reemplazar_rango_bytes(rango.start, rango.end, nuevo);
+            self.reemplazar_y_ajustar_pliegues(rango.clone(), nuevo);
         }
         self.cursores = cursores_mapeados
             .into_iter()
@@ -479,6 +521,7 @@ impl Editor {
                 c
             })
             .collect();
+        self.revelar_cursores();
         true
     }
 
@@ -505,6 +548,7 @@ impl Editor {
 
         let Some(nueva) = self.siguiente_ocurrencia_no_seleccionada(&texto) else { return };
         self.cursores.push(nueva);
+        self.revelar_cursores();
     }
 
     /// `Ctrl+Shift+L` (PLAN.md §11 M3): selecciona TODAS las ocurrencias
@@ -543,6 +587,7 @@ impl Editor {
                 }
             })
             .collect();
+        self.revelar_cursores();
     }
 
     /// `Ctrl+Alt+↑` (PLAN.md §11 M3): agrega, por cada cursor existente,
@@ -574,6 +619,7 @@ impl Editor {
         }
         self.cursores.extend(nuevos);
         self.fusionar_cursores_duplicados();
+        self.revelar_cursores();
     }
 
     /// `Esc` (PLAN.md §11 M3, `cursor.una_seleccion`): vuelve a un solo
@@ -641,23 +687,172 @@ impl Editor {
 
     pub fn deshacer(&mut self) {
         if let Some((rope, mut cursores)) = self.historia.deshacer(self.buffer.rope(), &self.cursores) {
+            let anterior = self.buffer.rope().clone();
             self.buffer.reemplazar_rope(rope);
+            self.ajustar_pliegues_tras_reemplazo_de_rope(&anterior);
             for c in &mut cursores {
                 c.recortar(&self.buffer);
             }
             self.cursores = cursores;
+            self.revelar_cursores();
         }
     }
 
     pub fn rehacer(&mut self) {
         if let Some((rope, mut cursores)) = self.historia.rehacer(self.buffer.rope(), &self.cursores) {
+            let anterior = self.buffer.rope().clone();
             self.buffer.reemplazar_rope(rope);
+            self.ajustar_pliegues_tras_reemplazo_de_rope(&anterior);
             for c in &mut cursores {
                 c.recortar(&self.buffer);
             }
             self.cursores = cursores;
+            self.revelar_cursores();
         }
     }
+
+    /// Deshacer/rehacer reemplazan el rope entero (sin decir qué
+    /// cambió): la región cambiada se reconstruye comparando líneas
+    /// desde arriba y desde abajo (prefijo y sufijo comunes), y se ajustan
+    /// los pliegues como con cualquier otra edición. Recorre el archivo,
+    /// pero solo al deshacer/rehacer y solo si hay algo plegado.
+    fn ajustar_pliegues_tras_reemplazo_de_rope(&mut self, anterior: &ropey::Rope) {
+        if self.plegado.esta_vacio() {
+            return;
+        }
+        let actual = self.buffer.rope();
+        let (lineas_viejo, lineas_nuevo) = (anterior.len_lines(), actual.len_lines());
+        let minimo = lineas_viejo.min(lineas_nuevo);
+        let prefijo = (0..minimo).take_while(|&i| anterior.line(i) == actual.line(i)).count();
+        if prefijo == lineas_viejo && prefijo == lineas_nuevo {
+            return;
+        }
+        let sufijo = (0..minimo - prefijo)
+            .take_while(|&i| anterior.line(lineas_viejo - 1 - i) == actual.line(lineas_nuevo - 1 - i))
+            .count();
+        // Se reemplazaron las líneas enteras `prefijo..lineas_viejo -
+        // sufijo` (extremo exclusivo): la edición "termina" en la columna
+        // 0 de la primera línea del sufijo, que no cambió (`toca_fin`
+        // en `false`, ver `Plegado::ajustar_por_edicion`).
+        self.plegado.ajustar_por_edicion(prefijo, lineas_viejo - sufijo, lineas_nuevo - sufijo, false);
+        self.plegado.recortar(self.buffer.num_lineas());
+    }
+
+    /// Bloques plegados de este documento (para dibujarlos).
+    pub fn plegado(&self) -> &Plegado {
+        &self.plegado
+    }
+
+    /// `Ctrl+Shift+[` (PLAN.md §4 "Plegado"): pliega el bloque más
+    /// interno que contiene la línea del cursor principal, de entre
+    /// `candidatos` (los rangos plegables del documento, calculados por
+    /// `tcode-syntax`) — sin contar los que ya están plegados, así que
+    /// repetirlo va plegando hacia afuera, igual que en VSCode. Devuelve
+    /// si plegó algo.
+    pub fn plegar_en_cursor(&mut self, candidatos: &[Pliegue]) -> bool {
+        let linea = self.cursor().linea;
+        let elegido = candidatos
+            .iter()
+            .filter(|p| p.inicio <= linea && linea <= p.fin && p.fin > p.inicio)
+            .filter(|p| !self.plegado.pliegues().contains(p))
+            .min_by_key(|p| p.fin - p.inicio);
+        let Some(&elegido) = elegido else { return false };
+        self.plegado.plegar(elegido);
+        self.sacar_cursores_de_pliegues();
+        true
+    }
+
+    /// `Ctrl+K Ctrl+0`: pliega todos los `candidatos` (anidados incluidos:
+    /// al desplegar uno de afuera, los de adentro siguen plegados).
+    pub fn plegar_todo(&mut self, candidatos: &[Pliegue]) {
+        for p in candidatos {
+            self.plegado.plegar(*p);
+        }
+        self.plegado.recortar(self.buffer.num_lineas());
+        self.sacar_cursores_de_pliegues();
+    }
+
+    /// `Ctrl+Shift+]`: despliega el bloque del cursor principal (el que
+    /// tiene su cabecera en esa línea o, si no, el más interno que la
+    /// contiene). Devuelve si desplegó algo.
+    pub fn desplegar_en_cursor(&mut self) -> bool {
+        self.plegado.desplegar_en(self.cursor().linea)
+    }
+
+    /// `Ctrl+K Ctrl+J`: despliega todo.
+    pub fn desplegar_todo(&mut self) {
+        self.plegado.desplegar_todo();
+    }
+
+    /// Después de plegar, un cursor que quedó en una línea oculta pasa a
+    /// la cabecera del bloque (sin selección: la selección podría quedar
+    /// con un extremo invisible).
+    fn sacar_cursores_de_pliegues(&mut self) {
+        let tramos = self.plegado.tramos_ocultos();
+        for c in &mut self.cursores {
+            if let Some(tramo) = tramo_que_oculta(&tramos, c.cursor.linea) {
+                let linea = tramo.start - 1;
+                let columna = c.cursor.columna.min(self.buffer.longitud_visible_linea(linea));
+                *c = CursorMultiple::sin_seleccion(Cursor { linea, columna });
+            }
+        }
+        self.fusionar_cursores_duplicados();
+    }
+
+    /// Después de un salto (búsqueda, deshacer, `Ctrl+D`...), despliega
+    /// lo que oculte la línea de algún cursor.
+    fn revelar_cursores(&mut self) {
+        if self.plegado.esta_vacio() {
+            return;
+        }
+        for i in 0..self.cursores.len() {
+            let linea = self.cursores[i].cursor.linea;
+            self.plegado.revelar(linea);
+        }
+    }
+
+    /// Después de mover con las flechas: un cursor que cayó en una línea
+    /// oculta salta el bloque plegado entero en la dirección del
+    /// movimiento — hacia arriba/izquierda a la cabecera, hacia
+    /// abajo/derecha a la primera línea después del bloque (o a la
+    /// cabecera si el bloque llega hasta el final del archivo). Con
+    /// `extender` (`Shift`+flecha) solo se mueve el extremo activo: la
+    /// selección abarca el bloque oculto completo, igual que en VSCode.
+    fn saltar_pliegues(&mut self, salto: Salto, extender: bool) {
+        if self.plegado.esta_vacio() {
+            return;
+        }
+        let tramos = self.plegado.tramos_ocultos();
+        let num_lineas = self.buffer.num_lineas();
+        for c in &mut self.cursores {
+            let Some(tramo) = tramo_que_oculta(&tramos, c.cursor.linea) else { continue };
+            let cabecera = tramo.start - 1;
+            let adelante = matches!(salto, Salto::Abajo | Salto::Derecha) && tramo.end < num_lineas;
+            let linea = if adelante { tramo.end } else { cabecera };
+            let columna = match salto {
+                Salto::Arriba | Salto::Abajo => c.cursor.columna.min(self.buffer.longitud_visible_linea(linea)),
+                Salto::Derecha if adelante => 0,
+                Salto::Izquierda | Salto::Derecha => self.buffer.longitud_visible_linea(linea),
+            };
+            c.cursor = Cursor { linea, columna };
+            if !extender {
+                c.ancla = c.cursor;
+            }
+        }
+        if !extender {
+            self.fusionar_cursores_duplicados();
+        }
+    }
+}
+
+/// Dirección del movimiento que dejó un cursor dentro de un bloque
+/// plegado (ver `Editor::saltar_pliegues`).
+#[derive(Clone, Copy)]
+enum Salto {
+    Arriba,
+    Abajo,
+    Izquierda,
+    Derecha,
 }
 
 impl Default for Editor {
@@ -700,6 +895,7 @@ fn limites_palabra(caracteres: &[char], columna: usize) -> Option<(usize, usize)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plegado::Pliegue;
 
     fn escribir(editor: &mut Editor, texto: &str) {
         for c in texto.chars() {
@@ -1072,7 +1268,7 @@ mod tests {
     }
 
     /// Editor con `texto` ya cargado y el cursor en `(linea, columna)`.
-    fn editor_con(texto: &str, linea: usize, columna: usize) -> Editor {
+    fn editor_con_cursor(texto: &str, linea: usize, columna: usize) -> Editor {
         let mut editor = Editor::nuevo();
         editor.insertar_texto(texto);
         let offset = editor.buffer().offset_byte(linea, columna);
@@ -1084,7 +1280,7 @@ mod tests {
     fn aplicar_ediciones_de_atras_hacia_adelante_con_rangos_del_texto_original() {
         // Rangos del texto ORIGINAL, en cualquier orden: la segunda
         // edición no se corre por lo que insertó la primera.
-        let mut editor = editor_con("fn main(){\nlet x=1;\n}\n", 0, 0);
+        let mut editor = editor_con_cursor("fn main(){\nlet x=1;\n}\n", 0, 0);
         let ediciones = vec![(11..11, "    ".to_string()), (9..9, " ".to_string()), (16..17, " = ".to_string())];
         assert!(editor.aplicar_ediciones(&ediciones));
         assert_eq!(editor.buffer().a_texto(), "fn main() {\n    let x = 1;\n}\n");
@@ -1092,7 +1288,7 @@ mod tests {
 
     #[test]
     fn aplicar_ediciones_se_deshace_en_un_solo_paso() {
-        let mut editor = editor_con("a=1\nb=2\n", 0, 0);
+        let mut editor = editor_con_cursor("a=1\nb=2\n", 0, 0);
         editor.aplicar_ediciones(&[(1..2, " = ".to_string()), (5..6, " = ".to_string())]);
         assert_eq!(editor.buffer().a_texto(), "a = 1\nb = 2\n");
 
@@ -1106,7 +1302,7 @@ mod tests {
     fn aplicar_ediciones_conserva_el_cursor_sobre_el_mismo_codigo() {
         // Cursor sobre la "b" de la línea 1; se inserta indentación antes
         // de ella y espacios en la línea 0: tiene que seguir sobre la "b".
-        let mut editor = editor_con("a=1\nb=2\n", 1, 0);
+        let mut editor = editor_con_cursor("a=1\nb=2\n", 1, 0);
         editor.aplicar_ediciones(&[(1..2, " = ".to_string()), (4..4, "    ".to_string())]);
         assert_eq!((editor.cursor().linea, editor.cursor().columna), (1, 4));
     }
@@ -1115,7 +1311,7 @@ mod tests {
     fn aplicar_ediciones_con_cursor_dentro_de_un_rango_reemplazado_lo_recorta() {
         // Reemplazo de todo el archivo por algo más corto: el cursor no
         // puede quedar más allá del texto nuevo.
-        let mut editor = editor_con("abcdefgh", 0, 6);
+        let mut editor = editor_con_cursor("abcdefgh", 0, 6);
         editor.aplicar_ediciones(&[(0..8, "xy".to_string())]);
         assert_eq!(editor.buffer().a_texto(), "xy");
         assert_eq!((editor.cursor().linea, editor.cursor().columna), (0, 2));
@@ -1124,7 +1320,7 @@ mod tests {
     #[test]
     fn aplicar_ediciones_con_acentos_y_emoji() {
         let texto = "let s=\"ñandú 😀\";\n";
-        let mut editor = editor_con(texto, 0, 8); // sobre la "a" de "ñandú"
+        let mut editor = editor_con_cursor(texto, 0, 8); // sobre la "a" de "ñandú"
         let igual = texto.find('=').unwrap();
         editor.aplicar_ediciones(&[(igual..igual + 1, " = ".to_string())]);
         assert_eq!(editor.buffer().a_texto(), "let s = \"ñandú 😀\";\n");
@@ -1132,15 +1328,25 @@ mod tests {
     }
 
     #[test]
+    fn aplicar_ediciones_corre_los_pliegues_si_cambia_la_cantidad_de_lineas() {
+        // El formateo agrega una línea ANTES del bloque plegado: el pliegue
+        // tiene que seguir cubriendo el mismo código, una línea más abajo.
+        let mut editor = editor_con_cursor("use a;\nfn a() {\n    x\n}\n", 1, 0);
+        editor.plegar_en_cursor(&[Pliegue { inicio: 1, fin: 2 }]);
+        editor.aplicar_ediciones(&[(6..6, "\n".to_string())]);
+        assert_eq!(editor.plegado().pliegues(), &[Pliegue { inicio: 2, fin: 3 }]);
+    }
+
+    #[test]
     fn aplicar_ediciones_solapadas_no_aplica_nada() {
-        let mut editor = editor_con("abcdef", 0, 0);
+        let mut editor = editor_con_cursor("abcdef", 0, 0);
         assert!(!editor.aplicar_ediciones(&[(0..3, "x".to_string()), (2..4, "y".to_string())]));
         assert_eq!(editor.buffer().a_texto(), "abcdef");
     }
 
     #[test]
     fn aplicar_ediciones_fuera_de_rango_o_a_mitad_de_caracter_no_aplica_nada() {
-        let mut editor = editor_con("ñ", 0, 0);
+        let mut editor = editor_con_cursor("ñ", 0, 0);
         assert!(!editor.aplicar_ediciones(&[(0..10, "x".to_string())]));
         assert!(!editor.aplicar_ediciones(&[(1..2, "x".to_string())]));
         assert_eq!(editor.buffer().a_texto(), "ñ");
@@ -1148,11 +1354,81 @@ mod tests {
 
     #[test]
     fn aplicar_ediciones_sin_cambios_reales_no_deja_paso_de_deshacer() {
-        let mut editor = editor_con("abc", 0, 0);
+        let mut editor = editor_con_cursor("abc", 0, 0);
         assert!(!editor.aplicar_ediciones(&[]));
         assert!(!editor.aplicar_ediciones(&[(0..1, "a".to_string())]));
         // El único paso de deshacer sigue siendo el `insertar_texto`.
         editor.deshacer();
         assert_eq!(editor.buffer().a_texto(), "");
+    }
+
+    fn editor_con(texto: &str) -> Editor {
+        let mut editor = Editor::nuevo();
+        editor.insertar_texto(texto);
+        editor.inicio_archivo();
+        editor
+    }
+
+    /// 0: fn a() {   1: x   2: y   3: }   4: fin
+    const BLOQUE: &str = "fn a() {\n    x\n    y\n}\nfin";
+
+    #[test]
+    fn plegar_en_cursor_elige_el_bloque_mas_interno_y_saca_el_cursor() {
+        let mut editor = editor_con(BLOQUE);
+        editor.mover_abajo();
+        editor.mover_abajo();
+        let candidatos = [Pliegue { inicio: 0, fin: 2 }, Pliegue { inicio: 0, fin: 3 }];
+        assert!(editor.plegar_en_cursor(&candidatos));
+        assert_eq!(editor.plegado().pliegues(), &[Pliegue { inicio: 0, fin: 2 }]);
+        // El cursor estaba en la línea 2 (oculta): pasa a la cabecera.
+        assert_eq!(editor.cursor().linea, 0);
+        // Repetirlo pliega el siguiente hacia afuera.
+        assert!(editor.plegar_en_cursor(&candidatos));
+        assert_eq!(editor.plegado().pliegues().len(), 2);
+        assert!(!editor.plegar_en_cursor(&candidatos));
+    }
+
+    #[test]
+    fn las_flechas_saltan_las_lineas_plegadas() {
+        let mut editor = editor_con(BLOQUE);
+        editor.plegar_en_cursor(&[Pliegue { inicio: 0, fin: 2 }]);
+        editor.mover_abajo();
+        assert_eq!(editor.cursor().linea, 3);
+        editor.mover_arriba();
+        assert_eq!(editor.cursor().linea, 0);
+        editor.fin_linea();
+        editor.mover_derecha();
+        assert_eq!((editor.cursor().linea, editor.cursor().columna), (3, 0));
+        editor.mover_izquierda();
+        assert_eq!((editor.cursor().linea, editor.cursor().columna), (0, 8));
+    }
+
+    #[test]
+    fn editar_antes_desplaza_el_pliegue_y_deshacer_lo_vuelve_a_su_lugar() {
+        let mut editor = editor_con(BLOQUE);
+        editor.plegar_en_cursor(&[Pliegue { inicio: 0, fin: 2 }]);
+        editor.insertar_char('\n');
+        assert_eq!(editor.plegado().pliegues(), &[Pliegue { inicio: 1, fin: 3 }]);
+        editor.deshacer();
+        assert_eq!(editor.plegado().pliegues(), &[Pliegue { inicio: 0, fin: 2 }]);
+    }
+
+    #[test]
+    fn saltar_a_una_linea_plegada_la_despliega() {
+        let mut editor = editor_con(BLOQUE);
+        editor.plegar_en_cursor(&[Pliegue { inicio: 0, fin: 2 }]);
+        let offset = editor.buffer().offset_byte(1, 4);
+        editor.mover_cursor_a_byte(offset);
+        assert!(editor.plegado().esta_vacio());
+        assert_eq!(editor.cursor().linea, 1);
+    }
+
+    #[test]
+    fn borrar_dentro_de_una_seleccion_que_cubre_el_pliegue_lo_despliega() {
+        let mut editor = editor_con(BLOQUE);
+        editor.plegar_en_cursor(&[Pliegue { inicio: 0, fin: 2 }]);
+        editor.seleccionar_abajo();
+        editor.borrar_atras();
+        assert!(editor.plegado().esta_vacio());
     }
 }
