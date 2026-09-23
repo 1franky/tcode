@@ -19,6 +19,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [LSP: autocompletado y diagnósticos](#lsp-autocompletado-y-diagnósticos)
 - [Personalizar atajos](#personalizar-atajos)
 - [Dónde vive la configuración](#dónde-vive-la-configuración)
+- [Config por proyecto](#config-por-proyecto)
 
 ## Primeros pasos
 
@@ -376,3 +377,40 @@ Ahí adentro: `config.toml` (ajustes de editor/interfaz/lenguajes),
 embebidos) y `themes/` (temas propios o duplicados para editar). Todos se
 crean automáticamente con valores por defecto la primera vez que hacen
 falta — nunca hay que crearlos a mano para empezar a usar `tcode`.
+
+## Config por proyecto
+
+Además de la global, cada proyecto puede tener su propia
+`.tcode/config.toml` con **solo** lo que quiera cambiar respecto de tu
+config — por ejemplo, tabulación de 2 y sin números de línea en un repo
+en particular:
+
+```toml
+[editor]
+tamano_tabulacion = 2
+numeros_de_linea = false
+```
+
+- **Dónde se busca**: al arrancar, desde la carpeta del archivo que
+  abriste (o la carpeta actual si no abriste ninguno) hacia arriba,
+  hasta la raíz del repo git (la carpeta con `.git`) o la del disco. Se
+  usa la primera que aparezca. `config.recargar` (`Ctrl+K Ctrl+L`) la
+  vuelve a buscar y leer.
+- **Cómo se mezcla**: clave por clave. Las secciones (`[editor]`,
+  `[interfaz]`, `[lenguajes]`...) se combinan con las de tu config
+  global; un valor suelto o una lista del proyecto reemplaza al de la
+  global.
+- **El panel de administración (`Ctrl+,`) sigue editando solo tu config
+  global**: nunca copia valores del proyecto a ella. Si hay una config
+  de proyecto activa, el panel lo avisa arriba (con su ruta y qué
+  claves pisa), y las filas pisadas muestran el valor en uso como
+  `[proyecto: ...]` al lado del valor de tu global.
+- **Seguridad**: una config de proyecto **no puede** definir comandos de
+  LSP (`[lenguajes.lsp_comando.*]`, con sus variables de entorno) — se
+  ignoran, para que abrir un repo ajeno nunca ejecute un programa que
+  eligió otra persona. Tampoco puede volver a habilitar un LSP que
+  tengas deshabilitado en tu global (sí puede deshabilitar otros).
+- **Errores**: si el archivo tiene un error (TOML mal formado o un valor
+  del tipo equivocado), se ignora entero y se sigue con tu config
+  global; el motivo aparece en la cabecera del panel de administración.
+  Las claves que `tcode` no conoce se ignoran y se listan ahí mismo.
