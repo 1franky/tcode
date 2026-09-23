@@ -40,6 +40,10 @@ pub fn comandos_disponibles() -> &'static [Comando] {
             descripcion: "Selección: Agregar la siguiente ocurrencia",
         },
         Comando { id: "cursor.seleccionar_todas_ocurrencias", descripcion: "Selección: Seleccionar todas las ocurrencias" },
+        Comando { id: "plegar.actual", descripcion: "Plegado: Plegar el bloque del cursor" },
+        Comando { id: "plegar.desplegar", descripcion: "Plegado: Desplegar el bloque del cursor" },
+        Comando { id: "plegar.todo", descripcion: "Plegado: Plegar todo" },
+        Comando { id: "plegar.desplegar_todo", descripcion: "Plegado: Desplegar todo" },
     ]
 }
 

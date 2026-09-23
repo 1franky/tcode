@@ -124,6 +124,20 @@
 "Ctrl+Alt+Down" = "cursor.agregar_abajo"
 
 [editor]
+# Plegado de bloques (PLAN.md §4, BACKLOG.md P2 #7).
+"Ctrl+Shift+["  = "plegar.actual"
+"Ctrl+Shift+]"  = "plegar.desplegar"
+"Ctrl+K Ctrl+0" = "plegar.todo"
+"Ctrl+K Ctrl+J" = "plegar.desplegar_todo"
+# Alternativas: en terminales sin protocolo Kitty, Ctrl+Shift+[ llega
+# como Ctrl+[ (el mismo byte que Esc) y Ctrl+0 no tiene código de control
+# (llega como "0" suelto, igual que Ctrl+1/2/3 más arriba) — chord con
+# Ctrl+K y el símbolo sin modificador, sin esa ambigüedad. Ctrl+J sí
+# tiene código de control propio, así que "Ctrl+K Ctrl+J" ya anda en
+# cualquier terminal y no necesita alternativa.
+"Ctrl+K ["      = "plegar.actual"
+"Ctrl+K ]"      = "plegar.desplegar"
+"Ctrl+K 0"      = "plegar.todo"
 
 [markdown]
 # Ctrl+Shift+V no está en [global] a propósito: es Ctrl+V con Shift, una
