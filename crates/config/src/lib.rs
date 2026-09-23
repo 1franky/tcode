@@ -24,7 +24,7 @@ pub use panel_admin::{
 };
 pub use selector::{EstadoSelectorTema, FiltroTipoTema};
 pub use tema::{
-    cargar_tema, duplicar_tema_para_editar, guardar_tema, tema_por_defecto, EstiloToken, InfoTema,
-    ResultadoDuplicarTema, Tema, TemaBusqueda, TemaDiagnosticos, TemaGit, TemaSintaxis,
+    cargar_tema, descubrir_temas_usuario, duplicar_tema_para_editar, guardar_tema, tema_por_defecto, EstiloToken,
+    InfoTema, InfoTemaListado, ResultadoDuplicarTema, Tema, TemaBusqueda, TemaDiagnosticos, TemaGit, TemaSintaxis,
     TemaStatusbar, TemaUi, TEMAS_EMBEBIDOS, TEMA_POR_DEFECTO,
 };

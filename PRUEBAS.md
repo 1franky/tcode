@@ -39,6 +39,22 @@ abajo, es donde más problemas aparecieron).
 - [ ] Escribir caracteres UTF-8 (acentos, ñ, emoji) y guardar — no se corrompen.
 - [ ] Barra de estado inferior: `Ln`/`Col` correctos, cuenta total de líneas, marca `*` cuando hay cambios sin guardar.
 
+### Selección de texto con `Shift`+flechas
+
+Mecanismo de selección básico que faltaba por completo (`BACKLOG.md`
+P0): hasta esta pieza la única forma de seleccionar texto era
+multi-cursor (`Ctrl+D`/`Ctrl+Shift+L`). `Shift+Ctrl+Home`/`Shift+Ctrl+End`
+(selección hasta inicio/fin de archivo) quedan fuera de esta entrega a
+propósito.
+
+- [ ] `Shift+Right`/`Shift+Left` repetido: extiende la selección un carácter a la vez, sin importar cuántas veces se presione — el fondo de selección (color `ui.selection` del tema activo) cubre el rango correcto.
+- [ ] `Shift+Down`/`Shift+Up`: extiende la selección por línea completa, respetando dónde arrancó (el "ancla" no se mueve nunca, solo el extremo activo).
+- [ ] `Shift+End` y `Shift+Home` desde el medio de una línea: seleccionan hasta el fin/inicio de esa línea respectivamente.
+- [ ] Mover el cursor SIN `Shift` (una flecha sola) inmediatamente después de una selección con `Shift`: la colapsa por completo, igual que en cualquier editor — no debe quedar ningún resto de selección.
+- [ ] Escribir un carácter (o `Backspace`) con una selección hecha con `Shift` activa: reemplaza/borra todo el rango seleccionado, mismo comportamiento que ya existía para selecciones de multi-cursor.
+- [ ] Con más de un cursor activo (`Ctrl+D` dos veces para tener 2): `Shift+Right` extiende la selección de AMBOS cursores a la vez, cada uno de forma independiente desde su propia posición.
+- [ ] Repetir la prueba visual con el tema "oscuro" (no Dracula — ahí `selection` y `current_line` comparten color, puede parecer que no pasa nada aunque esté funcionando).
+
 ## M1 — Configuración, temas, atajos, sintaxis, explorador
 
 - [ ] `~/.config/tcode/config.toml` (o el equivalente portable en Windows) se crea solo la primera vez, con valores razonables.
@@ -65,6 +81,48 @@ Vimium/`vim-easymotion`, no una tecla sostenida.
 - [ ] `Esc` en modo salto: cierra el modo sin saltar a ningún lado, las filas vuelven a verse normales.
 - [ ] Invocar "Ver: Saltar a un archivo" desde la paleta de comandos (`F1`) con el explorador **oculto**: lo muestra, le da el foco y activa el modo salto directamente — no hace falta abrirlo a mano primero.
 - [ ] Con más archivos visibles que letras del alfabeto (36 — dígitos + minúsculas, poco común pero posible con una terminal muy alta): las filas de más allá de la 36 quedan sin etiqueta, pero se pueden seguir navegando con las flechas como siempre.
+
+### Crear, renombrar y borrar desde el explorador (BACKLOG.md P0, "explorador de solo lectura")
+
+Hasta esta pieza el explorador era de solo lectura — no había forma de
+crear, renombrar ni borrar nada desde la app. `Ctrl+K N`/`Ctrl+K C`/
+`Ctrl+K M` (nuevo archivo/carpeta/renombrar) son globales, como
+`Ctrl+K J`: si el explorador está oculto, lo muestran y le dan el foco
+antes de abrir el prompt. Borrar (`Delete`, con el explorador enfocado)
+siempre pide confirmación primero — es destructivo e irreversible, no
+pasa por ninguna papelera de reciclaje.
+
+- [ ] `Ctrl+K N` con una carpeta seleccionada: abre "Nuevo archivo" vacío; escribir un nombre y `Enter` lo crea DENTRO de esa carpeta (aunque esté colapsada) — confirmar en disco y, al expandirla, que aparece en el árbol.
+- [ ] `Ctrl+K N` con un archivo seleccionado (no una carpeta): el nuevo archivo se crea en la carpeta que lo CONTIENE, no adentro de él (los archivos no tienen "adentro").
+- [ ] `Ctrl+K C`: igual que `Ctrl+K N` pero crea una carpeta (`std::fs::create_dir`, no recursivo — si la carpeta padre no existe, es un error).
+- [ ] Escribir un nombre que ya existe en el destino (archivo o carpeta) y `Enter`: el prompt queda abierto con "ya existe '…'" en vez de cerrarse o sobreescribir nada.
+- [ ] Dejar el campo vacío (o solo espacios) y `Enter`: no crea nada, muestra "el nombre no puede estar vacío".
+- [ ] `Esc` en cualquier momento del prompt: cierra sin crear nada.
+- [ ] `Ctrl+K M` sobre una fila seleccionada: abre "Renombrar" PRECARGADO con el nombre actual (no vacío) — ajustarlo y `Enter` renombra en disco (`std::fs::rename`, misma carpeta contenedora — esto es renombrar, no mover a otro lado) y el árbol refleja el cambio al instante.
+- [ ] Renombrar a un nombre que ya existe en la misma carpeta: falla con "ya existe '…'", el archivo original queda intacto.
+- [ ] `Delete` con el explorador enfocado y algo seleccionado: abre "Confirmar borrado" con el nombre y si es "el archivo" o "la carpeta" — nunca borra directo desde la tecla.
+- [ ] Cualquier tecla que NO sea `y`/`Y` (incluido `Enter` y `Esc`) en la confirmación: cancela sin tocar el disco — a propósito no hay una "tecla por defecto" para una acción destructiva.
+- [ ] `y` confirma: el archivo/carpeta desaparece del árbol y del disco de verdad (una carpeta se borra recursivamente, con todo lo que tuviera adentro).
+- [ ] Las 3 acciones ("Explorador: Nuevo archivo"/"Nueva carpeta"/"Renombrar selección") aparecen en la paleta de comandos (`F1`) y funcionan igual que sus atajos.
+- [ ] Limitación conocida: crear/renombrar/borrar algo refresca la carpeta contenedora leyéndola de nuevo del disco — si esa carpeta tenía OTRAS subcarpetas ya expandidas en el mismo nivel, quedan colapsadas de nuevo tras el refresco (se puede volver a expandirlas con `Enter`, no se pierde nada, solo el estado visual de "abierta").
+
+## Scroll-follow en listas con selección (BACKLOG.md)
+
+Fix transversal: ninguna de estas 5 listas (todas comparten el mismo
+problema por dos causas distintas — 4 pasan por `tcode_ui::overlay::
+dibujar`, el explorador arma su propia lista aparte) seguía la
+selección con scroll. Antes, con más filas/resultados de los que
+entraban en pantalla, bajar la selección con `↓` la dejaba resaltando
+una fila que ya no se dibujaba — visible solo si volvías a subir. Ahora
+`ratatui` recalcula el offset necesario en cada frame (vía `ListState`,
+sin persistir nada de un frame al siguiente — mismo criterio que ya usa
+`TableState` en la vista CSV).
+
+- [ ] **Explorador** (`Ctrl+B`): con más archivos que los que entran en el panel, bajar la selección hasta el último — sigue visible en todo momento, nunca desaparece de pantalla. Subir de nuevo hasta el primero: mismo resultado. El resaltado de fila, los íconos de carpeta y las etiquetas del modo "salto rápido" (`Ctrl+K J`) se ven exactamente igual que antes.
+- [ ] **Buscador de archivos** (`Ctrl+P`), en un proyecto con más de una pantalla de archivos: bajar/subir la selección hasta los extremos — siempre visible.
+- [ ] **Paleta de comandos** (`F1`): mismo chequeo — hay más de 25 comandos, más que lo que entra en cualquier ventana chica.
+- [ ] **Selector de temas** (`Ctrl+K Ctrl+T`): con los 13 temas (filtro "Todos"), bajar hasta el último (`Alto contraste`) y subir hasta el primero (`Dracula`) — el preview en vivo sigue aplicándose en cada fila visitada, igual que antes.
+- [ ] **Visor de logs de LSP** (`Ctrl+K R`) con más de una pantalla de líneas: no tiene navegación con flechas (no hay ninguna fila "seleccionada" — el filtro de texto es la forma de acotar), así que el comportamiento correcto es simplemente seguir mostrando las líneas más recientes desde arriba, sin romper nada ni intentar scrollear a ningún lado raro.
 
 ## M2 — Paleta de comandos, buscador de archivos, splits, LSP
 
@@ -166,6 +224,24 @@ los temas "High Contrast" de VS Code/Windows).
 - [ ] La barra de estado se ve invertida (fondo blanco, texto negro) — a propósito, para marcar un límite visual inequívoco con el resto de la pantalla.
 - [ ] Buscar algo con `Ctrl+F`: la coincidencia actual se ve en naranja bien visible, las demás en azul — ninguna se pierde contra el fondo negro.
 
+### Importar temas de terceros en el selector (BACKLOG.md)
+
+Hasta esta pieza, un tema `.toml` que alguien dejara en
+`~/.config/tcode/themes/` (o el directorio portable de Windows) con un
+nombre que no fuera ninguno de los 13 embebidos podía *usarse*
+escribiendo `tema = "nombre-que-sea"` a mano en `config.toml` + `Ctrl+K
+Ctrl+L`, pero nunca aparecía listado en `Ctrl+K Ctrl+T` — rompía el
+flujo de "importar y elegir desde la lista" de `PLAN.md` §7. Ahora el
+selector escanea esa carpeta cada vez que se abre.
+
+- [ ] Copiar cualquier `.toml` de `runtime/themes/` a la carpeta de temas de usuario con OTRO nombre de archivo (por ejemplo `mi-tema-de-prueba.toml`, cambiándole también el campo `name` adentro para distinguirlo a simple vista) y abrir `Ctrl+K Ctrl+T`: aparece en la lista, después de los 13 embebidos, con su `name`/`type`/`alto_contraste` reales — no con el nombre del archivo.
+- [ ] Navegar hasta esa fila con `↓`: el preview en vivo cambia el editor de fondo al tema copiado, igual que con cualquier tema embebido.
+- [ ] `Enter` sobre esa fila: persiste en `config.toml` (`tema = "mi-tema-de-prueba"`, el nombre del ARCHIVO sin extensión, no el `name` de adentro) — reabrir `tcode` y confirmar que arranca con ese tema.
+- [ ] Filtrar por "Oscuro"/"Claro"/"Alto contraste" (`Tab`): un tema de terceros que declare `type`/`alto_contraste` correctos en su TOML aparece en el filtro que corresponda, igual que uno embebido.
+- [ ] Dejar un archivo `.toml` corrupto/inválido en la misma carpeta (por ejemplo texto que no sea TOML): el selector lo ignora en silencio — no rompe la lista ni el resto de los temas.
+- [ ] Con la copia editable de un tema embebido ya creada (`Ctrl+K Ctrl+P`/"Duplicar tema activo" en algún momento deja `<tema>-mio.toml` en esa misma carpeta): esa copia NO aparece como una fila nueva separada en el selector — sigue sustituyendo transparentemente al original, como ya funcionaba antes de esta pieza.
+- [ ] Sección "Temas" del panel de administración (`Ctrl+K A`): si el tema activo es uno de terceros (no embebido), la fila "Duplicar tema activo" sigue mostrando su nombre real entre paréntesis, no lo omite.
+
 ## M4 — Panel de administración (`Ctrl+,` / `Ctrl+K A`) y números de línea
 
 - [ ] `Ctrl+,` para abrir el panel: en terminales sin protocolo Kitty puede llegar como una `,` suelta insertada en el texto en vez de abrir el panel (ambigüedad conocida, igual que otras de este proyecto) — si pasa, deshacer con `Ctrl+Z` y usar `Ctrl+K A` en su lugar.
@@ -197,6 +273,26 @@ los temas "High Contrast" de VS Code/Windows).
 - [ ] Un archivo `.py` con `pyright` activo y un diagnóstico en una línea partida: el subrayado del error/aviso cubre todas las filas de pantalla de esa línea.
 - [ ] Vista Markdown dividida (`Ctrl+K V`): el ajuste de línea NO tiene efecto en la mitad "fuente" de esa vista en particular (queda como estaba, líneas recortadas) — es una limitación conocida y documentada (esa mitad comparte el scroll con la vista de preview de al lado, que no sabe de filas visuales). El ajuste sí funciona normal en "solo fuente" (sin dividir) del mismo archivo Markdown.
 - [ ] Reiniciar `tcode`: el valor de "Ajuste de línea" persiste entre sesiones (queda guardado en `config.toml`).
+
+### Regla vertical / guía de columna (BACKLOG.md P1 #5)
+
+Marca una columna fija de la vista de código con un fondo distinto —
+guía de ancho de línea (80/100/120...), como en cualquier otro editor.
+Apagada por defecto. El color no es un campo nuevo de cada tema: se
+deriva de `background`/`foreground` del tema activo (88% fondo + 12%
+texto), así se adapta solo a temas oscuros y claros sin que ningún
+archivo de tema haya tenido que tocarse.
+
+- [ ] Sección "Editor" del panel de administración (`Ctrl+K A`): fila "Regla vertical (columna)" muestra "Apagada" por defecto.
+- [ ] `→` o `Enter` sobre esa fila estando "Apagada": la prende en la columna 80 — confirmar en `config.toml` (`columna_regla = 80`) y que aparece la línea vertical en el código a esa columna.
+- [ ] Con la regla prendida, `←`/`→` decrementan/incrementan la columna de a uno; subir más allá de 300 o bajar de 20 se recorta (no sigue subiendo/bajando).
+- [ ] Bajar la columna repetidamente con `←` hasta cruzar 20: en vez de quedar clavada en 20, la fila vuelve a "Apagada" (un solo gesto para apagarla, sin necesitar otra tecla).
+- [ ] En un archivo con líneas más cortas Y más largas que la columna configurada: la regla se ve en TODAS las filas (incluidas las líneas vacías/cortas, como una columna "fantasma" más allá del texto), no solo donde hay texto real.
+- [ ] La regla se ve tanto en la línea con el cursor (fondo de "línea actual") como en el resto — no desaparece al posicionarse ahí.
+- [ ] Con "Ajuste de línea" activado y una línea partida en varias filas de pantalla: la regla se ve en la MISMA columna de pantalla en todas las filas de esa línea (es relativa a la fila visual, no a la línea lógica completa).
+- [ ] Con el explorador abierto (`Ctrl+B`): la columna de la regla sigue siendo relativa al área de código (que ahora es más angosta), no a toda la pantalla.
+- [ ] Probar con un tema oscuro y uno claro (`Ctrl+K Ctrl+T`): en ambos la regla se distingue del fondo liso sin verse chillona ni invisible.
+- [ ] Reiniciar `tcode`: el valor de la regla persiste entre sesiones.
 
 ## M4 — Sección "Temas" del panel de administración
 
@@ -280,6 +376,47 @@ los temas "High Contrast" de VS Code/Windows).
 - [ ] Dentro del panel (`Ctrl+K A` → "Lenguajes / LSP"): ahora hay 16 filas — los 13 lenguajes objetivo de PLAN.md §6 completos (HTML y CSS cuentan como 2 filas separadas aunque el plan las liste en una sola). Las nuevas son HTML ("vscode-html-language-server --stdio"), CSS ("vscode-css-language-server --stdio") y SQL ("sqls").
 - [ ] Con `vscode-langservers-extracted` instalado (trae los binarios de HTML y CSS) y un `.html`/`.css` abierto: el estado pasa de "Iniciando…" a "Conectado" solo.
 - [ ] Un bloque de código Markdown con etiqueta ` ```html `, ` ```css ` o ` ```sql ` se resalta con la vista de preview (`Ctrl+K V`).
+
+### Ver logs de la sesión LSP activa (`Ctrl+K R`)
+
+El stderr de la mayoría de los servidores LSP reales (no forma parte del
+protocolo LSP en sí, que va todo por stdout) se descartaba antes por
+completo (`Stdio::null()`) — no había forma de ver por qué un servidor no
+conectaba o se comportaba raro más allá de "Conectado"/"Iniciando…"/
+"Inactivo". Es un snapshot al abrir, no en vivo: cerrar y volver a abrir
+muestra lo más nuevo. Sin scroll más allá de lo que entra en pantalla
+(mismo overlay que la paleta de comandos) — el filtro es la forma de
+encontrar algo que quedó afuera de esa primera pantalla.
+
+- [ ] `Ctrl+K R` (o "LSP: Ver logs de la sesión activa" desde la paleta) sin ninguna sesión LSP activa: muestra "(sin logs — no hay ninguna sesión LSP activa, o no escribió nada en stderr)" en vez de una lista vacía sin explicación.
+- [ ] Configurar un comando personalizado que escriba algo a stderr (por ejemplo un script `sh` de una línea con `echo ... >&2; cat`, vía `c` en "Lenguajes / LSP") y abrir un archivo de ese lenguaje: `Ctrl+K R` muestra esas líneas, la más reciente primero (arriba).
+- [ ] Escribir texto en el campo de filtro: recorta la lista a las líneas que contienen ese texto (sin distinguir mayúsculas/minúsculas), con la parte que coincidió resaltada en negrita.
+- [ ] `Backspace` en el filtro funciona como en cualquier otro campo de texto de la app.
+- [ ] `Esc`: cierra el visor sin afectar la sesión LSP activa (no la reinicia ni la corta).
+- [ ] Con un `.py` real y `pyright` conectado: la mayoría de los servidores reales se quedan en silencio mientras todo funciona bien — `Ctrl+K R` mostrando el mensaje de "sin logs" con una sesión "Conectado" activa es un resultado esperado, no un bug.
+
+### Variables de entorno por comando LSP (BACKLOG.md, sintaxis `VAR=valor -- comando`)
+
+El campo de edición del comando LSP (`c` en "Lenguajes / LSP") acepta,
+antes del comando propiamente dicho, una lista de asignaciones
+`VAR=valor` separadas de él por un token `--` suelto — ej.
+`RUST_LOG=debug NODE_ENV=production -- rust-analyzer --stdio`. Se eligió
+extender esta misma línea en vez de agregar un campo/modal separado
+porque reutiliza el editor de texto que ya existe (precarga, `Enter`
+guarda, `Esc` cancela) sin superficie de UI nueva, y porque
+`ComandoLsp::como_linea()`/`fijar_comando_desde_linea()` son inversas
+entre sí, así que lo que se ve al reabrir para editar es exactamente lo
+que se guardó.
+
+- [ ] Sobre una fila sin comando (p. ej. Rust) escribir `MI_VAR=hola -- /ruta/a/mi-script.sh` y `Enter`: la fila pasa a mostrar el comando (sin el `MI_VAR=hola --`, que no es parte del comando en sí) seguido de `[+1 var de entorno]`, y `config.toml` (`[lenguajes.lsp_comando.rust]`) queda con `comando`, `argumentos` y una tabla `env = { MI_VAR = "hola" }`.
+- [ ] Con dos o más variables (`A=1 B=2 -- comando`): el sufijo dice `[+2 vars de entorno]` (plural correcto a partir de 2).
+- [ ] Volver a editar esa fila con `c`: el campo se precarga con la línea completa incluyendo las variables y el separador `--`, lista para ajustar en vez de reescribir todo de cero.
+- [ ] Un token antes del `--` que no tiene `=` (p. ej. `MI_VAR -- comando`, sin valor): se ignora en silencio — no rompe el parseo ni termina como parte del comando.
+- [ ] Una línea que es solo `-- comando` (sin ninguna variable antes del separador): funciona igual que escribir `comando` directamente, sin sufijo de variables.
+- [ ] Una línea que es solo variables y `--` sin comando después (p. ej. `A=1 --`): no guarda nada — igual que dejar el campo vacío, la fila queda como estaba antes de entrar a editar.
+- [ ] Un comando sin ningún `--` en la línea (la sintaxis de siempre, sin variables): funciona exactamente igual que antes de esta pieza — comportamiento retrocompatible.
+- [ ] Configurar una variable de entorno para un lenguaje con un script de prueba que la vuelque a stderr (p. ej. `echo "MI_VAR=$MI_VAR" >&2`) y abrir un archivo de ese lenguaje: `Ctrl+K R` muestra la línea con el valor real de la variable, confirmando que de verdad llegó al proceso hijo (no solo que se guardó en `config.toml`).
+- [ ] Las variables configuradas se suman al entorno heredado del proceso de `tcode`, no lo reemplazan: una variable ya presente en el entorno del sistema (p. ej. `PATH`) sigue estando disponible para el servidor LSP aunque no se la mencione en el campo.
 
 ## M4 — Sección "Interfaz" del panel de administración
 
@@ -406,6 +543,23 @@ Nota: una de las capturas de este bug mostró de paso otro problema no
 relacionado (tabla CSV con muchas columnas comprimida a 1-2 caracteres
 por falta de scroll horizontal) — ya arreglado, ver la sección "Scroll
 horizontal con muchas columnas" en M3 — Vista CSV/TSV más arriba.
+
+## Rendimiento: pegar texto grande y mantener teclas apretadas
+
+Antes pegar ~500 líneas tardaba más de un minuto y medio (se veía entrar
+"línea por línea"), y mantener apretada una flecha congelaba la pantalla
+para después saltar de golpe más allá de donde se quería ir. Medido en
+tmux con un `.rs` de 500 líneas: pegar pasó de 104,6 s a 0,02 s, y 300
+flechas seguidas de 1 s a 0,02 s.
+
+- [ ] Copiar ~500 líneas de código de otro programa y pegarlas en un archivo (`Cmd+V`/`Ctrl+Shift+V` de la terminal): aparecen todas de una vez, sin demora visible.
+- [ ] Lo pegado queda idéntico al original: la indentación NO se acumula línea tras línea (antes cada salto de línea pasaba por `Enter`).
+- [ ] Un solo `Ctrl+Z` deshace el pegado completo (no línea por línea ni carácter por carácter).
+- [ ] Pegar con una selección activa reemplaza la selección.
+- [ ] Mantener apretada `↓` en un archivo largo y soltarla: el cursor se detiene donde se soltó, sin congelarse ni seguir de largo.
+- [ ] Pegar con la paleta (`Ctrl+Shift+P`), el buscador (`Ctrl+P`) o "Guardar como" abiertos: el texto va al campo del prompt, sin saltos de línea (y sin confirmarlo solo).
+- [ ] Pegar con la confirmación de borrado del explorador abierta NO confirma el borrado aunque lo pegado empiece con `y`.
+- [ ] Con un LSP activo (p. ej. un `.py` con pyright), pegar código con un error: el diagnóstico aparece igual que al tipearlo.
 
 ---
 

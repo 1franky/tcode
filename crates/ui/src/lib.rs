@@ -11,8 +11,11 @@ mod panel_admin;
 mod panel_archivos;
 mod panel_buscador;
 mod panel_busqueda;
+mod panel_confirmar_borrado;
 mod panel_guardar_como;
+mod panel_logs_lsp;
 mod panel_paleta;
+mod panel_prompt_explorador;
 mod panel_selector_tema;
 mod statusbar;
 mod vista_codigo;
@@ -25,8 +28,9 @@ use ratatui::Frame;
 use tcode_commands::EstadoPaleta;
 use tcode_config::{Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema};
 use tcode_core::{EstadoBusqueda, EstadoGuardarComo};
-use tcode_fs::{BuscadorArchivos, Explorador};
+use tcode_fs::{BuscadorArchivos, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador};
 use tcode_keymap::Keymap;
+use tcode_lsp::EstadoLogsLsp;
 use tcode_syntax::Resaltador;
 
 pub use paleta::Paleta;
@@ -82,9 +86,12 @@ pub struct EstadoUi {
 /// (`Ctrl+F`/`Ctrl+H`) flotando en la esquina superior derecha del área
 /// de edición si está abierta, y la paleta de comandos
 /// (`Ctrl+Shift+P`/`F1`), el buscador de archivos (`Ctrl+P`), el
-/// selector de temas (`Ctrl+K Ctrl+T`) o el prompt de "Guardar como"
-/// (`Ctrl+Shift+S`) encima de todo cuando alguno de los cuatro está
-/// abierto (son mutuamente excluyentes — nunca dos a la vez).
+/// selector de temas (`Ctrl+K Ctrl+T`), el prompt de "Guardar como"
+/// (`Ctrl+Shift+S`), el visor de logs del LSP activo (`Ctrl+K R`), el
+/// prompt de texto del explorador (`Ctrl+K N`/`Ctrl+K C`/`Ctrl+K M` —
+/// nuevo archivo/carpeta/renombrar) o su confirmación de borrado
+/// (`Delete`) encima de todo cuando alguno de los siete está abierto (son
+/// mutuamente excluyentes — nunca dos a la vez).
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -102,6 +109,9 @@ pub fn dibujar(
     keymap: &Keymap,
     filas_lenguajes: &[FilaLenguajeLsp],
     editor_tema: &EstadoEditorTema,
+    logs_lsp: &EstadoLogsLsp,
+    prompt_explorador: &EstadoPromptExplorador,
+    confirmar_borrado: &EstadoConfirmarBorrado,
 ) {
     let area_total = frame.area();
 
@@ -134,6 +144,7 @@ pub fn dibujar(
         estado_busqueda,
         config.editor.numeros_de_linea,
         config.editor.ajuste_linea,
+        config.editor.columna_regla,
         &config.interfaz,
     );
     panel_busqueda::dibujar(frame, area_principal, estado_busqueda, paleta);
@@ -146,5 +157,11 @@ pub fn dibujar(
         panel_selector_tema::dibujar(frame, area_total, selector_tema, paleta);
     } else if guardar_como.activa() {
         panel_guardar_como::dibujar(frame, area_total, guardar_como, paleta);
+    } else if logs_lsp.activo() {
+        panel_logs_lsp::dibujar(frame, area_total, logs_lsp, paleta);
+    } else if prompt_explorador.activo() {
+        panel_prompt_explorador::dibujar(frame, area_total, prompt_explorador, paleta);
+    } else if confirmar_borrado.activo() {
+        panel_confirmar_borrado::dibujar(frame, area_total, confirmar_borrado, paleta);
     }
 }

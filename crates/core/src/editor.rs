@@ -232,6 +232,21 @@ impl Editor {
         self.editar_cada_cursor(|_, seleccion| (seleccion, texto.clone()));
     }
 
+    /// Inserta un texto completo (típicamente lo pegado desde el
+    /// portapapeles de la terminal, vía bracketed paste) en la posición de
+    /// CADA cursor, como UNA sola edición: un solo paso de deshacer y sin
+    /// pasar por `editor.nueva_linea` por cada salto de línea (que además
+    /// de lento, re-indentaría cada línea pegada). Los finales de línea
+    /// `\r\n`/`\r` se normalizan a `\n`, igual que al cargar un archivo
+    /// (ver `Buffer`): el buffer en memoria siempre usa `\n`.
+    pub fn insertar_texto(&mut self, texto: &str) {
+        if texto.is_empty() {
+            return;
+        }
+        let texto = texto.replace("\r\n", "\n").replace('\r', "\n");
+        self.editar_cada_cursor(|_, seleccion| (seleccion, texto.clone()));
+    }
+
     /// Backspace: si el cursor tiene selección la borra; si no, borra
     /// hacia atrás un carácter (fusionando con la línea anterior si
     /// estaba al inicio de línea) — para cada cursor a la vez.
@@ -281,6 +296,28 @@ impl Editor {
         self.fusionar_cursores_duplicados();
     }
 
+    /// Hermana de `mover_cada_cursor` para `Shift`+movimiento (PLAN.md §4
+    /// "Navegación", `Shift+flechas`/`Shift+Home`/`Shift+End`): mueve el
+    /// extremo activo (`cursor`) de cada `CursorMultiple` SIN tocar
+    /// `ancla`, extendiendo la selección en vez de colapsarla. `ancla`
+    /// queda fija en la posición de donde arrancó el primer
+    /// `Shift`+movimiento — exactamente el mismo mecanismo que ya usa
+    /// multi-cursor (`Ctrl+D`, PLAN.md §11 M3) para su propia selección,
+    /// reutilizado acá para selección "de toda la vida".
+    fn extender_cada_cursor(&mut self, f: impl Fn(&mut Cursor, &Buffer)) {
+        for c in &mut self.cursores {
+            f(&mut c.cursor, &self.buffer);
+        }
+        // Dedup por el PAR completo (ancla, cursor), no solo por
+        // `cursor` como `fusionar_cursores_duplicados` — acá dos
+        // selecciones distintas pueden converger a la misma posición
+        // activa sin ser la misma selección (mismo extremo, ancla
+        // distinta); fusionarlas por el cursor solo perdería una de las
+        // dos sin querer.
+        self.cursores.sort_by_key(|c| (c.ancla.linea, c.ancla.columna, c.cursor.linea, c.cursor.columna));
+        self.cursores.dedup();
+    }
+
     pub fn mover_izquierda(&mut self) {
         self.mover_cada_cursor(Cursor::mover_izquierda);
     }
@@ -303,6 +340,36 @@ impl Editor {
 
     pub fn fin_linea(&mut self) {
         self.mover_cada_cursor(Cursor::fin_linea);
+    }
+
+    /// `Shift+Left`: extiende la selección un carácter a la izquierda.
+    pub fn seleccionar_izquierda(&mut self) {
+        self.extender_cada_cursor(Cursor::mover_izquierda);
+    }
+
+    /// `Shift+Right`: extiende la selección un carácter a la derecha.
+    pub fn seleccionar_derecha(&mut self) {
+        self.extender_cada_cursor(Cursor::mover_derecha);
+    }
+
+    /// `Shift+Up`: extiende la selección una línea hacia arriba.
+    pub fn seleccionar_arriba(&mut self) {
+        self.extender_cada_cursor(Cursor::mover_arriba);
+    }
+
+    /// `Shift+Down`: extiende la selección una línea hacia abajo.
+    pub fn seleccionar_abajo(&mut self) {
+        self.extender_cada_cursor(Cursor::mover_abajo);
+    }
+
+    /// `Shift+Home`: extiende la selección hasta el inicio de la línea.
+    pub fn seleccionar_inicio_linea(&mut self) {
+        self.extender_cada_cursor(|c, _| c.inicio_linea());
+    }
+
+    /// `Shift+End`: extiende la selección hasta el fin de la línea.
+    pub fn seleccionar_fin_linea(&mut self) {
+        self.extender_cada_cursor(Cursor::fin_linea);
     }
 
     pub fn inicio_archivo(&mut self) {
@@ -567,6 +634,28 @@ mod tests {
     }
 
     #[test]
+    fn insertar_texto_pega_todo_en_un_solo_paso_de_deshacer() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "a");
+        editor.insertar_texto("uno\r\ndos\rtres\n");
+        assert_eq!(editor.buffer().a_texto(), "auno\ndos\ntres\n");
+        assert_eq!((editor.cursor().linea, editor.cursor().columna), (3, 0));
+
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "a");
+    }
+
+    #[test]
+    fn insertar_texto_reemplaza_la_seleccion() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "gato perro");
+        editor.inicio_archivo();
+        editor.seleccionar_siguiente_ocurrencia(); // selecciona "gato"
+        editor.insertar_texto("lobo");
+        assert_eq!(editor.buffer().a_texto(), "lobo perro");
+    }
+
+    #[test]
     fn ctrl_d_selecciona_la_palabra_bajo_el_cursor_primero() {
         let mut editor = Editor::nuevo();
         escribir(&mut editor, "gato perro gato");
@@ -787,5 +876,116 @@ mod tests {
         assert_eq!(editor.modo(), Modo::Normal);
         editor.entrar_modo_insertar();
         assert_eq!(editor.modo(), Modo::Insertar);
+    }
+
+    #[test]
+    fn seleccionar_derecha_extiende_sin_mover_el_ancla() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "hola mundo");
+        editor.inicio_archivo();
+
+        editor.seleccionar_derecha();
+        editor.seleccionar_derecha();
+        editor.seleccionar_derecha();
+
+        let c = editor.cursores()[0];
+        assert_eq!(c.ancla, Cursor { linea: 0, columna: 0 });
+        assert_eq!(c.cursor, Cursor { linea: 0, columna: 3 });
+        assert!(c.tiene_seleccion());
+    }
+
+    #[test]
+    fn seleccionar_izquierda_desde_el_medio_extiende_hacia_atras() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "hola mundo");
+        // El cursor queda al final tras escribir; ir a columna 5.
+        editor.inicio_linea();
+        for _ in 0..5 {
+            editor.mover_derecha();
+        }
+
+        editor.seleccionar_izquierda();
+        editor.seleccionar_izquierda();
+
+        let c = editor.cursores()[0];
+        assert_eq!(c.ancla, Cursor { linea: 0, columna: 5 });
+        assert_eq!(c.cursor, Cursor { linea: 0, columna: 3 });
+    }
+
+    #[test]
+    fn seleccionar_abajo_y_arriba_extiende_por_linea() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "uno\ndos\ntres");
+        editor.inicio_archivo();
+
+        editor.seleccionar_abajo();
+        editor.seleccionar_abajo();
+        let c = editor.cursores()[0];
+        assert_eq!(c.ancla, Cursor { linea: 0, columna: 0 });
+        assert_eq!(c.cursor.linea, 2);
+
+        editor.seleccionar_arriba();
+        let c = editor.cursores()[0];
+        assert_eq!(c.ancla, Cursor { linea: 0, columna: 0 }, "el ancla no se mueve nunca");
+        assert_eq!(c.cursor.linea, 1);
+    }
+
+    #[test]
+    fn seleccionar_inicio_y_fin_de_linea() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "hola mundo");
+        editor.inicio_linea();
+        for _ in 0..4 {
+            editor.mover_derecha();
+        }
+
+        editor.seleccionar_fin_linea();
+        assert_eq!(editor.cursores()[0].cursor.columna, 10);
+        assert_eq!(editor.cursores()[0].ancla.columna, 4);
+
+        editor.seleccionar_inicio_linea();
+        assert_eq!(editor.cursores()[0].cursor.columna, 0);
+        assert_eq!(editor.cursores()[0].ancla.columna, 4, "el ancla sigue siendo la misma de siempre");
+    }
+
+    #[test]
+    fn mover_sin_shift_colapsa_la_seleccion_hecha_con_shift() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "hola mundo");
+        editor.inicio_archivo();
+        editor.seleccionar_derecha();
+        editor.seleccionar_derecha();
+        assert!(editor.cursores()[0].tiene_seleccion());
+
+        editor.mover_derecha();
+
+        let c = editor.cursores()[0];
+        assert!(!c.tiene_seleccion(), "un movimiento sin Shift debe colapsar la selección");
+        assert_eq!(c.ancla, c.cursor);
+    }
+
+    #[test]
+    fn seleccionar_funciona_de_forma_independiente_con_varios_cursores() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "gato perro gato lobo");
+        editor.inicio_archivo();
+
+        // Selecciona la primera ocurrencia de "gato" y agrega un
+        // segundo cursor en la siguiente — mismo mecanismo de Ctrl+D.
+        editor.seleccionar_siguiente_ocurrencia();
+        editor.seleccionar_siguiente_ocurrencia();
+        assert_eq!(editor.cursores().len(), 2);
+
+        // Extender selección con Shift+Right debe mover el extremo
+        // activo de AMBOS cursores, cada uno desde su propia posición.
+        let anclas_antes: Vec<Cursor> = editor.cursores().iter().map(|c| c.ancla).collect();
+        let cursores_antes: Vec<Cursor> = editor.cursores().iter().map(|c| c.cursor).collect();
+
+        editor.seleccionar_derecha();
+
+        for (i, c) in editor.cursores().iter().enumerate() {
+            assert_eq!(c.ancla, anclas_antes[i], "el ancla de cada cursor no debe moverse");
+            assert_ne!(c.cursor, cursores_antes[i], "el extremo activo de cada cursor sí debe avanzar");
+        }
     }
 }

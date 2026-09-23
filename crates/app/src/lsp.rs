@@ -9,6 +9,7 @@
 //! por lenguaje corriendo en paralelo para cada split abierto. Cambiar de
 //! panel a un archivo de otro lenguaje relanza el cliente.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Result;
@@ -33,28 +34,30 @@ enum Fase {
 struct SesionLsp {
     cliente: Cliente,
     lenguaje: Lenguaje,
-    /// Comando + argumentos con los que se lanzó esta sesión —
-    /// `comando_efectivo` en el momento del lanzamiento. Se guarda para
-    /// que `actualizar_para_archivo` note un cambio de configuración
-    /// (usuario edita el comando personalizado desde el panel de
-    /// administración) aunque el lenguaje no haya cambiado, y relance.
-    comando_usado: (String, Vec<String>),
+    /// Comando + argumentos + variables de entorno con los que se lanzó
+    /// esta sesión — `comando_efectivo` en el momento del lanzamiento.
+    /// Se guarda para que `actualizar_para_archivo` note un cambio de
+    /// configuración (usuario edita el comando personalizado desde el
+    /// panel de administración, variables de entorno incluidas) aunque
+    /// el lenguaje no haya cambiado, y relance.
+    comando_usado: (String, Vec<String>, BTreeMap<String, String>),
     fase: Fase,
     uri: Uri,
     ultimo_texto_enviado: String,
 }
 
-/// Comando + argumentos a usar para lanzar el LSP de `lenguaje`: el que
-/// configuró el usuario a mano en la sección "Lenguajes / LSP" (PLAN.md
-/// §5.3), si hay uno, o si no el que trae `tcode_lsp::comando_para` por
-/// defecto (que puede no haber ninguno, como para todos los lenguajes
-/// salvo Python por ahora).
-pub fn comando_efectivo(lenguaje: Lenguaje, config: &Config) -> Option<(String, Vec<String>)> {
+/// Comando + argumentos + variables de entorno a usar para lanzar el LSP
+/// de `lenguaje` (PLAN.md §5.3): lo que configuró el usuario a mano en
+/// la sección "Lenguajes / LSP", si hay algo, o si no el comando por
+/// defecto de `tcode_lsp::comando_para` (que puede no haber ninguno, como
+/// para todos los lenguajes salvo Python por ahora) sin ninguna variable
+/// de entorno — los defaults embebidos nunca las necesitan.
+pub fn comando_efectivo(lenguaje: Lenguaje, config: &Config) -> Option<(String, Vec<String>, BTreeMap<String, String>)> {
     if let Some(personalizado) = config.lenguajes.comando_configurado(lenguaje.id()) {
-        return Some((personalizado.comando.clone(), personalizado.argumentos.clone()));
+        return Some((personalizado.comando.clone(), personalizado.argumentos.clone(), personalizado.env.clone()));
     }
     tcode_lsp::comando_para(lenguaje)
-        .map(|(comando, args)| (comando.to_string(), args.iter().map(|a| a.to_string()).collect()))
+        .map(|(comando, args)| (comando.to_string(), args.iter().map(|a| a.to_string()).collect(), BTreeMap::new()))
 }
 
 /// Estado LSP de la aplicación: como mucho una sesión activa (ver nota de
@@ -111,10 +114,11 @@ impl EstadoLsp {
         }
 
         let Some(lenguaje) = lenguaje_efectivo else { return };
-        let Some((comando, args)) = comando_efectivo_actual else { return };
+        let Some((comando, args, env)) = comando_efectivo_actual else { return };
         let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+        let env_ref: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         let Ok(uri) = uri_de_archivo(Path::new(ruta)) else { return };
-        let Ok(mut cliente) = Cliente::lanzar(&comando, &args_ref).await else { return };
+        let Ok(mut cliente) = Cliente::lanzar(&comando, &args_ref, &env_ref).await else { return };
 
         let params = InitializeParams {
             process_id: Some(std::process::id()),
@@ -126,7 +130,7 @@ impl EstadoLsp {
         self.sesion = Some(SesionLsp {
             cliente,
             lenguaje,
-            comando_usado: (comando, args),
+            comando_usado: (comando, args, env),
             fase: Fase::Iniciando { id_initialize },
             uri,
             ultimo_texto_enviado: contenido.to_string(),
@@ -221,6 +225,14 @@ impl EstadoLsp {
     /// "ver estado conectado/error").
     pub fn lenguaje_activo(&self) -> Option<Lenguaje> {
         self.sesion.as_ref().map(|s| s.lenguaje)
+    }
+
+    /// Líneas de stderr acumuladas por la sesión activa, de la más
+    /// vieja a la más nueva — vacío si no hay sesión, o si la hay pero
+    /// nunca escribió nada (PLAN.md §5.3, "ver logs"; `Ctrl+K R`,
+    /// `crates/app/src/main.rs`).
+    pub fn logs(&self) -> Vec<String> {
+        self.sesion.as_ref().map(|s| s.cliente.logs()).unwrap_or_default()
     }
 
     /// Texto legible en español del estado de la sesión activa —

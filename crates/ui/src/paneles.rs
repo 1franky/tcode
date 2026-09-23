@@ -306,6 +306,7 @@ impl Layout {
         estado_busqueda: &EstadoBusqueda,
         mostrar_numeros: bool,
         ajuste_linea: bool,
+        columna_regla: Option<usize>,
         interfaz: &ConfigInterfaz,
     ) {
         let activo = self.activo;
@@ -321,6 +322,7 @@ impl Layout {
             estado_busqueda,
             mostrar_numeros,
             ajuste_linea,
+            columna_regla,
             interfaz,
         );
     }
@@ -338,6 +340,7 @@ fn dibujar_panel(
     estado_busqueda: &EstadoBusqueda,
     mostrar_numeros: bool,
     ajuste_linea: bool,
+    columna_regla: Option<usize>,
     interfaz: &ConfigInterfaz,
 ) {
     match panel {
@@ -416,6 +419,7 @@ fn dibujar_panel(
                         indice_coincidencia,
                         mostrar_numeros,
                         ajuste_linea,
+                        columna_regla,
                     );
                 }
                 ModoMarkdown::Dividido => {
@@ -447,6 +451,12 @@ fn dibujar_panel(
                         // normal en "solo fuente" (arriba), donde no hay
                         // ninguna otra vista compartiendo el scroll.
                         false,
+                        // La regla vertical sí puede seguir andando acá:
+                        // es puramente cosmética por fila visual, no
+                        // afecta al cálculo de scroll que comparten las
+                        // dos mitades (a diferencia de `ajuste_linea`
+                        // arriba).
+                        columna_regla,
                     );
                     vista_markdown::dibujar(
                         frame,
@@ -496,11 +506,11 @@ fn dibujar_panel(
                 .split(area);
             dibujar_panel(
                 frame, partes[0], primero, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
-                ajuste_linea, interfaz,
+                ajuste_linea, columna_regla, interfaz,
             );
             dibujar_panel(
                 frame, partes[1], segundo, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
-                ajuste_linea, interfaz,
+                ajuste_linea, columna_regla, interfaz,
             );
         }
     }

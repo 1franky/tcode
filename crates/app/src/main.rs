@@ -18,12 +18,14 @@
 mod lsp;
 mod vim;
 
+use std::collections::VecDeque;
 use std::io::{self, Stdout};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{
-    Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -35,15 +37,16 @@ use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
 use tcode_config::{
-    CampoEditor, CampoTemas, Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin, ModoEdicion,
-    ResultadoDuplicarTema, Seccion,
+    CampoEditor, CampoTemas, ComandoLsp, Config, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema, FocoPanelAdmin,
+    ModoEdicion, ResultadoDuplicarTema, Seccion,
 };
 use tcode_core::{
     analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo,
     EstadoVim, Modo,
 };
-use tcode_fs::{BuscadorArchivos, Explorador};
+use tcode_fs::{BuscadorArchivos, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador, ModoPromptExplorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
+use tcode_lsp::EstadoLogsLsp;
 use tcode_syntax::{Lenguaje, Resaltador};
 use tcode_ui::{DireccionSplit, FilaLenguajeLsp, Layout as PanelLayout, ModoCsv, Paleta};
 
@@ -197,7 +200,10 @@ fn iniciar_terminal() -> Result<(Terminal<Backend>, bool)> {
     configurar_consola_utf8();
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    // Bracketed paste: lo pegado desde el portapapeles de la terminal
+    // llega como UN evento `Event::Paste` con todo el texto, en vez de
+    // una tecla por carácter (ver `pegar_texto`).
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
 
     let protocolo_kitty = supports_keyboard_enhancement().unwrap_or(false);
     if protocolo_kitty {
@@ -212,7 +218,7 @@ fn finalizar_terminal(terminal: &mut Terminal<Backend>, protocolo_kitty: bool) -
         execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     }
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), DisableBracketedPaste, LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
 }
@@ -269,6 +275,17 @@ struct EstadoApp {
     /// panel (ver `tcode_core::EstadoVim`). Sin efecto mientras ningún
     /// `Editor` llegue a `Modo::Normal`.
     vim: EstadoVim,
+    /// Visor de logs de stderr de la sesión LSP activa (`Ctrl+K R`,
+    /// PLAN.md §5.3).
+    logs_lsp: EstadoLogsLsp,
+    /// Prompt de texto del explorador (`Ctrl+K N`/`Ctrl+K C`/`Ctrl+K M`
+    /// — nuevo archivo/carpeta/renombrar, BACKLOG.md P0 "explorador de
+    /// solo lectura").
+    prompt_explorador: EstadoPromptExplorador,
+    /// Confirmación de borrado del explorador (`Delete` con el
+    /// explorador enfocado) — separada de `prompt_explorador` porque no
+    /// tiene ningún campo de texto, solo `y`/cualquier otra tecla.
+    confirmar_borrado: EstadoConfirmarBorrado,
 }
 
 fn sin_modificadores(key: KeyEvent) -> bool {
@@ -329,64 +346,103 @@ async fn ejecutar(
         keymap,
         lsp: lsp::EstadoLsp::nuevo(),
         vim: EstadoVim::nuevo(),
+        logs_lsp: EstadoLogsLsp::nuevo(),
+        prompt_explorador: EstadoPromptExplorador::nuevo(),
+        confirmar_borrado: EstadoConfirmarBorrado::nuevo(),
     };
-
-    // El archivo abierto al arrancar también dispara el LSP si su
-    // lenguaje tiene uno configurado.
-    sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
 
     // Ver `forzar_redibujado_completo`: en Windows, si la "forma" de la
     // pantalla cambió (otro archivo activo, otro número de paneles, el
     // explorador se mostró/ocultó), se limpia antes del próximo draw.
     let mut necesita_redibujado = false;
 
+    // Teclas generadas por la app en vez de por la terminal: lo pegado
+    // mientras hay un prompt de una línea abierto se reparte en teclas
+    // sueltas (ver `pegar_texto`). Se procesan antes que cualquier
+    // evento nuevo de la terminal.
+    let mut teclas_sinteticas: VecDeque<KeyEvent> = VecDeque::new();
+    let mut ultimo_dibujo = Instant::now();
+
     loop {
-        if necesita_redibujado {
-            forzar_redibujado_completo(terminal)?;
-            necesita_redibujado = false;
+        // Si ya hay más teclas esperando (una flecha mantenida apretada,
+        // o lo pegado en una terminal sin bracketed paste), se procesan
+        // TODAS antes de volver a dibujar. Dibujar entre cada una hacía
+        // que la cola creciera más rápido de lo que se vaciaba: la
+        // pantalla se congelaba y después el cursor "se ponía al día" de
+        // golpe, pasándose de donde se quería ir. Igual se dibuja cada
+        // tanto durante una ráfaga larga para que no parezca colgado.
+        let hay_mas_eventos = !teclas_sinteticas.is_empty() || crossterm::event::poll(Duration::ZERO).unwrap_or(false);
+        if !hay_mas_eventos || ultimo_dibujo.elapsed() >= INTERVALO_MAXIMO_SIN_DIBUJAR {
+            // Una vez por frame, no por tecla: avisa al LSP del archivo
+            // activo (relanzándolo si cambió de lenguaje) y le manda el
+            // texto completo si cambió. Por tecla significaba copiar y
+            // serializar el archivo entero en cada carácter tipeado.
+            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+
+            if necesita_redibujado {
+                forzar_redibujado_completo(terminal)?;
+                necesita_redibujado = false;
+            }
+
+            // Barato (5 lenguajes): se recalcula cada frame en vez de
+            // cachearlo, para que el estado en vivo del cliente LSP
+            // (conectado/iniciando) se vea siempre actualizado en la
+            // sección "Lenguajes / LSP" mientras el panel está abierto ahí.
+            let filas_lenguajes = filas_lenguajes_lsp(&estado);
+
+            terminal.draw(|frame| {
+                tcode_ui::dibujar(
+                    frame,
+                    layout,
+                    &estado.paleta,
+                    &mut resaltador,
+                    &estado.explorador,
+                    &estado.paleta_comandos,
+                    &estado.buscador_archivos,
+                    &estado.estado_busqueda,
+                    &estado.guardar_como,
+                    &estado.selector_tema,
+                    &estado.panel_admin,
+                    &estado.config,
+                    &estado.keymap,
+                    &filas_lenguajes,
+                    &estado.editor_tema,
+                    &estado.logs_lsp,
+                    &estado.prompt_explorador,
+                    &estado.confirmar_borrado,
+                )
+            })?;
+            ultimo_dibujo = Instant::now();
         }
-
-        // Barato (5 lenguajes): se recalcula cada frame en vez de
-        // cachearlo, para que el estado en vivo del cliente LSP
-        // (conectado/iniciando) se vea siempre actualizado en la
-        // sección "Lenguajes / LSP" mientras el panel está abierto ahí.
-        let filas_lenguajes = filas_lenguajes_lsp(&estado);
-
-        terminal.draw(|frame| {
-            tcode_ui::dibujar(
-                frame,
-                layout,
-                &estado.paleta,
-                &mut resaltador,
-                &estado.explorador,
-                &estado.paleta_comandos,
-                &estado.buscador_archivos,
-                &estado.estado_busqueda,
-                &estado.guardar_como,
-                &estado.selector_tema,
-                &estado.panel_admin,
-                &estado.config,
-                &estado.keymap,
-                &filas_lenguajes,
-                &estado.editor_tema,
-            )
-        })?;
 
         let firma_antes = firma_estructural(layout, &estado.explorador);
 
-        let key = tokio::select! {
-            evento = eventos.next() => {
-                match evento {
-                    Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => key,
-                    _ => continue,
+        let evento = match teclas_sinteticas.pop_front() {
+            Some(key) => Event::Key(key),
+            None => tokio::select! {
+                evento = eventos.next() => {
+                    match evento {
+                        Some(Ok(evento)) => evento,
+                        _ => continue,
+                    }
                 }
-            }
-            mensaje = estado.lsp.siguiente_mensaje() => {
-                if let Some(mensaje) = mensaje {
-                    estado.lsp.procesar_mensaje(mensaje, layout).await;
+                mensaje = estado.lsp.siguiente_mensaje() => {
+                    if let Some(mensaje) = mensaje {
+                        estado.lsp.procesar_mensaje(mensaje, layout).await;
+                    }
+                    continue;
                 }
+            },
+        };
+
+        let key = match evento {
+            Event::Key(key) if key.kind == KeyEventKind::Press => key,
+            Event::Paste(texto) => {
+                pegar_texto(&texto, layout, &mut estado, &mut teclas_sinteticas);
+                necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
                 continue;
             }
+            _ => continue,
         };
 
         // El editor visual de tema (`Ctrl+K Ctrl+P`, PLAN.md §7) es otra
@@ -453,7 +509,6 @@ async fn ejecutar(
                     _ => {}
                 },
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -588,7 +643,6 @@ async fn ejecutar(
                     },
                 }
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -614,7 +668,6 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.paleta_comandos.escribir(c),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -634,7 +687,6 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.buscador_archivos.escribir(c),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -668,12 +720,11 @@ async fn ejecutar(
                 }
                 KeyCode::Enter => {
                     if let Some(id) = estado.selector_tema.confirmar() {
-                        confirmar_tema_seleccionado(&mut estado, id);
+                        confirmar_tema_seleccionado(&mut estado, &id);
                     }
                 }
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -724,7 +775,6 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.estado_busqueda.escribir(c, &texto),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -744,7 +794,64 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.guardar_como.escribir(c),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
+        // Visor de logs del LSP activo (`Ctrl+K R`): snapshot tomado al
+        // abrir, no en vivo — no hace falta reaccionar a nada más que el
+        // filtro de texto y `Esc` para cerrar.
+        if estado.logs_lsp.activo() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => estado.logs_lsp.cerrar(),
+                KeyCode::Backspace => estado.logs_lsp.borrar(),
+                KeyCode::Char(c) if sin_modificadores(key) => estado.logs_lsp.escribir(c),
+                _ => {}
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
+        // Prompt de texto del explorador (`Ctrl+K N`/`Ctrl+K C`/`Ctrl+K
+        // M` — nuevo archivo/carpeta/renombrar, BACKLOG.md P0
+        // "explorador de solo lectura"): mismo patrón que "Guardar
+        // como" — `Enter` confirma e intenta la operación de verdad
+        // (`crear_archivo`/`crear_carpeta`/`renombrar_seleccion`), si
+        // falla el prompt queda abierto con el error en vez de cerrarse
+        // como si nada.
+        if estado.prompt_explorador.activo() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => estado.prompt_explorador.cerrar(),
+                KeyCode::Backspace => estado.prompt_explorador.borrar(),
+                KeyCode::Enter => confirmar_prompt_explorador(&mut estado.explorador, &mut estado.prompt_explorador),
+                KeyCode::Char(c) if sin_modificadores(key) => estado.prompt_explorador.escribir(c),
+                _ => {}
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
+        // Confirmación de borrado del explorador (`Delete` con el
+        // explorador enfocado): acción destructiva e irreversible, así
+        // que no hay "Enter confirma" ni tecla por defecto — solo `y`
+        // borra de verdad, cualquier otra tecla (incluido `Esc`) cancela
+        // sin tocar el disco.
+        if estado.confirmar_borrado.activo() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    // `confirmar()` ya cierra el prompt; la ruta que
+                    // devuelve no hace falta acá — `borrar_seleccion` la
+                    // vuelve a sacar de la selección actual del árbol,
+                    // que no pudo haber cambiado mientras este prompt
+                    // capturaba el teclado por completo.
+                    estado.confirmar_borrado.confirmar();
+                    let _ = estado.explorador.borrar_seleccion();
+                }
+                _ => estado.confirmar_borrado.cerrar(),
+            }
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -768,7 +875,6 @@ async fn ejecutar(
                 }
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -788,7 +894,6 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => layout.panel_activo_mut().estado_csv.escribir(c),
                 _ => {}
             }
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -810,7 +915,6 @@ async fn ejecutar(
             editor.colapsar_cursores();
             editor.entrar_modo_normal();
             estado.confirmar_salida = false;
-            sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
             continue;
         }
@@ -834,7 +938,6 @@ async fn ejecutar(
             };
             if manejada {
                 estado.confirmar_salida = false;
-                sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
                 necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
                 continue;
             }
@@ -874,12 +977,57 @@ async fn ejecutar(
             }
         }
 
-        sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
         necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
     }
 
     estado.lsp.cerrar().await;
     Ok(())
+}
+
+/// Cada cuánto se dibuja igual durante una ráfaga larga de eventos (ver
+/// el bucle de `ejecutar`): lo suficiente para que se vea avanzar, sin
+/// volver a dibujar por cada tecla.
+const INTERVALO_MAXIMO_SIN_DIBUJAR: Duration = Duration::from_millis(50);
+
+/// Texto pegado desde la terminal (`Event::Paste`, bracketed paste). Con
+/// el editor enfocado y sin ningún overlay abierto se inserta entero de
+/// una vez (`Editor::insertar_texto`: una sola edición, un solo paso de
+/// deshacer, sin re-indentar cada línea). En un prompt de una línea
+/// (paleta, buscadores, "Guardar como"...) se reparte en teclas sueltas
+/// que el bucle procesa como si se hubieran tipeado, sin los saltos de
+/// línea — un `Enter` en medio confirmaría el prompt a medio pegar. En
+/// cualquier otro lado (confirmación de borrado, salto rápido del
+/// explorador, menús de una tecla) se ignora: ahí cada carácter es una
+/// acción, no texto.
+fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, teclas: &mut VecDeque<KeyEvent>) {
+    let prompt_de_texto = estado.paleta_comandos.activa()
+        || estado.buscador_archivos.activo()
+        || estado.estado_busqueda.activa()
+        || estado.guardar_como.activa()
+        || estado.logs_lsp.activo()
+        || estado.prompt_explorador.activo()
+        || layout.panel_activo().estado_csv.editando()
+        || (estado.panel_admin.activo() && estado.panel_admin.editando_comando_lsp().is_some());
+    if prompt_de_texto {
+        teclas.extend(
+            texto
+                .chars()
+                .filter(|c| !c.is_control())
+                .map(|c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)),
+        );
+        return;
+    }
+
+    let otro_modal = estado.editor_tema.activo()
+        || estado.panel_admin.activo()
+        || estado.selector_tema.activa()
+        || estado.confirmar_borrado.activo()
+        || estado.explorador.modo_salto();
+    if otro_modal || estado.foco != Foco::Editor || layout.panel_activo().modo_csv == ModoCsv::Tabla {
+        return;
+    }
+    estado.confirmar_salida = false;
+    layout.editor_activo_mut().insertar_texto(texto);
 }
 
 /// Le avisa al `EstadoLsp` cuál es el archivo/contenido activos ahora
@@ -925,6 +1073,42 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         }
         "admin.abrir_panel" => {
             estado.panel_admin.abrir();
+            Accion::Continuar
+        }
+        "lsp.ver_logs" => {
+            // Snapshot, no en vivo (PLAN.md §5.3): abre con lo que haya
+            // AHORA — vacío y con el mensaje correspondiente si no hay
+            // sesión LSP activa, en vez de no hacer nada en silencio.
+            estado.logs_lsp.abrir(estado.lsp.logs());
+            Accion::Continuar
+        }
+        // Crear/renombrar en el explorador (BACKLOG.md P0, "explorador
+        // de solo lectura") — global, mismo criterio que
+        // `explorador.saltar`: invocable desde la paleta de comandos sin
+        // tener el explorador abierto todavía, lo muestra y le da el
+        // foco antes de abrir el prompt.
+        "explorador.nuevo_archivo" => {
+            estado.explorador.mostrar();
+            estado.foco = Foco::Explorador;
+            estado.prompt_explorador.abrir(ModoPromptExplorador::NuevoArchivo, "");
+            Accion::Continuar
+        }
+        "explorador.nueva_carpeta" => {
+            estado.explorador.mostrar();
+            estado.foco = Foco::Explorador;
+            estado.prompt_explorador.abrir(ModoPromptExplorador::NuevaCarpeta, "");
+            Accion::Continuar
+        }
+        // Precargado con el nombre actual (no vacío) — mismo criterio
+        // que "Guardar como" sobre un archivo ya existente: alcanza con
+        // ajustar en vez de reescribir la ruta entera. Sin nada
+        // seleccionado (árbol vacío) no abre nada — no hay qué renombrar.
+        "explorador.renombrar" => {
+            estado.explorador.mostrar();
+            estado.foco = Foco::Explorador;
+            if let Some(nodo) = estado.explorador.seleccion_actual() {
+                estado.prompt_explorador.abrir(ModoPromptExplorador::Renombrar, &nodo.nombre);
+            }
             Accion::Continuar
         }
         "buscar.en_archivo" | "buscar.reemplazar" => {
@@ -980,6 +1164,22 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             let ruta_inicial =
                 layout.editor_activo().buffer().ruta().map(|r| r.display().to_string()).unwrap_or_default();
             estado.guardar_como.abrir(&ruta_inicial);
+            Accion::Continuar
+        }
+        // `Delete` reinterpretado como "pedir confirmación de borrado"
+        // en vez de "borrar hacia adelante" (su significado normal en el
+        // editor, `editor.borrar_adelante` en `ejecutar_comando` más
+        // abajo) — mismo criterio que `cursor.arriba`/`editor.nueva_linea`
+        // ya reinterpretados para el explorador, pero este necesita
+        // `estado.confirmar_borrado`, al que `ejecutar_comando_explorador`
+        // no tiene acceso, así que se resuelve acá en vez de ahí. Nunca
+        // borra directo: siempre abre el prompt de confirmación primero
+        // (BACKLOG.md P0, "explorador de solo lectura" — acción
+        // destructiva e irreversible).
+        "editor.borrar_adelante" if estado.foco == Foco::Explorador => {
+            if let Some(nodo) = estado.explorador.seleccion_actual() {
+                estado.confirmar_borrado.abrir(nodo.ruta.clone(), nodo.nombre.clone(), nodo.es_carpeta);
+            }
             Accion::Continuar
         }
         _ => ejecutar_comando(
@@ -1122,6 +1322,12 @@ fn ejecutar_comando(
         "cursor.fin_linea" => editor.fin_linea(),
         "cursor.inicio_archivo" => editor.inicio_archivo(),
         "cursor.fin_archivo" => editor.fin_archivo(),
+        "cursor.seleccionar_arriba" => editor.seleccionar_arriba(),
+        "cursor.seleccionar_abajo" => editor.seleccionar_abajo(),
+        "cursor.seleccionar_izquierda" => editor.seleccionar_izquierda(),
+        "cursor.seleccionar_derecha" => editor.seleccionar_derecha(),
+        "cursor.seleccionar_inicio_linea" => editor.seleccionar_inicio_linea(),
+        "cursor.seleccionar_fin_linea" => editor.seleccionar_fin_linea(),
         "editor.borrar_atras" => editor.borrar_atras(),
         "editor.borrar_adelante" => editor.borrar_adelante(),
         "editor.nueva_linea" => editor.insertar_char('\n'),
@@ -1228,6 +1434,31 @@ fn guardar_como_confirmar(layout: &mut PanelLayout, guardar_como: &mut EstadoGua
     }
 }
 
+/// `Enter` con el prompt de texto del explorador abierto (`Ctrl+K N`/
+/// `Ctrl+K C`/`Ctrl+K M`): despacha a la operación de filesystem que
+/// corresponda según `ModoPromptExplorador`. Un nombre vacío (o solo
+/// espacios) no intenta nada — mismo criterio que "Guardar como" con una
+/// ruta vacía. Si la operación falla (ya existe algo con ese nombre,
+/// permiso denegado...) el prompt queda abierto con el motivo, en vez de
+/// cerrarse como si nada.
+fn confirmar_prompt_explorador(explorador: &mut Explorador, prompt: &mut EstadoPromptExplorador) {
+    let Some(modo) = prompt.modo() else { return };
+    let texto = prompt.texto().trim();
+    if texto.is_empty() {
+        prompt.establecer_error("el nombre no puede estar vacío".to_string());
+        return;
+    }
+    let resultado = match modo {
+        ModoPromptExplorador::NuevoArchivo => explorador.crear_archivo(texto),
+        ModoPromptExplorador::NuevaCarpeta => explorador.crear_carpeta(texto),
+        ModoPromptExplorador::Renombrar => explorador.renombrar_seleccion(texto),
+    };
+    match resultado {
+        Ok(()) => prompt.cerrar(),
+        Err(e) => prompt.establecer_error(e.to_string()),
+    }
+}
+
 /// `Enter` con una celda de la vista CSV/TSV en edición: reemplaza la
 /// fila completa reserializada (ver `tcode_core::csv::serializar_fila`)
 /// en el buffer, y si `avanzar` es `true` mueve la selección a la fila
@@ -1285,7 +1516,7 @@ fn recargar_config_tema_y_keymap(estado: &mut EstadoApp, resolvedor: &mut Resolv
 /// queda como estaba).
 fn aplicar_preview_tema(estado: &mut EstadoApp) {
     if let Some(id) = estado.selector_tema.tema_seleccionado() {
-        estado.paleta = cargar_paleta(id);
+        estado.paleta = cargar_paleta(&id);
     }
 }
 
@@ -1386,8 +1617,16 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
         .iter()
         .map(|&lenguaje| {
             let (comando, en_path) = match lsp::comando_efectivo(lenguaje, &estado.config) {
-                Some((comando, args)) => {
-                    let texto = if args.is_empty() { comando.clone() } else { format!("{comando} {}", args.join(" ")) };
+                Some((comando, args, env)) => {
+                    let mut texto = if args.is_empty() { comando.clone() } else { format!("{comando} {}", args.join(" ")) };
+                    // Indicador chico de que además hay variables de
+                    // entorno configuradas (BACKLOG.md P1) — la línea
+                    // completa (con nombres y valores) solo se ve al
+                    // entrar a editar (`c`), acá alcanza con saber que
+                    // hay alguna.
+                    if !env.is_empty() {
+                        texto.push_str(&format!(" [+{} var{} de entorno]", env.len(), if env.len() == 1 { "" } else { "s" }));
+                    }
                     (texto, ruta_en_path(&comando))
                 }
                 None => (String::new(), false),
@@ -1476,11 +1715,13 @@ fn lenguaje_seleccionado_en_lenguajes(panel: &tcode_config::EstadoPanelAdmin) ->
 /// personalizado, precargando el buffer con el comando efectivo actual
 /// (personalizado si ya hay uno, o el que trae `tcode_lsp::comando_para`
 /// por defecto, o vacío si no hay ninguno) — así se puede ajustar solo
-/// los argumentos sin volver a escribir todo desde cero.
+/// los argumentos (o las variables de entorno, con la sintaxis `VAR=val
+/// -- comando`, ver `ComandoLsp::como_linea`/`fijar_comando_desde_linea`)
+/// sin volver a escribir todo desde cero.
 fn iniciar_edicion_comando_lsp_seleccionado(estado: &mut EstadoApp) {
     let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
     let valor_inicial = lsp::comando_efectivo(lenguaje, &estado.config)
-        .map(|(comando, args)| if args.is_empty() { comando } else { format!("{comando} {}", args.join(" ")) })
+        .map(|(comando, argumentos, env)| ComandoLsp { comando, argumentos, env }.como_linea())
         .unwrap_or_default();
     estado.panel_admin.iniciar_edicion_comando_lsp(valor_inicial);
 }

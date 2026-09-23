@@ -35,6 +35,12 @@ pub struct Paleta {
     /// (`Ctrl+F`/`Ctrl+H`, PLAN.md §4).
     pub busqueda_actual: Color,
     pub busqueda_otras: Color,
+    /// Fondo de la columna de la regla vertical (`config.editor.
+    /// columna_regla`, BACKLOG.md P1 #5) — no es un campo nuevo de
+    /// `Tema` (evitaría tener que editar los 13 temas existentes):
+    /// [`color_regla_vertical`] lo deriva de `background`/`foreground`,
+    /// así se adapta solo a temas oscuros y claros por igual.
+    pub regla_vertical: Color,
     /// Estilo por token de sintaxis (PLAN.md §7), indexado por uno de los
     /// nombres canónicos de [`tcode_syntax::NOMBRES_RESALTADO`].
     sintaxis: HashMap<&'static str, Style>,
@@ -43,6 +49,8 @@ pub struct Paleta {
 impl Paleta {
     pub fn desde_tema(tema: &Tema) -> Result<Self> {
         let rgb = |c: (u8, u8, u8)| Color::Rgb(c.0, c.1, c.2);
+        let fondo_rgb = tema.ui.background_rgb()?;
+        let texto_rgb = tema.ui.foreground_rgb()?;
 
         let mut sintaxis = HashMap::new();
         for nombre in NOMBRES_RESALTADO {
@@ -69,6 +77,7 @@ impl Paleta {
             diagnostico_sugerencia: color_diagnostico(&tema.diagnostics.hint, Color::Gray),
             busqueda_actual: color_diagnostico(&tema.search.coincidencia_actual, Color::Yellow),
             busqueda_otras: color_diagnostico(&tema.search.otras_coincidencias, Color::DarkGray),
+            regla_vertical: color_regla_vertical(fondo_rgb, texto_rgb),
             sintaxis,
         })
     }
@@ -95,6 +104,7 @@ impl Paleta {
             diagnostico_sugerencia: Color::Gray,
             busqueda_actual: Color::Yellow,
             busqueda_otras: Color::DarkGray,
+            regla_vertical: Color::DarkGray,
             sintaxis: HashMap::new(),
         }
     }
@@ -135,6 +145,22 @@ fn color_diagnostico(valor: &Option<String>, fallback: Color) -> Color {
         .unwrap_or(fallback)
 }
 
+/// Deriva el color de fondo de la regla vertical (BACKLOG.md P1 #5) de
+/// los dos colores que cualquier tema ya tiene, en vez de agregar un
+/// campo `Tema` nuevo que habría que sumarle a los 13 temas existentes
+/// (12 embebidos + los que un usuario haya duplicado a mano):
+/// mayormente el color de fondo, con un toque del color de texto — sutil
+/// en cualquier tema (oscuro o claro) sin que nadie tenga que
+/// configurarlo, y sin arriesgarse a un color fijo que quede invisible
+/// en un tema y chillón en otro.
+fn color_regla_vertical(fondo: (u8, u8, u8), texto: (u8, u8, u8)) -> Color {
+    // 88% fondo + 12% texto: se distingue de un vistazo del fondo liso,
+    // pero no compite con el resaltado de sintaxis ni con el fondo de la
+    // línea actual si coinciden en esa columna.
+    let mezclar = |c_fondo: u8, c_texto: u8| ((c_fondo as f32) * 0.88 + (c_texto as f32) * 0.12).round() as u8;
+    Color::Rgb(mezclar(fondo.0, texto.0), mezclar(fondo.1, texto.1), mezclar(fondo.2, texto.2))
+}
+
 fn estilo_desde_token(token: &EstiloToken) -> Result<Style> {
     let (r, g, b) = token.color_rgb()?;
     let mut estilo = Style::default().fg(Color::Rgb(r, g, b));
@@ -145,4 +171,37 @@ fn estilo_desde_token(token: &EstiloToken) -> Result<Style> {
         estilo = estilo.add_modifier(Modifier::ITALIC);
     }
     Ok(estilo)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn color_regla_vertical_en_tema_oscuro_queda_mas_claro_que_el_fondo() {
+        // Dracula-ish: fondo casi negro, texto casi blanco.
+        let fondo = (40, 42, 54);
+        let texto = (248, 248, 242);
+        let Color::Rgb(r, g, b) = color_regla_vertical(fondo, texto) else { panic!("debería ser Rgb") };
+        assert!(r > fondo.0 && g > fondo.1 && b > fondo.2, "debe ser más claro que el fondo, no más oscuro");
+        // Pero mucho más cerca del fondo que del texto (sutil, no un
+        // gris a mitad de camino).
+        assert!(r < 90, "no debería acercarse al blanco del texto");
+    }
+
+    #[test]
+    fn color_regla_vertical_en_tema_claro_queda_mas_oscuro_que_el_fondo() {
+        // GitHub Light-ish: fondo casi blanco, texto casi negro.
+        let fondo = (255, 255, 255);
+        let texto = (36, 41, 46);
+        let Color::Rgb(r, g, b) = color_regla_vertical(fondo, texto) else { panic!("debería ser Rgb") };
+        assert!(r < fondo.0 && g < fondo.1 && b < fondo.2, "debe ser más oscuro que el fondo, no más claro");
+        assert!(r > 200, "no debería acercarse al negro del texto");
+    }
+
+    #[test]
+    fn color_regla_vertical_con_fondo_y_texto_iguales_no_cambia() {
+        let gris = (128, 128, 128);
+        assert_eq!(color_regla_vertical(gris, gris), Color::Rgb(128, 128, 128));
+    }
 }

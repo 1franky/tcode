@@ -24,6 +24,16 @@
 "End"           = "cursor.fin_linea"
 "Ctrl+Home"     = "cursor.inicio_archivo"
 "Ctrl+End"      = "cursor.fin_archivo"
+# Selección de texto de toda la vida (PLAN.md §4) — extiende en vez de
+# mover, sin colapsar lo ya seleccionado (a diferencia de la flecha
+# sola). Selección hasta inicio/fin de archivo (Shift+Ctrl+Home/End)
+# queda fuera de esta primera entrega.
+"Shift+Up"      = "cursor.seleccionar_arriba"
+"Shift+Down"    = "cursor.seleccionar_abajo"
+"Shift+Left"    = "cursor.seleccionar_izquierda"
+"Shift+Right"   = "cursor.seleccionar_derecha"
+"Shift+Home"    = "cursor.seleccionar_inicio_linea"
+"Shift+End"     = "cursor.seleccionar_fin_linea"
 "Backspace"     = "editor.borrar_atras"
 "Delete"        = "editor.borrar_adelante"
 "Enter"         = "editor.nueva_linea"
@@ -51,6 +61,22 @@
 # funciona sin importar dónde esté el foco: si el explorador está oculto,
 # lo muestra y le da el foco antes de activar el modo.
 "Ctrl+K J"      = "explorador.saltar"
+# "R" de "Registro" (logs) — ver stderr de la sesión LSP activa, filtrable.
+"Ctrl+K R"      = "lsp.ver_logs"
+# Crear/renombrar/borrar en el explorador (BACKLOG.md P0, "explorador de
+# solo lectura") — globales, mismo criterio que "explorador.saltar" más
+# arriba: si el explorador está oculto, lo muestran y le dan el foco
+# antes de abrir el prompt. "M" para renombrar no tiene mnemónico directo
+# (la "R" obvia ya es de "Registro"/logs) — elegida por ser una tecla
+# libre, no por significar algo. `Delete` para borrar reutiliza el mismo
+# atajo global que ya usa el editor para "borrar hacia adelante"
+# (`editor.borrar_adelante`) — no hace falta una entrada nueva acá: con
+# el explorador enfocado se reinterpreta como pedir confirmación en vez
+# de borrar directo (`procesar_comando`, no `ejecutar_comando_explorador`
+# — necesita estado al que ese dispatcher no llega).
+"Ctrl+K N"      = "explorador.nuevo_archivo"
+"Ctrl+K C"      = "explorador.nueva_carpeta"
+"Ctrl+K M"      = "explorador.renombrar"
 "Esc"           = "explorador.enfocar_editor"
 "Ctrl+Shift+P"  = "paleta.comandos"
 # Alternativa universal: en terminales sin el protocolo de teclado

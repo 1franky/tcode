@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -32,6 +32,14 @@ pub struct ConfigEditor {
     /// comportamiento de nadie que no lo prenda a propósito, ni acá ni en
     /// la sección "Editor" del panel de administración.
     pub modo_vim: bool,
+    /// Regla vertical / guía de columna (BACKLOG.md P1 #5): marca una
+    /// columna fija de la vista de código con un fondo distinto, para
+    /// usarla como guía de ancho de línea (80/100/120...). `None` =
+    /// apagada (default) — un solo campo en vez de un booleano +
+    /// número separados porque el propio valor ya expresa "prendida en
+    /// esta columna" o "apagada" sin un segundo estado que pueda quedar
+    /// inconsistente (p. ej. "prendida" pero con la columna en 0).
+    pub columna_regla: Option<usize>,
 }
 
 impl Default for ConfigEditor {
@@ -42,6 +50,7 @@ impl Default for ConfigEditor {
             ajuste_linea: false,
             numeros_de_linea: true,
             modo_vim: false,
+            columna_regla: None,
         }
     }
 }
@@ -80,18 +89,41 @@ impl Default for ConfigInterfaz {
     }
 }
 
-/// Comando + argumentos configurados a mano para el LSP de un lenguaje
-/// (PLAN.md §5.3: "Configurar comando, argumentos y variables de
-/// entorno") — sobreescribe lo que `tcode_lsp::comando_para` trae fijo
-/// para ese lenguaje (que puede ser nada, como todos salvo Python por
-/// ahora). Variables de entorno quedan fuera de esta pieza: por ahora
-/// solo comando + argumentos, que ya es lo que hace falta para apuntar
-/// a `rust-analyzer`/`gopls`/`clangd`/etc. sin recompilar.
+/// Comando + argumentos + variables de entorno configurados a mano para
+/// el LSP de un lenguaje (PLAN.md §5.3: "Configurar comando, argumentos y
+/// variables de entorno") — sobreescribe lo que `tcode_lsp::comando_para`
+/// trae fijo para ese lenguaje (que puede ser nada, como todos salvo
+/// Python por ahora). `env` sirve para casos reales como un LSP que
+/// necesita `JAVA_HOME` propio, o acotar el `PATH` a una versión
+/// distinta solo para esa sesión — `BTreeMap` en vez de `HashMap` para
+/// que el orden sea determinístico al mostrarlas (`ComandoLsp::
+/// como_linea`), no por necesitarlo en ningún otro lado.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct ComandoLsp {
     pub comando: String,
     pub argumentos: Vec<String>,
+    pub env: BTreeMap<String, String>,
+}
+
+impl ComandoLsp {
+    /// Representación como línea de texto editable — inversa de
+    /// `ConfigLenguajes::fijar_comando_desde_linea`, usada para
+    /// precargar el buffer de edición (`c` en "Lenguajes / LSP",
+    /// `crates/app/src/main.rs`) con el comando actual, variables de
+    /// entorno incluidas si tiene alguna. Sin variables de entorno da
+    /// exactamente lo mismo que antes de esta pieza (comando + args,
+    /// sin ningún `--` de más) — no cambia el comportamiento de nadie
+    /// que no las use.
+    pub fn como_linea(&self) -> String {
+        let mut partes: Vec<String> = self.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        if !partes.is_empty() {
+            partes.push("--".to_string());
+        }
+        partes.push(self.comando.clone());
+        partes.extend(self.argumentos.iter().cloned());
+        partes.join(" ")
+    }
 }
 
 /// Corresponde a la sección "Lenguajes / LSP" del panel de
@@ -128,15 +160,30 @@ impl ConfigLenguajes {
     }
 
     /// Guarda (o reemplaza) el comando personalizado de `id_lenguaje`.
-    /// `linea` es la línea completa tal como se escribió ("comando arg1
-    /// arg2 ..."), separada por espacios en blanco — el primer token es
-    /// el comando, el resto son argumentos. `None` si `linea` está vacía
-    /// (nada para guardar).
+    /// `linea` es la línea completa tal como se escribió, separada por
+    /// espacios en blanco. Sintaxis extendida para variables de entorno
+    /// (PLAN.md §5.3): si aparece un token `--` SOLO (no pegado a nada),
+    /// todo lo que está ANTES se interpreta como pares `VAR=valor` (un
+    /// token sin `=` se ignora sin romper el resto) y todo lo que sigue
+    /// es comando + argumentos como siempre. Sin ningún `--`, la línea
+    /// entera es comando + argumentos — igual que antes de esta sintaxis,
+    /// para no cambiarle el comportamiento a nadie que no use variables
+    /// de entorno. `None` si no queda ningún comando para guardar (línea
+    /// vacía, o solo variables de entorno sin comando después del `--`).
     pub fn fijar_comando_desde_linea(&mut self, id_lenguaje: &str, linea: &str) -> Option<()> {
-        let mut tokens = linea.split_whitespace();
-        let comando = tokens.next()?.to_string();
-        let argumentos = tokens.map(str::to_string).collect();
-        self.lsp_comando.insert(id_lenguaje.to_string(), ComandoLsp { comando, argumentos });
+        let tokens: Vec<&str> = linea.split_whitespace().collect();
+        let separador = tokens.iter().position(|t| *t == "--");
+        let (tokens_env, tokens_comando): (&[&str], &[&str]) = match separador {
+            Some(idx) => (&tokens[..idx], &tokens[idx + 1..]),
+            None => (&[], &tokens[..]),
+        };
+
+        let mut resto = tokens_comando.iter();
+        let comando = resto.next()?.to_string();
+        let argumentos = resto.map(|s| s.to_string()).collect();
+        let env = tokens_env.iter().filter_map(|t| t.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect();
+
+        self.lsp_comando.insert(id_lenguaje.to_string(), ComandoLsp { comando, argumentos, env });
         Some(())
     }
 
@@ -219,6 +266,7 @@ mod tests {
                 ajuste_linea: true,
                 numeros_de_linea: false,
                 modo_vim: true,
+                columna_regla: Some(80),
             },
             interfaz: ConfigInterfaz {
                 tema: "claro".into(),
@@ -234,7 +282,11 @@ mod tests {
                 lsp_deshabilitado: vec!["python".to_string()],
                 lsp_comando: HashMap::from([(
                     "rust".to_string(),
-                    ComandoLsp { comando: "rust-analyzer".to_string(), argumentos: vec![] },
+                    ComandoLsp {
+                        comando: "rust-analyzer".to_string(),
+                        argumentos: vec![],
+                        env: BTreeMap::from([("RUST_LOG".to_string(), "debug".to_string())]),
+                    },
                 )]),
             },
         };
@@ -277,6 +329,63 @@ mod tests {
         let comando = lenguajes.comando_configurado("rust").unwrap();
         assert_eq!(comando.comando, "rust-analyzer");
         assert_eq!(comando.argumentos, vec!["--stdio", "--log-file", "/tmp/ra.log"]);
+        assert!(comando.env.is_empty(), "sin '--' no debería haber ninguna variable de entorno");
+    }
+
+    #[test]
+    fn fijar_comando_desde_linea_con_variables_de_entorno_antes_del_separador() {
+        let mut lenguajes = ConfigLenguajes::default();
+        lenguajes.fijar_comando_desde_linea("java", "JAVA_HOME=/opt/java17 NODE_ENV=dev -- jdtls -data /tmp/ws").unwrap();
+
+        let comando = lenguajes.comando_configurado("java").unwrap();
+        assert_eq!(comando.comando, "jdtls");
+        assert_eq!(comando.argumentos, vec!["-data", "/tmp/ws"]);
+        assert_eq!(comando.env.len(), 2);
+        assert_eq!(comando.env.get("JAVA_HOME"), Some(&"/opt/java17".to_string()));
+        assert_eq!(comando.env.get("NODE_ENV"), Some(&"dev".to_string()));
+    }
+
+    #[test]
+    fn fijar_comando_desde_linea_ignora_tokens_sin_signo_igual_antes_del_separador() {
+        let mut lenguajes = ConfigLenguajes::default();
+        // "ESTOROTO" no tiene '=' — se ignora en vez de romper el resto.
+        lenguajes.fijar_comando_desde_linea("go", "ESTOROTO VALIDO=si -- gopls").unwrap();
+
+        let comando = lenguajes.comando_configurado("go").unwrap();
+        assert_eq!(comando.env.len(), 1);
+        assert_eq!(comando.env.get("VALIDO"), Some(&"si".to_string()));
+    }
+
+    #[test]
+    fn fijar_comando_desde_linea_solo_con_separador_y_sin_comando_no_guarda_nada() {
+        let mut lenguajes = ConfigLenguajes::default();
+        assert!(lenguajes.fijar_comando_desde_linea("go", "VAR=valor --").is_none());
+        assert!(lenguajes.comando_configurado("go").is_none());
+    }
+
+    #[test]
+    fn como_linea_sin_variables_de_entorno_es_igual_que_antes_de_esta_sintaxis() {
+        let comando = ComandoLsp { comando: "gopls".to_string(), argumentos: vec!["-vv".to_string()], env: BTreeMap::new() };
+        assert_eq!(comando.como_linea(), "gopls -vv");
+    }
+
+    #[test]
+    fn como_linea_con_variables_de_entorno_antepone_el_separador() {
+        let comando = ComandoLsp {
+            comando: "jdtls".to_string(),
+            argumentos: vec!["-data".to_string(), "/tmp/ws".to_string()],
+            env: BTreeMap::from([("JAVA_HOME".to_string(), "/opt/java17".to_string())]),
+        };
+        assert_eq!(comando.como_linea(), "JAVA_HOME=/opt/java17 -- jdtls -data /tmp/ws");
+    }
+
+    #[test]
+    fn como_linea_es_la_inversa_de_fijar_comando_desde_linea() {
+        let mut lenguajes = ConfigLenguajes::default();
+        let original = "JAVA_HOME=/opt/java17 NODE_ENV=dev -- jdtls -data /tmp/ws";
+        lenguajes.fijar_comando_desde_linea("java", original).unwrap();
+        let comando = lenguajes.comando_configurado("java").unwrap();
+        assert_eq!(comando.como_linea(), original);
     }
 
     #[test]

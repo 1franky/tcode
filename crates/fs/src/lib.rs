@@ -8,9 +8,11 @@
 //! archivos modificados fuera del editor).
 
 mod buscador;
+mod estado_prompt;
 mod explorador;
 mod nodo;
 
 pub use buscador::{listar_archivos_recursivo, BuscadorArchivos, ResultadoBusqueda};
+pub use estado_prompt::{EstadoConfirmarBorrado, EstadoPromptExplorador, ModoPromptExplorador};
 pub use explorador::{raiz_por_defecto, Explorador};
 pub use nodo::Nodo;
