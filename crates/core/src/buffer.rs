@@ -166,6 +166,18 @@ impl Buffer {
             .collect()
     }
 
+    /// Texto de UNA línea, sin su salto de línea (vacío si `linea` no
+    /// existe) — lo mismo que `lineas_texto()[linea]`, sin copiar el
+    /// archivo entero para leer una sola línea. Es lo que usa la vista de
+    /// código para pintar solo las líneas visibles.
+    pub fn linea_texto(&self, linea: usize) -> String {
+        let mut texto = self.linea_con_salto(linea);
+        if texto.ends_with('\n') {
+            texto.pop();
+        }
+        texto
+    }
+
     /// Offset en bytes (UTF-8) del inicio de una línea dentro del texto
     /// completo. Es lo que permite correlacionar los rangos de bytes que
     /// produce `tcode-syntax` (que trabaja sobre el archivo completo) con

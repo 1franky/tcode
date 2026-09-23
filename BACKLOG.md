@@ -51,41 +51,25 @@ repetidas lento) se cerró, ver "Hecho recientemente".
 
 ## P1 — Gaps reales de alcance acotado
 
-### 14. Rendimiento con archivos de miles de líneas al EDITAR
+### 14. Rendimiento con archivos grandes: lo que queda
 
-Lo que quedó después del arreglo de pegado (PR #89). Medido el
-2026-09-23 en tmux (160x50, release) con 10.000 líneas: pegar, moverse
-y saltar de punta a punta ya es instantáneo (pegar 10k líneas: 0,05 s
-en `.txt`, 0,17 s en `.rs`, 0,47 s en `.py` con pyright; 1000 flechas
-seguidas: < 0,1 s), pero la latencia de UNA tecla que edita crece con
-el tamaño del archivo:
+Lo grueso se resolvió (ver "Hecho recientemente": resaltado incremental
+y dibujar solo las líneas visibles). Medido por dentro del proceso con
+10.000 líneas, un frame al tipear pasó de ~45 ms a ~4-5 ms. Lo que
+sigue siendo O(archivo) por frame, todo chico hoy:
 
-| 10.000 líneas            | flecha | tipear 1 carácter |
-|--------------------------|--------|-------------------|
-| `.txt` (sin resaltado)   | ~19 ms | ~20 ms            |
-| `.rs`                    | ~17 ms | ~69 ms            |
-| `.py` real con pyright   | ~19 ms | ~64 ms            |
-
-(Con 500 líneas no se nota.) Tres costos que hoy son O(archivo) por
-frame o por edición, de mayor a menor impacto:
-
-- **tree-sitter no incremental**: cada edición re-parsea el archivo
-  entero (`tcode_syntax::Resaltador`; la cache de PR #89 solo evita
-  re-parsear cuando el texto no cambió). La solución de fondo es
-  guardar el `Tree` y usar `tree.edit()` + parseo incremental, y
-  resaltar solo el rango visible.
-- **`Buffer::lineas_texto()` y las filas visuales** se recalculan sobre
-  todo el archivo en cada frame (`vista_codigo::dibujar`) — explica el
-  piso de ~20 ms incluso en `.txt`. Debería trabajar solo con las
-  líneas visibles leyendo del `Rope`.
 - **LSP con sync completo**: `didChange` manda el texto entero una vez
-  por frame con cambios (`lsp.rs`, `sincronizar_contenido`); la
-  sincronización incremental por rangos lo reduciría a lo editado.
-
-Ojo con un caso patológico: un archivo con MUCHOS errores de sintaxis
-para su lenguaje (p. ej. código Rust guardado como `.py`) llegó a
-~400 ms por tecla — la recuperación de errores de tree-sitter es cara;
-el parseo incremental también lo mitiga.
+  por frame con cambios (`lsp.rs`, `sincronizar_contenido`) — ~1,5 ms
+  con 10.000 líneas de Python y pyright. La sincronización incremental
+  por rangos lo reduciría a lo editado.
+- **`Buffer::a_texto()` por frame** para el resaltador (copia + compara
+  el texto para detectar la edición, ~0,3 ms con 10.000 líneas). Se
+  evitaría si el `Buffer` avisara las ediciones en vez de deducirlas.
+- **Ajuste de línea activo**: sigue recorriendo el archivo entero cada
+  frame para ubicar el scroll en filas visuales (sin ajuste ya no).
+- Un archivo con MUCHOS errores de sintaxis para su lenguaje (p. ej.
+  código Rust guardado como `.py`) sigue siendo caro: la recuperación
+  de errores de tree-sitter lo es incluso en modo incremental.
 
 Nota aparte (no es de tcode, no hace falta arreglarlo): en una ráfaga
 artificial de cientos de secuencias de escape de una sola vez (`tmux
@@ -213,6 +197,23 @@ formatos campo por campo.
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-23 — rendimiento al editar archivos grandes** (P1 #14, primera
+parte). Medido por dentro del proceso con 10.000 líneas, frame al tipear:
+`.rs` 45,5 → 4,4 ms, `.py` 39,9 → 5,3 ms; al moverse, ~5-6 → ~2,5 ms.
+- **Resaltado incremental**: `tcode_syntax::Resaltador` deja
+  `tree-sitter-highlight` (que siempre parseaba el archivo entero) por
+  un motor propio sobre `tree-sitter`: guarda el árbol de cada documento,
+  deduce la edición por prefijo/sufijo común, re-parsea de forma
+  incremental y consulta solo el rango visible
+  (`Resaltador::resaltar_documento`). Mismo algoritmo de resolución de
+  capturas, verificado con un test que compara token por token contra
+  `tree-sitter-highlight` en los 16 lenguajes, otro de 360 ediciones
+  pseudoaleatorias contra parsear de cero, y capturas de pantalla con
+  color idénticas a v0.7.0 (con y sin ajuste de línea).
+- **Solo las líneas visibles**: sin ajuste de línea, `vista_codigo` lee
+  del buffer únicamente las filas en pantalla (`Buffer::linea_texto`)
+  en vez de copiar todas las líneas en cada frame.
 
 **2026-09-23 — rendimiento al pegar y con teclas repetidas** (PR #89)
 — era el P0 reportado usando el editor de verdad: pegar ~500 líneas

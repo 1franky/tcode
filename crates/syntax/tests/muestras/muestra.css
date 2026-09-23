@@ -1,0 +1,12 @@
+/* comentario */
+@import url("base.css");
+:root { --color: #ff0000; }
+body, .clase > p:first-child::before {
+  margin: 0 auto;
+  color: var(--color);
+  font-size: 1.5rem !important;
+  content: "x";
+}
+@media (max-width: 600px) {
+  #id:hover { transform: translate(10px, -5%) rotate(45deg); }
+}
