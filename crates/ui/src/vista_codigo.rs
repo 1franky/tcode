@@ -417,8 +417,13 @@ fn spans_de_linea<'a>(
 ) -> Vec<Span<'a>> {
     let fin_byte_linea = inicio_byte_linea + texto_linea.len();
 
+    // Los tokens vienen en orden de aparición y sin solaparse (ver
+    // `tcode_syntax::Token`): búsqueda binaria del primero que llega a
+    // esta línea en vez de recorrer los del archivo completo por cada
+    // fila visible.
+    let primero = tokens.partition_point(|t| t.fin <= inicio_byte_linea);
     let tokens_en_linea: Vec<&Token> =
-        tokens.iter().filter(|t| t.fin > inicio_byte_linea && t.inicio < fin_byte_linea).collect();
+        tokens[primero..].iter().take_while(|t| t.inicio < fin_byte_linea).collect();
 
     // Rangos de coincidencia recortados a offsets LOCALES (relativos al
     // inicio de esta línea), con si cada una es la coincidencia actual.
