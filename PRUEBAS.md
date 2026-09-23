@@ -190,6 +190,25 @@ de columnas completas que sí entran, siguiendo a la selección.
 - [ ] El encabezado (fila congelada) se desplaza junto con el cuerpo — nunca queda desalineado con las columnas que se ven abajo.
 - [ ] Editar una celda de una columna fuera de la ventana original: el cursor de edición aparece en la posición correcta de pantalla tras el scroll (no en la posición "vieja" antes de desplazarse).
 
+### Ordenar, filtrar, insertar/eliminar y ancho de columna (BACKLOG.md P2 #9)
+
+Lo que había quedado fuera de M3. Probar con un CSV y un TSV que tengan
+acentos y alguna celda citada con el delimitador adentro (p. ej.
+`"Ciudad, de México"`), y revisar el archivo con `cat` después de
+guardar.
+
+- [ ] `Ctrl+K O` sobre una columna de texto: ordena ascendente sin distinguir mayúsculas ni tildes ("Ángel" antes que "beto"; "ñ" después de "n"); el encabezado no se mueve. Repetir `Ctrl+K O`: pasa a descendente, y de vuelta.
+- [ ] `Ctrl+K O` sobre una columna numérica: ordena como número (`9` antes que `10`, negativos y decimales incluidos), no como texto. Las celdas vacías quedan al final en los dos sentidos.
+- [ ] Tras ordenar, un solo `Ctrl+Z` devuelve el orden original completo. Guardar y `cat`: las celdas citadas siguen citadas igual que antes (ordenar no reescribe las filas, solo las mueve).
+- [ ] `Ctrl+K /`, escribir un texto y `Enter`: quedan solo las filas cuya celda en la columna seleccionada lo contiene (sin distinguir mayúsculas ni tildes: "mexico" encuentra "México"); el encabezado sigue visible y una barra al pie muestra el filtro y "N de M filas".
+- [ ] Con un filtro activo, editar una celda (`Enter`/`F2`) y guardar: el cambio quedó en la fila correcta del archivo (no en la que ocupa esa misma posición sin filtro).
+- [ ] Quitar el filtro con `Esc` (con la tabla enfocada), con `Ctrl+K /` + `Enter` con el texto vacío, y con "CSV: Quitar filtro" desde la paleta: vuelven todas las filas y la selección sigue sobre la misma fila del archivo. `Esc` con el prompt abierto solo lo cierra, sin tocar el filtro vigente.
+- [ ] `Ctrl+K ↓` / `Ctrl+K ↑`: inserta una fila vacía debajo/arriba de la seleccionada (y la selecciona al insertar debajo). Con un filtro activo, primero se quita el filtro. Un solo `Ctrl+Z` la quita.
+- [ ] `Ctrl+K →` / `Ctrl+K ←`: inserta una columna vacía a la derecha/izquierda en todas las filas. Guardar y `cat`: las celdas con comas/comillas siguen correctamente citadas (y en el TSV, una coma no provoca comillas). Un solo `Ctrl+Z` lo revierte.
+- [ ] `Ctrl+K E` elimina la fila seleccionada y `Ctrl+K Shift+E` la columna seleccionada; cada una se deshace con un solo `Ctrl+Z`. Con una sola columna, `Ctrl+K Shift+E` no hace nada.
+- [ ] `Ctrl+K Shift+→` / `Ctrl+K Shift+←`: la columna seleccionada se ensancha/angosta de a 2 (más allá del máximo automático de 30, para leer una celda larga entera); `Ctrl+K W` la devuelve al ancho automático. Nada de esto marca el archivo como modificado.
+- [ ] Probar un archivo cuya última línea NO termina en salto de línea: ordenar/insertar al final/eliminar la última fila no pegan dos filas en una línea, y el archivo sigue sin `\n` final.
+
 ## M3 — Multi-cursor (`Ctrl+D` / `Ctrl+Shift+L` / `Ctrl+Alt+↑↓`)
 
 - [ ] Poner el cursor sobre una palabra y `Ctrl+D`: selecciona esa palabra (sin agregar un cursor nuevo todavía).
@@ -608,6 +627,64 @@ comando = "./malicioso.sh"
 - La búsqueda parte del archivo abierto al arrancar (o del cwd) y queda fija toda la sesión: abrir después un archivo de otro repo no cambia la config.
 - Un proyecto no puede "apagar" algo que la global fija como opcional (p. ej. la regla vertical: TOML no tiene `null`), ni volver a habilitar un LSP apagado en la global.
 - Con `interfaz.tema` pisado por el proyecto, elegir otro tema en el selector (`Ctrl+K Ctrl+T`) lo guarda en la global pero el que se ve sigue siendo el del proyecto.
+
+## Guardado automático (`Ctrl+,` → Editor, BACKLOG.md P2 #4)
+
+Tres modos: **Nunca** (por defecto), **Al perder foco** y **Cada N
+segundos**. Solo toca archivos con nombre y con cambios sin guardar.
+
+- [ ] Sin tocar la config (modo "Nunca"): editar un archivo, esperar un minuto, cambiar de panel, abrir el explorador (`Ctrl+B`): el archivo en disco NO cambia y la statusbar sigue mostrando `*`.
+- [ ] `Ctrl+,` → Editor: aparecen "Guardado automático" (Nunca) y "Guardado automático: segundos" (30 s); `←`/`→`/`Enter` recorren los tres modos (dando la vuelta) y los segundos van de a 5, entre 5 y 600. Los cambios quedan en `config.toml`.
+- [ ] Modo "Cada N segundos" con 5 s: editar y esperar — a los ~5 s el `*` desaparece y el archivo en disco tiene el cambio. Seguir tipeando sin pausa: se guarda cada ~5 s igual.
+- [ ] Modo "Al perder foco": editar y esperar — no se guarda solo. Pasar al explorador (`Ctrl+B`), dividir (`Ctrl+\`) o cambiar de panel (`Ctrl+1`/`Ctrl+2`): se guarda en ese momento.
+- [ ] Modo "Al perder foco": editar y abrir otro archivo en el mismo panel (`Ctrl+P` o `Enter` en el explorador): el archivo anterior queda guardado en disco antes de ser reemplazado. Abrir solo la paleta/buscador (sin confirmar) NO guarda.
+- [ ] Modo "Al perder foco": editar y pasar a otra ventana/pestaña de la terminal (o a otro panel de tmux con `set -g focus-events on`): se guarda. Si la terminal no soporta eventos de foco, este caso no pasa pero los demás sí.
+- [ ] Un "[Sin nombre]" (buffer nuevo, p. ej. el segundo panel tras `Ctrl+\`) con texto nunca se guarda solo ni abre "Guardar como" por su cuenta.
+- [ ] Guardado que falla (p. ej. `chmod 444` al archivo antes de editar): la statusbar muestra `ERROR: no se pudo guardar: ...` junto a la ruta, el `*` sigue ahí y el editor responde normal. Al devolver el permiso, el siguiente guardado (automático o `Ctrl+S`) funciona y el error desaparece.
+- [ ] Con "Al perder foco" y un guardado que falla, intentar abrir otro archivo en ese panel: NO se abre (no se pierden los cambios) y queda el error en la statusbar.
+- [ ] En reposo con "Cada N segundos" prendido, `tcode` no consume CPU notable (`top`/`ps`), y pegar ~500 líneas sigue siendo instantáneo.
+
+## Logs del LSP en vivo (`Ctrl+K R`, BACKLOG.md P1 #2)
+
+Para forzar líneas nuevas, un comando LSP que envuelva al real y escriba
+a stderr cada segundo (`Ctrl+,` → Lenguajes / LSP → Python → `c`), p. ej.
+un script con `( while true; do echo "latido $i" >&2; i=$((i+1)); sleep 1; done ) &`
+seguido de `pyright-langserver --stdio`.
+
+- [ ] Abrir un `.py` y `Ctrl+K R`: las líneas nuevas aparecen arriba solas, sin cerrar y reabrir; el campo dice "en vivo".
+- [ ] Escribir un filtro mientras llegan líneas: el filtro no se borra ni se pierden teclas; solo aparecen las líneas nuevas que coinciden.
+- [ ] `↓`/`AvPág` resaltan una fila y recorren hacia lo más viejo; mientras tanto la fila resaltada se queda en la misma línea de log aunque lleguen nuevas (el texto dice "↑ para volver a lo nuevo").
+- [ ] `↑` hasta pasar la primera fila vuelve a "en vivo" (sin fila resaltada, lo nuevo entra arriba).
+- [ ] Con el servidor callado (un LSP normal sin la envoltura), el visor abierto no redibuja ni consume CPU en reposo.
+- [ ] `Esc` cierra; reabrir con `Ctrl+K R` arranca otra vez en "en vivo" y sin filtro.
+
+## Plegado de bloques (code folding)
+
+Plegar oculta las líneas de un bloque (cuerpo de función, clase, `impl`,
+`if`/`for`, objeto/array, comentario de bloque...) y deja visible su
+primera línea con un marcador ` ... ` al final; la línea de cierre (`}`,
+`end`, `</div>`) queda visible debajo, como en VSCode. Rangos por
+tree-sitter para todos los lenguajes con gramática salvo Markdown (sin
+plegado a propósito); por indentación para el resto (texto plano, YAML,
+TOML...). En terminales sin protocolo Kitty `Ctrl+Shift+[`/`]` y `Ctrl+K
+Ctrl+0` pueden no llegar: usar `Ctrl+K [`, `Ctrl+K ]` y `Ctrl+K 0`.
+
+- [ ] En un `.rs` (p. ej. una copia de `crates/core/src/editor.rs`), cursor dentro de una función: `Ctrl+K [` pliega el bloque más interno que contiene al cursor; la cabecera muestra ` ... ` y los números de línea saltan (p. ej. de 10 a 25).
+- [ ] Repetir `Ctrl+K [` pliega el bloque siguiente hacia afuera (p. ej. el `if` y después la función entera).
+- [ ] `Ctrl+K ]` sobre la cabecera la despliega; los bloques de adentro que estaban plegados siguen plegados.
+- [ ] `Ctrl+K 0` pliega todo el archivo; `Ctrl+K Ctrl+J` despliega todo. Con todo plegado, moverse y hacer scroll por un archivo de miles de líneas sigue siendo instantáneo.
+- [ ] `↓` desde la cabecera plegada salta a la primera línea después del bloque; `↑` desde ahí vuelve a la cabecera. `→` al final de la cabecera va al principio de la línea siguiente al bloque; `←` al principio de esa línea vuelve al final de la cabecera.
+- [ ] `Shift+↓` desde la cabecera selecciona el bloque plegado entero; `Backspace` lo borra y el pliegue desaparece (no queda plegando otras líneas).
+- [ ] `Enter` en una línea de más arriba (o borrar una línea de más arriba): el bloque plegado se corre con su contenido y sigue plegado sobre las mismas líneas de código.
+- [ ] Escribir en la cabecera plegada (p. ej. renombrar la función) no la despliega; `Enter` en el medio o al final de la cabecera sí.
+- [ ] `Ctrl+Z` después de editar cerca de un pliegue: el pliegue vuelve a su lugar (o se despliega si se tocó), nunca oculta líneas equivocadas.
+- [ ] `Ctrl+F` buscando un texto que está dentro de un bloque plegado: al saltar a esa coincidencia el bloque se despliega.
+- [ ] En Python (`.py`): plegar un `def`/`class` oculta el cuerpo entero desde la línea del `def`; en JavaScript/TypeScript: funciones, objetos, arrays y comentarios `/* */`.
+- [ ] Con ajuste de línea activo (`Ctrl+,` → Editor), plegar y desplegar sigue funcionando; el marcador va en la última fila de una cabecera partida en varias filas.
+- [ ] En un `.yaml` o `.txt` indentado: `Ctrl+K [` pliega por indentación.
+- [ ] En un `.md`, `Ctrl+K [` no hace nada (Markdown no tiene plegado).
+- [ ] La paleta (`Ctrl+Shift+P`) lista "Plegado: Plegar el bloque del cursor", "Desplegar...", "Plegar todo" y "Desplegar todo", y funcionan igual que los atajos.
+- [ ] Dos paneles (`Ctrl+\`) con archivos distintos: plegar en uno no afecta al otro.
 
 ---
 

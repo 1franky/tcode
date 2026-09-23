@@ -36,6 +36,7 @@ use tcode_syntax::Resaltador;
 pub use paleta::Paleta;
 pub use paneles::{DireccionSplit, Layout, ModoCsv, ModoMarkdown, PanelEditor};
 pub use panel_admin::FilaLenguajeLsp;
+pub use vista_csv::ancho_columna as ancho_columna_csv;
 
 /// Ancho fijo (en columnas) del panel lateral del explorador cuando está
 /// visible.

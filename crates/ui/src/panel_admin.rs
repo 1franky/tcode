@@ -35,6 +35,9 @@ pub struct FilaLenguajeLsp {
     /// §5.3: "Configurar comando, argumentos...") en vez del que trae
     /// `tcode_lsp::comando_para` por defecto.
     pub personalizado: bool,
+    /// "Formatear al guardar" prendido para este lenguaje (`f`,
+    /// BACKLOG.md P2 #5) — `ConfigLenguajes::formatear_al_guardar`.
+    pub formatear_al_guardar: bool,
     /// "Conectado" / "Iniciando…" / "Inactivo" — ya resuelto a texto por
     /// `app`, que es quien tiene acceso al estado real de la sesión LSP.
     pub estado: String,
@@ -372,11 +375,13 @@ fn filas_lenguajes_lsp<'a>(
             let estilo_fila = if seleccionada { estilo_base.bg(paleta.linea_actual) } else { estilo_base };
             let habilitado = if fila.habilitado { "Sí" } else { "No" };
             let marca_proyecto = if fila.deshabilitado_por_proyecto { " [proyecto: No]" } else { "" };
+            let formato = if fila.formatear_al_guardar { "Sí" } else { "No" };
 
             if let (true, Some(buffer)) = (seleccionada, panel.editando_comando_lsp()) {
                 let spans = vec![
                     Span::styled(format!("{:<14}", fila.nombre), estilo_fila),
                     Span::styled(format!("Habilitado: {habilitado:<5}"), estilo_fila),
+                    Span::styled(format!("Formato: {formato:<4}"), estilo_fila),
                     Span::styled("  ", estilo_fila),
                     Span::styled(format!("{buffer}▏"), estilo_fila),
                     Span::styled(" (Enter guarda · Esc cancela)", estilo_fila),
@@ -397,6 +402,7 @@ fn filas_lenguajes_lsp<'a>(
             let spans = vec![
                 Span::styled(format!("{:<14}", fila.nombre), estilo_fila),
                 Span::styled(format!("Habilitado: {habilitado:<5}"), estilo_fila),
+                Span::styled(format!("Formato: {formato:<4}"), estilo_fila),
                 Span::styled(marca_proyecto, estilo_fila),
                 Span::styled(format!("  {comando}"), estilo_comando),
                 Span::styled(personalizado, estilo_comando),
@@ -478,7 +484,7 @@ fn dibujar_pie(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, paleta: 
             "↑↓ moverse · Enter capturar nuevo atajo · Backspace restablecer · Tab secciones · Ctrl+F buscar · Esc volver"
         }
         FocoPanelAdmin::Central if panel.seccion_actual() == Seccion::Lenguajes => {
-            "↑↓ moverse · Enter/←→ habilitar · c editar comando · Backspace quitar override · Tab secciones · Esc volver"
+            "↑↓ moverse · Enter/←→ habilitar · f formatear al guardar · c editar comando · Backspace quitar override · Tab secciones · Esc volver"
         }
         FocoPanelAdmin::Central => {
             "↑↓ moverse · Enter/←→ cambiar valor · Tab volver a secciones · Ctrl+F buscar · Esc volver"

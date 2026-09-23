@@ -11,14 +11,17 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::Result;
 use lsp_types::{
-    ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, InitializedParams,
-    TextDocumentContentChangeEvent, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
+    ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingClientCapabilities,
+    DocumentFormattingParams, FormattingOptions, InitializeParams, InitializedParams, TextDocumentClientCapabilities,
+    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
 };
+use serde_json::json;
 use tcode_config::Config;
-use tcode_lsp::{Cliente, MensajeEntrante};
+use tcode_lsp::{Cliente, EdicionTexto, MensajeEntrante};
 use tcode_syntax::Lenguaje;
 use tcode_ui::Layout as PanelLayout;
 
@@ -44,7 +47,22 @@ struct SesionLsp {
     fase: Fase,
     uri: Uri,
     ultimo_texto_enviado: String,
+    /// Si el servidor anunció `documentFormattingProvider` al responder
+    /// `initialize` (BACKLOG.md P2 #5) — `false` hasta entonces, y para
+    /// siempre en servidores que no formatean (pyright). Se mira ANTES de
+    /// mandar `textDocument/formatting`, para no esperar en vano una
+    /// respuesta que va a ser un error "método no soportado".
+    soporta_formateo: bool,
 }
+
+/// Cuánto se espera, como mucho, la respuesta a `textDocument/formatting`
+/// antes de guardar igual sin formatear (BACKLOG.md P2 #5: formatear
+/// nunca puede bloquear el guardado). Mientras tanto la UI no se redibuja
+/// (ver `EstadoLsp::pedir_formateo`), así que tiene que ser corto; 2 s
+/// alcanza de sobra para rust-analyzer + rustfmt (unos 100-300 ms en un
+/// archivo normal, medido en tmux) incluso con el primer `rustfmt` en
+/// frío.
+const TIMEOUT_FORMATEO: Duration = Duration::from_secs(2);
 
 /// Comando + argumentos + variables de entorno a usar para lanzar el LSP
 /// de `lenguaje` (PLAN.md §5.3): lo que configuró el usuario a mano en
@@ -120,9 +138,21 @@ impl EstadoLsp {
         let Ok(uri) = uri_de_archivo(Path::new(ruta)) else { return };
         let Ok(mut cliente) = Cliente::lanzar(&comando, &args_ref, &env_ref).await else { return };
 
+        // Lo único que se declara explícitamente es `formatting` (sin
+        // registro dinámico: `tcode` no responde `client/
+        // registerCapability`), para que un servidor que decide qué
+        // anunciar según lo que soporta el cliente anuncie
+        // `documentFormattingProvider` de forma estática.
+        let capabilities = ClientCapabilities {
+            text_document: Some(TextDocumentClientCapabilities {
+                formatting: Some(DocumentFormattingClientCapabilities { dynamic_registration: Some(false) }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
         let params = InitializeParams {
             process_id: Some(std::process::id()),
-            capabilities: ClientCapabilities::default(),
+            capabilities,
             ..Default::default()
         };
         let Ok(id_initialize) = cliente.peticion("initialize", params).await else { return };
@@ -134,6 +164,7 @@ impl EstadoLsp {
             fase: Fase::Iniciando { id_initialize },
             uri,
             ultimo_texto_enviado: contenido.to_string(),
+            soporta_formateo: false,
         });
     }
 
@@ -157,7 +188,8 @@ impl EstadoLsp {
         match mensaje {
             MensajeEntrante::Respuesta { id, resultado } => {
                 if let Fase::Iniciando { id_initialize } = sesion.fase {
-                    if id == id_initialize && resultado.is_ok() {
+                    if let (true, Ok(resultado)) = (id == id_initialize, &resultado) {
+                        sesion.soporta_formateo = tcode_lsp::soporta_formateo(resultado);
                         let _ = sesion.cliente.notificacion("initialized", InitializedParams {}).await;
                         let _ = sesion
                             .cliente
@@ -219,6 +251,82 @@ impl EstadoLsp {
         }
     }
 
+    /// Pide `textDocument/formatting` para el archivo `ruta` (cuyo texto
+    /// actual es `texto`) y espera la respuesta, como mucho
+    /// [`TIMEOUT_FORMATEO`] — lo usa el guardado con "formatear al
+    /// guardar" prendido (`guardar_archivo_activo`, `app/main.rs`,
+    /// BACKLOG.md P2 #5). Devuelve las ediciones ya traducidas a offsets
+    /// de bytes sobre `texto`, o el motivo (texto corto, para la barra de
+    /// estado) por el que no se formateó: no hay sesión, todavía está
+    /// iniciando, el servidor no anuncia `documentFormattingProvider`,
+    /// la sesión está abierta sobre otro archivo, respondió con error, o
+    /// no respondió a tiempo. Nunca falla de otra forma: quien llama
+    /// guarda igual en cualquiera de esos casos.
+    ///
+    /// Quien llama tiene que haber sincronizado el texto antes
+    /// (`sincronizar_lsp`): las posiciones de la respuesta se refieren al
+    /// documento que tiene el SERVIDOR, así que si no coincide con `texto`
+    /// no se pide nada (aplicarlas sobre otro texto rompería el archivo).
+    ///
+    /// La espera es un bucle propio sobre el mismo canal que lee el
+    /// `tokio::select!` de `ejecutar`, no un segundo lector: la respuesta
+    /// se reconoce por su id, y cualquier otro mensaje que llegue
+    /// mientras tanto (diagnósticos, otra respuesta) se procesa ahí mismo
+    /// con `procesar_mensaje`, igual que lo habría hecho el bucle
+    /// principal — no se pierde nada. Si se vence el tiempo se manda
+    /// `$/cancelRequest`; si la respuesta llega igual más tarde, el bucle
+    /// principal la recibe con un id que nadie espera y la ignora.
+    pub async fn pedir_formateo(
+        &mut self,
+        ruta: &str,
+        texto: &str,
+        opciones: FormattingOptions,
+        layout: &mut PanelLayout,
+    ) -> std::result::Result<Vec<EdicionTexto>, &'static str> {
+        let Some(sesion) = &mut self.sesion else { return Err("sin LSP activo") };
+        let Fase::Listo { .. } = sesion.fase else { return Err("el LSP todavía está iniciando") };
+        if !sesion.soporta_formateo {
+            return Err("el LSP no soporta formatear");
+        }
+        let Ok(uri) = uri_de_archivo(Path::new(ruta)) else { return Err("sin LSP activo") };
+        if uri.as_str() != sesion.uri.as_str() {
+            return Err("el LSP está abierto sobre otro archivo");
+        }
+        if sesion.ultimo_texto_enviado != texto {
+            return Err("el LSP no tiene el texto al día");
+        }
+
+        let params = DocumentFormattingParams {
+            text_document: TextDocumentIdentifier { uri },
+            options: opciones,
+            work_done_progress_params: Default::default(),
+        };
+        let Ok(id_formateo) = sesion.cliente.peticion("textDocument/formatting", params).await else {
+            return Err("no se pudo hablar con el LSP");
+        };
+
+        let limite = tokio::time::Instant::now() + TIMEOUT_FORMATEO;
+        loop {
+            let Some(sesion) = &mut self.sesion else { return Err("sin LSP activo") };
+            match tokio::time::timeout_at(limite, sesion.cliente.receptor.recv()).await {
+                Err(_) => {
+                    let _ = sesion.cliente.notificacion("$/cancelRequest", json!({ "id": id_formateo })).await;
+                    return Err("el LSP tardó demasiado en formatear");
+                }
+                Ok(None) => return Err("el LSP se cerró"),
+                Ok(Some(MensajeEntrante::Respuesta { id, resultado })) if id == id_formateo => {
+                    return match resultado {
+                        Ok(valor) => {
+                            tcode_lsp::parsear_ediciones_formateo(&valor, texto).map_err(|_| "respuesta de formato inválida")
+                        }
+                        Err(_) => Err("el LSP devolvió un error al formatear"),
+                    };
+                }
+                Ok(Some(otro)) => self.procesar_mensaje(otro, layout).await,
+            }
+        }
+    }
+
     /// El lenguaje de la sesión LSP activa, si hay una — usado por la
     /// sección "Lenguajes / LSP" del panel de administración para saber
     /// a cuál de sus filas corresponde el estado en vivo (PLAN.md §5.3:
@@ -230,9 +338,12 @@ impl EstadoLsp {
     /// Líneas de stderr acumuladas por la sesión activa, de la más
     /// vieja a la más nueva — vacío si no hay sesión, o si la hay pero
     /// nunca escribió nada (PLAN.md §5.3, "ver logs"; `Ctrl+K R`,
-    /// `crates/app/src/main.rs`).
-    pub fn logs(&self) -> Vec<String> {
-        self.sesion.as_ref().map(|s| s.cliente.logs()).unwrap_or_default()
+    /// `crates/app/src/main.rs`), más el total de líneas recibidas por la
+    /// sesión (`Cliente::logs_con_total`) — lo que usa el visor en vivo
+    /// (`EstadoLogsLsp::actualizar`, BACKLOG.md P1 #2) para saber cuántas
+    /// son nuevas. `(vacío, 0)` sin sesión.
+    pub fn logs_con_total(&self) -> (Vec<String>, u64) {
+        self.sesion.as_ref().map(|s| s.cliente.logs_con_total()).unwrap_or_default()
     }
 
     /// Texto legible en español del estado de la sesión activa —

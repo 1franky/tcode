@@ -15,7 +15,8 @@ mod tema;
 pub use color::{analizar_color_hex, formatear_color_hex, hsl_a_rgb, rgb_a_hsl};
 pub use config::{
     cargar, directorio_config, directorio_temas_usuario, guardar, guardar_en, recargar, ruta_config, ComandoLsp,
-    Config, ConfigEditor, ConfigInterfaz, ConfigLenguajes,
+    Config, ConfigEditor, ConfigInterfaz, ConfigLenguajes, GuardadoAutomatico,
+    SEGUNDOS_GUARDADO_AUTOMATICO_POR_DEFECTO,
 };
 pub use editor_tema::{
     campos_color, CampoColor, ComponenteHsl, EstadoEditorTema, ModoEdicion, PALETA_PREDEFINIDA,

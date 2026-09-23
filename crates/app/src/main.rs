@@ -25,31 +25,34 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{
-    DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange, Event, EventStream, KeyCode,
+    KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use lsp_types::FormattingOptions;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use tokio::time::MissedTickBehavior;
 use tokio_stream::StreamExt;
 
 use tcode_commands::EstadoPaleta;
 use tcode_config::{
-    CampoEditor, CampoTemas, ComandoLsp, Config, ConfigProyecto, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema,
-    FocoPanelAdmin, ModoEdicion, ResultadoDuplicarTema, Seccion,
+    CampoEditor, CampoTemas, ComandoLsp, Config, ConfigEditor, ConfigProyecto, EstadoEditorTema, EstadoPanelAdmin,
+    EstadoSelectorTema, FocoPanelAdmin, GuardadoAutomatico, ModoEdicion, ResultadoDuplicarTema, Seccion,
 };
 use tcode_core::{
     analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo,
-    EstadoVim, Modo,
+    EstadoVim, Modo, Pliegue,
 };
 use tcode_fs::{BuscadorArchivos, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador, ModoPromptExplorador};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_lsp::EstadoLogsLsp;
 use tcode_syntax::{Lenguaje, Resaltador};
-use tcode_ui::{DireccionSplit, FilaLenguajeLsp, Layout as PanelLayout, ModoCsv, Paleta};
+use tcode_ui::{ancho_columna_csv, DireccionSplit, FilaLenguajeLsp, Layout as PanelLayout, ModoCsv, Paleta, PanelEditor};
 
 type Backend = CrosstermBackend<Stdout>;
 
@@ -253,6 +256,13 @@ fn iniciar_terminal() -> Result<(Terminal<Backend>, bool)> {
     // una tecla por carácter (ver `pegar_texto`).
     execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
 
+    // Eventos de foco de la terminal (`Event::FocusLost`), para el
+    // guardado automático "al perder foco" (BACKLOG.md P2 #4) —
+    // best-effort: una terminal que no los soporta ignora la secuencia
+    // y ese modo sigue andando igual con los cambios de panel/archivo.
+    // En tmux hace falta `set -g focus-events on` para que los reenvíe.
+    let _ = execute!(stdout, EnableFocusChange);
+
     let protocolo_kitty = supports_keyboard_enhancement().unwrap_or(false);
     if protocolo_kitty {
         execute!(stdout, PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES))?;
@@ -265,6 +275,7 @@ fn finalizar_terminal(terminal: &mut Terminal<Backend>, protocolo_kitty: bool) -
     if protocolo_kitty {
         execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     }
+    let _ = execute!(terminal.backend_mut(), DisableFocusChange);
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), DisableBracketedPaste, LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -337,6 +348,27 @@ struct EstadoApp {
     /// explorador enfocado) — separada de `prompt_explorador` porque no
     /// tiene ningún campo de texto, solo `y`/cualquier otra tecla.
     confirmar_borrado: EstadoConfirmarBorrado,
+    /// Cuándo corrió por última vez el guardado automático "cada N
+    /// segundos" (BACKLOG.md P2 #4) — se reinicia también al cambiar ese
+    /// modo o el número de segundos desde el panel de administración, para
+    /// que el primer guardado llegue N segundos DESPUÉS de prenderlo y no
+    /// de golpe en el próximo tick.
+    ultimo_autoguardado: Instant,
+    /// `archivo.guardar` pedido sobre un archivo con ruta, pendiente de
+    /// ejecutarse al principio de la próxima vuelta del bucle de
+    /// `ejecutar` (`guardar_archivo_activo`). No se guarda ahí mismo
+    /// porque `procesar_comando` es síncrona y guardar puede tener que
+    /// esperar la respuesta del LSP a `textDocument/formatting`
+    /// ("formatear al guardar", BACKLOG.md P2 #5); se ejecuta antes de
+    /// procesar cualquier otra tecla, así que el orden de los eventos no
+    /// cambia (`Ctrl+S` seguido de `Ctrl+Q` en la misma ráfaga guarda
+    /// primero).
+    guardado_pendiente: bool,
+    /// Resaltador de sintaxis (árbol de tree-sitter incremental por
+    /// documento). Vive acá, no suelto en `ejecutar`, porque además de
+    /// dibujar lo usan los comandos de plegado (BACKLOG.md P2 #7) para
+    /// sacar los rangos plegables del mismo árbol, sin volver a parsear.
+    resaltador: Resaltador,
 }
 
 fn sin_modificadores(key: KeyEvent) -> bool {
@@ -351,7 +383,6 @@ async fn ejecutar(
     explorador: Explorador,
     ruta_arg: Option<&str>,
 ) -> Result<()> {
-    let mut resaltador = Resaltador::nuevo();
     let mut resolvedor = Resolvedor::nuevo(keymap.clone());
     let mut eventos = EventStream::new();
 
@@ -402,6 +433,9 @@ async fn ejecutar(
         logs_lsp: EstadoLogsLsp::nuevo(),
         prompt_explorador: EstadoPromptExplorador::nuevo(),
         confirmar_borrado: EstadoConfirmarBorrado::nuevo(),
+        ultimo_autoguardado: Instant::now(),
+        guardado_pendiente: false,
+        resaltador: Resaltador::nuevo(),
     };
 
     // Ver `forzar_redibujado_completo`: en Windows, si la "forma" de la
@@ -416,7 +450,41 @@ async fn ejecutar(
     let mut teclas_sinteticas: VecDeque<KeyEvent> = VecDeque::new();
     let mut ultimo_dibujo = Instant::now();
 
+    // Tick periódico (BACKLOG.md P2 #4 y P1 #2): el bucle era puramente
+    // reactivo (teclado o LSP), pero el guardado automático "cada N
+    // segundos" y el visor de logs del LSP en vivo necesitan despertarse
+    // solos. Solo se escucha mientras alguno de los dos lo necesita
+    // (`necesita_tick`) — en reposo, con la config por defecto, el bucle
+    // sigue sin despertarse para nada. `Skip`: si el bucle estuvo ocupado
+    // (o el tick apagado un rato) no se disparan de golpe los ticks
+    // atrasados.
+    let mut tick = tokio::time::interval(INTERVALO_TICK);
+    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    // Un tick que no cambió nada (sin líneas nuevas de log, sin nada que
+    // guardar) no redibuja: sin esto el visor de logs abierto repintaba
+    // la pantalla entera 4 veces por segundo aunque el LSP estuviera
+    // callado.
+    let mut omitir_dibujo = false;
+
+    // "Al perder foco" (BACKLOG.md P2 #4): qué panel/archivo/zona tenía
+    // el foco en la vuelta anterior del bucle — si cambió (`Ctrl+1/2/3`,
+    // cerrar/dividir un panel, abrir otro archivo, pasar al explorador),
+    // se guarda. Comparar acá arriba, una vez por vuelta, cubre todos los
+    // caminos de más abajo sin tocar cada `continue`.
+    let mut ultimo_foco = firma_foco(layout, &estado);
+
     loop {
+        if std::mem::take(&mut estado.guardado_pendiente) {
+            let _ = guardar_archivo_activo(layout, &mut estado).await;
+        }
+        let foco_actual = firma_foco(layout, &estado);
+        if foco_actual != ultimo_foco {
+            if estado.config.editor.guardado_automatico == GuardadoAutomatico::AlPerderFoco {
+                autoguardar(layout);
+            }
+            ultimo_foco = foco_actual;
+        }
+
         // Si ya hay más teclas esperando (una flecha mantenida apretada,
         // o lo pegado en una terminal sin bracketed paste), se procesan
         // TODAS antes de volver a dibujar. Dibujar entre cada una hacía
@@ -425,7 +493,8 @@ async fn ejecutar(
         // golpe, pasándose de donde se quería ir. Igual se dibuja cada
         // tanto durante una ráfaga larga para que no parezca colgado.
         let hay_mas_eventos = !teclas_sinteticas.is_empty() || crossterm::event::poll(Duration::ZERO).unwrap_or(false);
-        if !hay_mas_eventos || ultimo_dibujo.elapsed() >= INTERVALO_MAXIMO_SIN_DIBUJAR {
+        let dibujar = !std::mem::take(&mut omitir_dibujo);
+        if dibujar && (!hay_mas_eventos || ultimo_dibujo.elapsed() >= INTERVALO_MAXIMO_SIN_DIBUJAR) {
             // Una vez por frame, no por tecla: avisa al LSP del archivo
             // activo (relanzándolo si cambió de lenguaje) y le manda el
             // texto completo si cambió. Por tecla significaba copiar y
@@ -448,7 +517,7 @@ async fn ejecutar(
                     frame,
                     layout,
                     &estado.paleta,
-                    &mut resaltador,
+                    &mut estado.resaltador,
                     &estado.explorador,
                     &estado.paleta_comandos,
                     &estado.buscador_archivos,
@@ -487,6 +556,10 @@ async fn ejecutar(
                     }
                     continue;
                 }
+                _ = tick.tick(), if necesita_tick(&estado) => {
+                    omitir_dibujo = !procesar_tick(layout, &mut estado);
+                    continue;
+                }
             },
         };
 
@@ -497,8 +570,22 @@ async fn ejecutar(
                 necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
                 continue;
             }
+            // La terminal dejó de tener el foco (otra ventana/pestaña/panel
+            // de tmux): mismo significado que cambiar de panel adentro de
+            // tcode para "al perder foco" (BACKLOG.md P2 #4). Solo llega si
+            // la terminal soporta eventos de foco (ver `iniciar_terminal`).
+            Event::FocusLost => {
+                if estado.config.editor.guardado_automatico == GuardadoAutomatico::AlPerderFoco {
+                    autoguardar(layout);
+                }
+                continue;
+            }
             _ => continue,
         };
+
+        // El aviso transitorio de la barra de estado (p. ej. "Formateado
+        // al guardar") dura hasta la próxima tecla.
+        layout.panel_activo_mut().mensaje_estado = None;
 
         // El editor visual de tema (`Ctrl+K Ctrl+P`, PLAN.md §7) es otra
         // vista a pantalla completa que captura el teclado por completo:
@@ -653,6 +740,11 @@ async fn ejecutar(
                         KeyCode::Backspace if estado.panel_admin.seccion_actual() == Seccion::Lenguajes => {
                             quitar_comando_lsp_seleccionado(&mut estado);
                         }
+                        KeyCode::Char('f')
+                            if sin_modificadores(key) && estado.panel_admin.seccion_actual() == Seccion::Lenguajes =>
+                        {
+                            alternar_formatear_al_guardar_seleccionado(&mut estado);
+                        }
                         KeyCode::Enter | KeyCode::Left | KeyCode::Right
                             if estado.panel_admin.seccion_actual() == Seccion::Interfaz =>
                         {
@@ -680,6 +772,13 @@ async fn ejecutar(
                                 // (`i`/`Esc` siguen sacando de ahí).
                                 if campo == CampoEditor::ModoVim && estado.config.editor.modo_vim {
                                     layout.editor_activo_mut().entrar_modo_normal();
+                                }
+                                // Ver doc de `EstadoApp::ultimo_autoguardado`.
+                                if matches!(
+                                    campo,
+                                    CampoEditor::GuardadoAutomatico | CampoEditor::SegundosGuardadoAutomatico
+                                ) {
+                                    estado.ultimo_autoguardado = Instant::now();
                                 }
                             }
                         }
@@ -736,7 +835,7 @@ async fn ejecutar(
                 KeyCode::Backspace => estado.buscador_archivos.borrar(),
                 KeyCode::Enter => {
                     if let Some(ruta) = estado.buscador_archivos.confirmar() {
-                        abrir_ruta_desde_explorador(layout, &mut estado.foco, ruta, estado.config.editor.modo_vim);
+                        abrir_ruta_desde_explorador(layout, &mut estado.foco, ruta, &estado.config.editor);
                     }
                 }
                 KeyCode::Char(c) if sin_modificadores(key) => estado.buscador_archivos.escribir(c),
@@ -845,7 +944,7 @@ async fn ejecutar(
             match key.code {
                 KeyCode::Esc => estado.guardar_como.cerrar(),
                 KeyCode::Backspace => estado.guardar_como.borrar(),
-                KeyCode::Enter => guardar_como_confirmar(layout, &mut estado.guardar_como),
+                KeyCode::Enter => guardar_como_confirmar(layout, &mut estado).await,
                 KeyCode::Char(c) if sin_modificadores(key) => estado.guardar_como.escribir(c),
                 _ => {}
             }
@@ -853,13 +952,17 @@ async fn ejecutar(
             continue;
         }
 
-        // Visor de logs del LSP activo (`Ctrl+K R`): snapshot tomado al
-        // abrir, no en vivo — no hace falta reaccionar a nada más que el
-        // filtro de texto y `Esc` para cerrar.
+        // Visor de logs del LSP activo (`Ctrl+K R`): se actualiza solo
+        // con el tick del bucle (`procesar_tick`, BACKLOG.md P1 #2); acá
+        // solo el filtro de texto, el scroll y `Esc` para cerrar.
         if estado.logs_lsp.activo() {
             estado.confirmar_salida = false;
             match key.code {
                 KeyCode::Esc => estado.logs_lsp.cerrar(),
+                KeyCode::Up => estado.logs_lsp.mover_arriba(),
+                KeyCode::Down => estado.logs_lsp.mover_abajo(),
+                KeyCode::PageUp => estado.logs_lsp.pagina_arriba(),
+                KeyCode::PageDown => estado.logs_lsp.pagina_abajo(),
                 KeyCode::Backspace => estado.logs_lsp.borrar(),
                 KeyCode::Char(c) if sin_modificadores(key) => estado.logs_lsp.escribir(c),
                 _ => {}
@@ -925,7 +1028,7 @@ async fn ejecutar(
                 KeyCode::Esc => estado.explorador.salir_modo_salto(),
                 KeyCode::Char(c) if sin_modificadores(key) => {
                     if let Ok(Some(ruta)) = estado.explorador.saltar_a_etiqueta(c) {
-                        abrir_ruta_desde_explorador(layout, &mut estado.foco, ruta, estado.config.editor.modo_vim);
+                        abrir_ruta_desde_explorador(layout, &mut estado.foco, ruta, &estado.config.editor);
                     }
                 }
                 _ => {}
@@ -947,6 +1050,25 @@ async fn ejecutar(
                 KeyCode::Backspace => layout.panel_activo_mut().estado_csv.borrar(),
                 KeyCode::Enter => confirmar_edicion_celda_csv(layout, true),
                 KeyCode::Char(c) if sin_modificadores(key) => layout.panel_activo_mut().estado_csv.escribir(c),
+                _ => {}
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
+        // Prompt de filtro de la vista CSV/TSV (`Ctrl+K /`, BACKLOG.md P2
+        // #9): mismo patrón modal que la edición de celda de arriba.
+        if layout.panel_activo().estado_csv.prompt_filtro().is_some() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => {
+                    layout.panel_activo_mut().estado_csv.cerrar_prompt_filtro();
+                }
+                KeyCode::Backspace => layout.panel_activo_mut().estado_csv.borrar_en_prompt_filtro(),
+                KeyCode::Enter => confirmar_filtro_csv(layout),
+                KeyCode::Char(c) if sin_modificadores(key) => {
+                    layout.panel_activo_mut().estado_csv.escribir_en_prompt_filtro(c)
+                }
                 _ => {}
             }
             necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
@@ -1044,6 +1166,97 @@ async fn ejecutar(
 /// volver a dibujar por cada tecla.
 const INTERVALO_MAXIMO_SIN_DIBUJAR: Duration = Duration::from_millis(50);
 
+/// Período del tick del bucle principal (ver `necesita_tick`): lo que
+/// tarda como mucho una línea nueva de stderr del LSP en aparecer en el
+/// visor abierto. La resolución del guardado "cada N segundos" también
+/// es esta, más que suficiente para N >= 5.
+const INTERVALO_TICK: Duration = Duration::from_millis(250);
+
+/// Si el bucle tiene que escuchar el tick periódico ahora mismo: solo
+/// con el visor de logs abierto o el guardado automático "cada N
+/// segundos" prendido — si no, no hay nada que hacer en cada tick y no
+/// tiene sentido despertarse.
+fn necesita_tick(estado: &EstadoApp) -> bool {
+    estado.logs_lsp.activo() || estado.config.editor.guardado_automatico == GuardadoAutomatico::CadaNSegundos
+}
+
+/// Un tick del bucle principal: refresca el visor de logs del LSP si
+/// está abierto (BACKLOG.md P1 #2) y corre el guardado automático "cada
+/// N segundos" si ya tocaba (P2 #4). Devuelve si cambió algo visible —
+/// si no, el bucle se saltea el próximo dibujo.
+fn procesar_tick(layout: &mut PanelLayout, estado: &mut EstadoApp) -> bool {
+    let mut cambio = false;
+    if estado.logs_lsp.activo() {
+        let (lineas, total) = estado.lsp.logs_con_total();
+        cambio |= estado.logs_lsp.actualizar(lineas, total);
+    }
+    if estado.config.editor.guardado_automatico == GuardadoAutomatico::CadaNSegundos {
+        // `max(1)`: un `0` escrito a mano en `config.toml` no puede
+        // convertirse en "guardar en cada tick".
+        let periodo = Duration::from_secs(estado.config.editor.segundos_guardado_automatico.max(1));
+        if estado.ultimo_autoguardado.elapsed() >= periodo {
+            estado.ultimo_autoguardado = Instant::now();
+            cambio |= autoguardar(layout);
+        }
+    }
+    cambio
+}
+
+/// Qué tiene el foco, para el guardado automático "al perder foco"
+/// (BACKLOG.md P2 #4): el índice del panel activo, el archivo que
+/// muestra (abrir otro en el mismo panel lo cambia) y si el teclado va
+/// al editor o al explorador. Abrir un overlay (paleta, buscador, panel de
+/// administración...) NO cuenta como perder el foco — es algo que se
+/// hace "sobre" el archivo, y guardar en cada `Ctrl+P` sorprendería.
+fn firma_foco(layout: &PanelLayout, estado: &EstadoApp) -> (usize, String, Foco) {
+    (layout.indice_activo(), layout.panel_activo().ruta_mostrada.clone(), estado.foco)
+}
+
+/// Si el guardado automático tiene que tocar este documento: solo con
+/// ruta (un "[Sin nombre]" no tiene dónde escribirse sin preguntar, y
+/// abrirle el prompt de "Guardar como" solo sería invasivo) y con
+/// cambios sin guardar.
+fn necesita_autoguardado(editor: &Editor) -> bool {
+    editor.buffer().ruta().is_some() && editor.buffer().modificado()
+}
+
+/// Guardado automático (BACKLOG.md P2 #4) de TODOS los paneles con ruta
+/// y cambios, no solo el activo: "cada N segundos" no tiene un panel en
+/// particular, y "al perder foco" en la práctica solo encuentra
+/// modificado al que acaba de perderlo (los demás ya se guardaron cuando
+/// lo perdieron ellos), salvo que un guardado anterior haya fallado —
+/// entonces se reintenta, que es lo que se quiere. Un fallo no corta
+/// nada: queda en la statusbar de ese panel (`guardar_panel`) y el
+/// buffer sigue modificado, sin perder nada. Devuelve si intentó guardar
+/// alguno (hay que redibujar: cambia el `*` de la statusbar).
+fn autoguardar(layout: &mut PanelLayout) -> bool {
+    let mut intento = false;
+    for panel in layout.paneles_mut() {
+        if necesita_autoguardado(&panel.editor) {
+            let _ = guardar_panel(panel);
+            intento = true;
+        }
+    }
+    intento
+}
+
+/// La escritura a disco de un documento en su ruta — el último paso
+/// tanto de `archivo.guardar` (`Ctrl+S`, vía `guardar_archivo_activo`,
+/// que antes formatea si corresponde) como del guardado automático.
+/// Deja el motivo del error en `aviso_guardado` (statusbar) si falla, y
+/// lo limpia si funciona.
+///
+/// El guardado automático NO formatea (llama acá directo, sin pasar por
+/// `formatear_antes_de_guardar`): con "cada N segundos" reformatearía el
+/// código mientras se escribe, moviendo el texto bajo el cursor — mismo
+/// criterio que VSCode, donde "format on save" no corre con el
+/// autoguardado por demora. Para formatear, `Ctrl+S`.
+fn guardar_panel(panel: &mut PanelEditor) -> Result<()> {
+    let resultado = panel.editor.guardar();
+    panel.aviso_guardado = resultado.as_ref().err().map(|e| format!("no se pudo guardar: {e:#}"));
+    resultado
+}
+
 /// Texto pegado desde la terminal (`Event::Paste`, bracketed paste). Con
 /// el editor enfocado y sin ningún overlay abierto se inserta entero de
 /// una vez (`Editor::insertar_texto`: una sola edición, un solo paso de
@@ -1062,6 +1275,7 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
         || estado.logs_lsp.activo()
         || estado.prompt_explorador.activo()
         || layout.panel_activo().estado_csv.editando()
+        || layout.panel_activo().estado_csv.prompt_filtro().is_some()
         || (estado.panel_admin.activo() && estado.panel_admin.editando_comando_lsp().is_some());
     if prompt_de_texto {
         teclas.extend(
@@ -1131,10 +1345,12 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             Accion::Continuar
         }
         "lsp.ver_logs" => {
-            // Snapshot, no en vivo (PLAN.md §5.3): abre con lo que haya
-            // AHORA — vacío y con el mensaje correspondiente si no hay
-            // sesión LSP activa, en vez de no hacer nada en silencio.
-            estado.logs_lsp.abrir(estado.lsp.logs());
+            // Abre con lo que haya AHORA — vacío y con el mensaje
+            // correspondiente si no hay sesión LSP activa, en vez de no
+            // hacer nada en silencio. De ahí en más se actualiza solo con
+            // el tick del bucle (`procesar_tick`, BACKLOG.md P1 #2).
+            let (lineas, total) = estado.lsp.logs_con_total();
+            estado.logs_lsp.abrir(lineas, total);
             Accion::Continuar
         }
         // Crear/renombrar en el explorador (BACKLOG.md P0, "explorador
@@ -1164,6 +1380,31 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             if let Some(nodo) = estado.explorador.seleccion_actual() {
                 estado.prompt_explorador.abrir(ModoPromptExplorador::Renombrar, &nodo.nombre);
             }
+            Accion::Continuar
+        }
+        // Plegado (BACKLOG.md P2 #7, PLAN.md §4): los rangos plegables
+        // salen del árbol de tree-sitter que ya mantiene el resaltador
+        // (o de la indentación, sin gramática) y se calculan a pedido,
+        // solo al plegar. Ni en el explorador ni en la vista de tabla
+        // CSV hay líneas de código que plegar.
+        "plegar.actual" | "plegar.todo" => {
+            if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
+                let candidatos = rangos_plegables_del_activo(layout, &mut estado.resaltador);
+                let editor = layout.editor_activo_mut();
+                if id == "plegar.todo" {
+                    editor.plegar_todo(&candidatos);
+                } else {
+                    editor.plegar_en_cursor(&candidatos);
+                }
+            }
+            Accion::Continuar
+        }
+        "plegar.desplegar" => {
+            layout.editor_activo_mut().desplegar_en_cursor();
+            Accion::Continuar
+        }
+        "plegar.desplegar_todo" => {
+            layout.editor_activo_mut().desplegar_todo();
             Accion::Continuar
         }
         "buscar.en_archivo" | "buscar.reemplazar" => {
@@ -1207,7 +1448,8 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             if layout.editor_activo().buffer().ruta().is_none() {
                 estado.guardar_como.abrir("");
             } else {
-                let _ = layout.editor_activo_mut().guardar();
+                // Ver `EstadoApp::guardado_pendiente`.
+                estado.guardado_pendiente = true;
             }
             Accion::Continuar
         }
@@ -1293,6 +1535,14 @@ fn ejecutar_comando(
             return Accion::Continuar;
         }
         "explorador.enfocar_editor" => {
+            // En la vista de tabla CSV/TSV con un filtro activo, `Esc`
+            // lo quita (BACKLOG.md P2 #9) — es lo que anuncia la barra
+            // del filtro. Solo con el foco ya en el editor: con el foco
+            // en el explorador, `Esc` sigue significando "volver al
+            // editor" y nada más.
+            if *foco == Foco::Editor && layout.panel_activo().modo_csv == ModoCsv::Tabla && quitar_filtro_csv(layout) {
+                return Accion::Continuar;
+            }
             // `Esc` siempre significa "volver a un solo cursor" también
             // (PLAN.md §11 M3, `cursor.una_seleccion`) — no hace falta un
             // atajo aparte: si ya había uno solo, esto no hace nada.
@@ -1356,7 +1606,7 @@ fn ejecutar_comando(
     }
 
     if *foco == Foco::Explorador {
-        return ejecutar_comando_explorador(comando, layout, explorador, foco, config.editor.modo_vim);
+        return ejecutar_comando_explorador(comando, layout, explorador, foco, &config.editor);
     }
 
     // La vista de tabla CSV/TSV reinterpreta la navegación genérica igual
@@ -1400,14 +1650,14 @@ fn ejecutar_comando_explorador(
     layout: &mut PanelLayout,
     explorador: &mut Explorador,
     foco: &mut Foco,
-    modo_vim: bool,
+    config: &ConfigEditor,
 ) -> Accion {
     match comando {
         "cursor.arriba" => explorador.mover_arriba(),
         "cursor.abajo" => explorador.mover_abajo(),
         "editor.nueva_linea" => {
             if let Ok(Some(ruta)) = explorador.activar_seleccion() {
-                abrir_ruta_desde_explorador(layout, foco, ruta, modo_vim);
+                abrir_ruta_desde_explorador(layout, foco, ruta, config);
             }
         }
         _ => {}
@@ -1421,13 +1671,25 @@ fn ejecutar_comando_explorador(
 /// sobre una fila del explorador (`ejecutar_comando_explorador`) como
 /// acertar una etiqueta en modo "salto rápido" (`Ctrl+K J`) y confirmar
 /// una ruta en el buscador de archivos (`Ctrl+P`), en el bucle principal
-/// de eventos. `modo_vim` es `config.editor.modo_vim`: si está prendido,
+/// de eventos. Si `config.modo_vim` está prendido,
 /// el archivo recién abierto arranca en `Modo::Normal` en vez del
 /// `Insertar` con el que `Editor::abrir` siempre construye — `Editor` no
 /// conoce esa config, así que la decisión se toma acá.
-fn abrir_ruta_desde_explorador(layout: &mut PanelLayout, foco: &mut Foco, ruta: std::path::PathBuf, modo_vim: bool) {
+///
+/// Con guardado automático "al perder foco" (BACKLOG.md P2 #4), el
+/// documento que se va a reemplazar se guarda ANTES — después ya no
+/// existe, el cambio de foco que detecta el bucle llegaría tarde. Si ese
+/// guardado falla, no se abre nada: reemplazarlo igual perdería los
+/// cambios, y el motivo queda en la statusbar.
+fn abrir_ruta_desde_explorador(layout: &mut PanelLayout, foco: &mut Foco, ruta: std::path::PathBuf, config: &ConfigEditor) {
     if let Ok(mut nuevo_editor) = Editor::abrir(&ruta) {
-        if modo_vim {
+        if config.guardado_automatico == GuardadoAutomatico::AlPerderFoco {
+            let panel = layout.panel_activo_mut();
+            if necesita_autoguardado(&panel.editor) && guardar_panel(panel).is_err() {
+                return;
+            }
+        }
+        if config.modo_vim {
             nuevo_editor.entrar_modo_normal();
         }
         layout.abrir_en_activo(nuevo_editor, ruta.display().to_string());
@@ -1441,13 +1703,25 @@ fn abrir_ruta_desde_explorador(layout: &mut PanelLayout, foco: &mut Foco, ruta: 
 /// hoja de cálculo) y `Enter`/`F2` para empezar a editar la celda actual
 /// — la edición en sí (escribir/confirmar/cancelar) la captura un bloque
 /// modal aparte en el bucle principal, igual que la barra de búsqueda.
+///
+/// También los comandos propios de la tabla (BACKLOG.md P2 #9), que solo
+/// tienen efecto acá (desde la paleta, en cualquier otro archivo o en
+/// modo texto, no hacen nada): ordenar, filtrar, insertar/eliminar filas
+/// y columnas — estas cuatro modifican el archivo, cada una como UNA
+/// sola edición (`aplicar_edicion_csv`), así que se deshace con un único
+/// `Ctrl+Z` — y el ancho manual de columna (solo de vista, como el
+/// filtro). Con un filtro activo, `estado_csv.fila()` es una posición
+/// entre las filas visibles: todo lo que lee o escribe el archivo usa
+/// `EstadoCsv::fila_real`.
 fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
     let delimitador = delimitador_por_extension(&layout.panel_activo().ruta_mostrada);
     let texto = layout.panel_activo().editor.buffer().a_texto();
     let tabla = analizar_csv(&texto, delimitador).unwrap_or_default();
-    let (num_filas, num_columnas) = (tabla.num_filas(), tabla.num_columnas());
-
     let panel = layout.panel_activo_mut();
+    let num_filas = panel.estado_csv.filas_visibles(&tabla).len();
+    let num_columnas = tabla.num_columnas();
+    let columna = panel.estado_csv.columna();
+
     match comando {
         "cursor.arriba" => panel.estado_csv.mover_arriba(),
         "cursor.abajo" => panel.estado_csv.mover_abajo(num_filas),
@@ -1457,12 +1731,122 @@ fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
         "editor.desindentar" => panel.estado_csv.shift_tab(num_columnas),
         "editor.nueva_linea" | "csv.editar_celda" => {
             let valor_actual =
-                tabla.filas.get(panel.estado_csv.fila()).and_then(|f| f.celdas.get(panel.estado_csv.columna()));
+                panel.estado_csv.fila_real(&tabla).and_then(|r| tabla.filas[r].celdas.get(columna));
             panel.estado_csv.iniciar_edicion(valor_actual.map(String::as_str).unwrap_or(""));
         }
+        "csv.ordenar" => {
+            let ascendente = panel.estado_csv.siguiente_orden(columna);
+            aplicar_edicion_csv(panel, tcode_core::csv::ordenar_por_columna(&texto, &tabla, columna, ascendente));
+        }
+        "csv.filtrar" => {
+            let inicial = match panel.estado_csv.filtro() {
+                Some(filtro) if filtro.columna == columna => filtro.texto.clone(),
+                _ => String::new(),
+            };
+            panel.estado_csv.abrir_prompt_filtro(&inicial);
+        }
+        "csv.quitar_filtro" => {
+            panel.estado_csv.quitar_filtro(&tabla);
+        }
+        // Insertar una fila con un filtro activo quita el filtro primero:
+        // la fila nueva está vacía, así que (salvo coincidencia) el
+        // filtro la ocultaría apenas creada — insertar algo que no se ve
+        // es peor que perder el filtro, que se vuelve a poner con dos
+        // teclas. `quitar_filtro` deja la selección sobre la misma fila
+        // real, así que la posición de inserción no cambia.
+        "csv.insertar_fila_debajo" | "csv.insertar_fila_arriba" => {
+            panel.estado_csv.quitar_filtro(&tabla);
+            let actual = panel.estado_csv.fila_real(&tabla);
+            let indice = match (actual, comando == "csv.insertar_fila_debajo") {
+                (Some(r), true) => r + 1,
+                (Some(r), false) => r,
+                (None, _) => 0,
+            };
+            aplicar_edicion_csv(panel, tcode_core::csv::insertar_fila(&texto, &tabla, indice).ok());
+            // Seleccionar la fila recién insertada (sin filtro, fila
+            // visible == fila real). `mover_abajo` avanza de a una.
+            if comando == "csv.insertar_fila_debajo" && actual.is_some() {
+                panel.estado_csv.mover_abajo(tabla.num_filas() + 1);
+            }
+        }
+        "csv.eliminar_fila" => {
+            if let Some(r) = panel.estado_csv.fila_real(&tabla) {
+                aplicar_edicion_csv(panel, tcode_core::csv::eliminar_fila(&texto, &tabla, r));
+            }
+        }
+        "csv.insertar_columna_derecha" | "csv.insertar_columna_izquierda" => {
+            let indice = if comando == "csv.insertar_columna_derecha" && num_columnas > 0 { columna + 1 } else { columna };
+            if aplicar_edicion_csv(panel, tcode_core::csv::insertar_columna(&texto, &tabla, indice).ok().flatten()) {
+                panel.estado_csv.columna_insertada(indice);
+                if indice > columna {
+                    panel.estado_csv.mover_derecha(num_columnas + 1);
+                }
+            }
+        }
+        "csv.eliminar_columna" => {
+            if aplicar_edicion_csv(panel, tcode_core::csv::eliminar_columna(&texto, &tabla, columna).ok().flatten()) {
+                panel.estado_csv.columna_eliminada(columna);
+            }
+        }
+        "csv.ensanchar_columna" | "csv.angostar_columna" if num_columnas > 0 => {
+            let actual = ancho_columna_csv(&tabla, &panel.estado_csv, columna);
+            let nuevo = if comando == "csv.ensanchar_columna" {
+                actual + PASO_ANCHO_COLUMNA_CSV
+            } else {
+                actual.saturating_sub(PASO_ANCHO_COLUMNA_CSV)
+            };
+            panel.estado_csv.fijar_ancho(columna, nuevo);
+        }
+        "csv.restablecer_ancho" => panel.estado_csv.restablecer_ancho(columna),
         _ => {}
     }
     Accion::Continuar
+}
+
+/// Cuántas columnas de terminal ensancha/angosta cada `Ctrl+K Shift+→`/
+/// `Ctrl+K Shift+←` en la vista CSV. De a 1 haría falta repetir el chord
+/// decenas de veces para leer una celda larga; de a 2 sigue siendo fino
+/// y la mitad de tedioso.
+const PASO_ANCHO_COLUMNA_CSV: usize = 2;
+
+/// Aplica una edición de la vista CSV (ordenar, insertar/eliminar) sobre
+/// el buffer como UN solo reemplazo — un solo snapshot en el historial,
+/// un solo `Ctrl+Z` para deshacerla. Devuelve si había algo que aplicar
+/// (`None` = la operación no cambiaba nada, p. ej. ordenar algo ya
+/// ordenado), para que quien llama solo actualice su estado de vista en
+/// ese caso.
+fn aplicar_edicion_csv(panel: &mut tcode_ui::PanelEditor, edicion: Option<tcode_core::EdicionCsv>) -> bool {
+    let Some(edicion) = edicion else { return false };
+    panel.editor.reemplazar_rango_bytes(edicion.inicio_byte, edicion.fin_byte, &edicion.reemplazo);
+    true
+}
+
+/// `Enter` con el prompt de filtro de la vista CSV abierto: aplica el
+/// texto escrito como filtro sobre la columna seleccionada, o quita el
+/// filtro si quedó vacío (así el mismo prompt sirve para las dos cosas,
+/// además de `Esc` con la tabla enfocada).
+fn confirmar_filtro_csv(layout: &mut PanelLayout) {
+    let delimitador = delimitador_por_extension(&layout.panel_activo().ruta_mostrada);
+    let tabla = analizar_csv(&layout.panel_activo().editor.buffer().a_texto(), delimitador).unwrap_or_default();
+    let estado_csv = &mut layout.panel_activo_mut().estado_csv;
+    let Some(texto) = estado_csv.cerrar_prompt_filtro() else { return };
+    if texto.is_empty() {
+        estado_csv.quitar_filtro(&tabla);
+    } else {
+        let columna = estado_csv.columna();
+        estado_csv.filtrar(columna, &texto);
+    }
+}
+
+/// Quita el filtro de la vista CSV del panel activo, si había uno
+/// (devuelve si lo había) — `Esc` con la tabla enfocada.
+fn quitar_filtro_csv(layout: &mut PanelLayout) -> bool {
+    if layout.panel_activo().estado_csv.filtro().is_none() {
+        return false;
+    }
+    let delimitador = delimitador_por_extension(&layout.panel_activo().ruta_mostrada);
+    let tabla = analizar_csv(&layout.panel_activo().editor.buffer().a_texto(), delimitador).unwrap_or_default();
+    layout.panel_activo_mut().estado_csv.quitar_filtro(&tabla)
 }
 
 /// `Enter` con el prompt "Guardar como" abierto: intenta escribir el
@@ -1473,20 +1857,97 @@ fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
 /// pestaña, detección de lenguaje) y cierra el prompt; si falla (permiso
 /// denegado, directorio inexistente...) el prompt queda abierto con el
 /// motivo, para poder corregir la ruta sin perder lo ya escrito.
-fn guardar_como_confirmar(layout: &mut PanelLayout, guardar_como: &mut EstadoGuardarComo) {
-    let ruta = guardar_como.ruta().trim();
+///
+/// Con "formatear al guardar" prendido para el lenguaje del archivo
+/// (el de su ruta ANTERIOR — es el lenguaje del contenido y el de la
+/// sesión LSP abierta sobre él; un buffer "[Sin nombre]" no tiene
+/// ninguno) se formatea antes de escribir, igual que con `Ctrl+S`.
+async fn guardar_como_confirmar(layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let ruta = estado.guardar_como.ruta().trim();
     if ruta.is_empty() {
-        guardar_como.establecer_error("la ruta no puede estar vacía".to_string());
+        estado.guardar_como.establecer_error("la ruta no puede estar vacía".to_string());
         return;
     }
     let ruta = ruta.to_string();
+    formatear_antes_de_guardar(layout, estado).await;
     match layout.editor_activo_mut().guardar_como(ruta.clone()) {
         Ok(()) => {
-            layout.panel_activo_mut().ruta_mostrada = ruta;
-            guardar_como.cerrar();
+            let panel = layout.panel_activo_mut();
+            panel.ruta_mostrada = ruta;
+            panel.aviso_guardado = None;
+            estado.guardar_como.cerrar();
         }
-        Err(e) => guardar_como.establecer_error(e.to_string()),
+        Err(e) => estado.guardar_como.establecer_error(e.to_string()),
     }
+}
+
+/// Camino ÚNICO para guardar el archivo del panel activo en su propia
+/// ruta (`archivo.guardar`, `Ctrl+S`): primero "formatear al guardar" si
+/// corresponde (`formatear_antes_de_guardar`), después escribir a disco.
+/// Cualquier otro disparador de guardado del archivo activo (p. ej. el
+/// guardado automático, BACKLOG.md P2 #4) debería pasar por acá en vez
+/// de llamar a `Editor::guardar` directo, para respetar la misma
+/// configuración. Un panel que NO es el activo no puede formatearse (la
+/// única sesión LSP es la del panel activo, ver `lsp.rs`): para esos,
+/// `Editor::guardar` directo es lo correcto. Falla igual que
+/// `Editor::guardar` (buffer sin ruta, error de disco); formatear nunca
+/// hace fallar el guardado.
+async fn guardar_archivo_activo(layout: &mut PanelLayout, estado: &mut EstadoApp) -> Result<()> {
+    formatear_antes_de_guardar(layout, estado).await;
+    guardar_panel(layout.panel_activo_mut())
+}
+
+/// "Formatear al guardar" (PLAN.md §5 "Editor", BACKLOG.md P2 #5): si
+/// está prendido para el lenguaje del archivo activo (`f` en "Lenguajes
+/// / LSP" del panel de administración), le pide `textDocument/
+/// formatting` al LSP y aplica el resultado como UNA sola edición
+/// deshacible (`Editor::aplicar_ediciones`: un `Ctrl+Z` después de
+/// guardar vuelve al texto sin formatear). Con la opción apagada no hace
+/// absolutamente nada — ni siquiera sincroniza con el LSP —, así que
+/// guardar se comporta exactamente igual que antes de esta pieza.
+///
+/// Nunca bloquea el guardado: si no hay LSP, todavía está iniciando, no
+/// soporta formatear, devuelve error o no responde a tiempo
+/// (`EstadoLsp::pedir_formateo`, ~2 s como mucho), simplemente no se
+/// formatea y el aviso de la barra de estado dice por qué.
+async fn formatear_antes_de_guardar(layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let Some(lenguaje) = Lenguaje::detectar_por_extension(&layout.panel_activo().ruta_mostrada) else { return };
+    if !estado.config.lenguajes.formatear_al_guardar(lenguaje.id()) {
+        return;
+    }
+
+    // Mismo paso que el bucle hace una vez por frame: sin esto, lo
+    // tipeado desde el último frame todavía no le llegó al servidor, y
+    // sus posiciones se referirían a un texto viejo.
+    sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+    let ruta = layout.panel_activo().ruta_mostrada.clone();
+    let texto = layout.editor_activo().buffer().a_texto();
+    // rustfmt/prettier/etc. suelen tener su propia config por proyecto
+    // que manda sobre esto; es lo que se usa cuando no la hay.
+    let opciones = FormattingOptions {
+        tab_size: estado.config.editor.tamano_tabulacion as u32,
+        insert_spaces: estado.config.editor.usar_espacios,
+        ..Default::default()
+    };
+
+    let mensaje = match estado.lsp.pedir_formateo(&ruta, &texto, opciones, layout).await {
+        Ok(ediciones) => {
+            let ediciones: Vec<_> = ediciones.into_iter().map(|e| (e.inicio_byte..e.fin_byte, e.texto)).collect();
+            let editor = layout.editor_activo_mut();
+            if !editor.aplicar_ediciones(&ediciones) {
+                // Ya estaba formateado: nada que avisar.
+                return;
+            }
+            // En modo Normal (VIM) el cursor no puede quedar después del
+            // último carácter de la línea — reaplica ese recorte.
+            if editor.modo() == Modo::Normal {
+                editor.entrar_modo_normal();
+            }
+            "Formateado al guardar".to_string()
+        }
+        Err(motivo) => format!("Sin formatear: {motivo}"),
+    };
+    layout.panel_activo_mut().mensaje_estado = Some(mensaje);
 }
 
 /// `Enter` con el prompt de texto del explorador abierto (`Ctrl+K N`/
@@ -1517,7 +1978,11 @@ fn confirmar_prompt_explorador(explorador: &mut Explorador, prompt: &mut EstadoP
 /// `Enter` con una celda de la vista CSV/TSV en edición: reemplaza la
 /// fila completa reserializada (ver `tcode_core::csv::serializar_fila`)
 /// en el buffer, y si `avanzar` es `true` mueve la selección a la fila
-/// siguiente (como confirmar una celda en una hoja de cálculo).
+/// siguiente (como confirmar una celda en una hoja de cálculo). Con un
+/// filtro activo edita la fila REAL detrás de la fila visible
+/// seleccionada (`EstadoCsv::fila_real`); si el valor nuevo ya no
+/// coincide con el filtro, la fila deja de verse — el filtro se evalúa
+/// siempre sobre el contenido actual, como en una hoja de cálculo.
 fn confirmar_edicion_celda_csv(layout: &mut PanelLayout, avanzar: bool) {
     let panel = layout.panel_activo_mut();
     let Some(nuevo_valor) = panel.estado_csv.confirmar_edicion() else { return };
@@ -1525,7 +1990,7 @@ fn confirmar_edicion_celda_csv(layout: &mut PanelLayout, avanzar: bool) {
     let delimitador = delimitador_por_extension(&panel.ruta_mostrada);
     let texto = panel.editor.buffer().a_texto();
     let Ok(tabla) = analizar_csv(&texto, delimitador) else { return };
-    let Some(fila) = tabla.filas.get(panel.estado_csv.fila()) else { return };
+    let Some(fila) = panel.estado_csv.fila_real(&tabla).map(|r| &tabla.filas[r]) else { return };
 
     let mut celdas = fila.celdas.clone();
     if panel.estado_csv.columna() >= celdas.len() {
@@ -1537,9 +2002,13 @@ fn confirmar_edicion_celda_csv(layout: &mut PanelLayout, avanzar: bool) {
     panel.editor.reemplazar_rango_bytes(fila.inicio_byte, fila.fin_byte, &nueva_fila_texto);
 
     if avanzar {
-        let num_filas =
-            analizar_csv(&panel.editor.buffer().a_texto(), delimitador).map(|t| t.num_filas()).unwrap_or(0);
-        panel.estado_csv.mover_abajo(num_filas);
+        let tabla_nueva = analizar_csv(&panel.editor.buffer().a_texto(), delimitador).unwrap_or_default();
+        let num_filas = panel.estado_csv.filas_visibles(&tabla_nueva).len();
+        // Si la fila editada dejó de pasar el filtro, desapareció y la
+        // siguiente ya ocupa su lugar: avanzar además se la saltearía.
+        if num_filas == panel.estado_csv.filas_visibles(&tabla).len() {
+            panel.estado_csv.mover_abajo(num_filas);
+        }
     }
 }
 
@@ -1712,6 +2181,7 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
                 deshabilitado_por_proyecto: estado.capas_config.global.lenguajes.lsp_habilitado(lenguaje.id())
                     && !estado.config.lenguajes.lsp_habilitado(lenguaje.id()),
                 personalizado: estado.capas_config.global.lenguajes.comando_configurado(lenguaje.id()).is_some(),
+                formatear_al_guardar: estado.capas_config.global.lenguajes.formatear_al_guardar(lenguaje.id()),
                 estado: estado_texto,
             }
         })
@@ -1779,6 +2249,17 @@ fn lenguaje_seleccionado_en_lenguajes(panel: &tcode_config::EstadoPanelAdmin) ->
         return None;
     }
     Lenguaje::TODOS.get(panel.campo()).copied()
+}
+
+/// `f` sobre una fila de "Lenguajes / LSP": prende/apaga "formatear al
+/// guardar" para ese lenguaje (BACKLOG.md P2 #5) y lo persiste al
+/// instante, igual que el resto de la sección. Se puede prender aunque
+/// el lenguaje no tenga LSP configurado todavía: sin sesión, guardar
+/// simplemente avisa que no formateó (ver `formatear_antes_de_guardar`).
+fn alternar_formatear_al_guardar_seleccionado(estado: &mut EstadoApp) {
+    let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
+    estado.capas_config.global.lenguajes.alternar_formatear_al_guardar(lenguaje.id());
+    guardar_config_global(estado);
 }
 
 /// `c` sobre una fila de "Lenguajes / LSP": empieza a editar su comando
@@ -1938,6 +2419,21 @@ fn insertar_tabulacion(editor: &mut Editor, config: &Config) {
     }
 }
 
+/// Rangos plegables del documento del panel activo, como `Pliegue`s del
+/// `core` (ver `Resaltador::rangos_plegables`). La clave del documento es
+/// la misma ruta que usa `vista_codigo` al resaltar, así se reutiliza su
+/// árbol ya parseado.
+fn rangos_plegables_del_activo(layout: &PanelLayout, resaltador: &mut Resaltador) -> Vec<Pliegue> {
+    let panel = layout.panel_activo();
+    let ruta = &panel.ruta_mostrada;
+    let fuente = panel.editor.buffer().a_texto();
+    resaltador
+        .rangos_plegables(ruta, Lenguaje::detectar_por_extension(ruta), &fuente)
+        .into_iter()
+        .map(|r| Pliegue { inicio: r.inicio, fin: r.fin })
+        .collect()
+}
+
 /// Mueve el cursor del editor activo a la coincidencia de búsqueda
 /// seleccionada, si hay alguna — usado tanto al abrir la barra (`Ctrl+F`)
 /// como al saltar con `F3`/`Shift+F3`, con la barra abierta o cerrada.
@@ -2040,5 +2536,135 @@ mod tests_ruta_en_path {
         dir.crear_archivo("comando.exe");
         assert!(!existe_ejecutable(&dir.0, "comando", Some("")));
         assert!(existe_ejecutable(&dir.0, "comando", Some(";;.EXE;;")));
+    }
+}
+
+#[cfg(test)]
+mod tests_autoguardado {
+    use super::*;
+
+    /// Directorio temporal único por test, borrado al final — mismo
+    /// patrón que `tests_ruta_en_path`.
+    struct DirTemporal(std::path::PathBuf);
+
+    impl DirTemporal {
+        fn nuevo(nombre: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("tcode-test-autoguardado-{nombre}-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn archivo(&self, nombre: &str, contenido: &str) -> std::path::PathBuf {
+            let ruta = self.0.join(nombre);
+            std::fs::write(&ruta, contenido).unwrap();
+            ruta
+        }
+    }
+
+    impl Drop for DirTemporal {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).ok();
+        }
+    }
+
+    fn layout_con(ruta: &std::path::Path) -> PanelLayout {
+        PanelLayout::nuevo(Editor::abrir(ruta).unwrap(), ruta.display().to_string())
+    }
+
+    fn con_guardado_al_perder_foco() -> ConfigEditor {
+        ConfigEditor { guardado_automatico: GuardadoAutomatico::AlPerderFoco, ..ConfigEditor::default() }
+    }
+
+    #[test]
+    fn autoguardar_guarda_los_modificados_con_ruta_y_no_toca_los_sin_nombre() {
+        let dir = DirTemporal::nuevo("basico");
+        let ruta = dir.archivo("a.txt", "hola");
+        let mut layout = layout_con(&ruta);
+        layout.editor_activo_mut().insertar_char('X');
+        // Panel nuevo por `Ctrl+\`: "[Sin nombre]", también modificado.
+        layout.dividir(DireccionSplit::Vertical);
+        layout.editor_activo_mut().insertar_char('Y');
+
+        assert!(autoguardar(&mut layout));
+        assert_eq!(std::fs::read_to_string(&ruta).unwrap(), "Xhola");
+        let paneles = layout.paneles_mut();
+        assert!(!paneles[0].editor.buffer().modificado());
+        assert!(paneles[1].editor.buffer().modificado(), "sin ruta no se guarda en ningún lado");
+    }
+
+    #[test]
+    fn autoguardar_sin_nada_modificado_no_hace_nada() {
+        let dir = DirTemporal::nuevo("nada");
+        let ruta = dir.archivo("a.txt", "hola");
+        let mut layout = layout_con(&ruta);
+        assert!(!autoguardar(&mut layout));
+    }
+
+    #[test]
+    fn un_guardado_fallido_queda_en_el_aviso_sin_perder_los_cambios() {
+        let dir = DirTemporal::nuevo("falla");
+        let sub = dir.0.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let ruta = sub.join("a.txt");
+        std::fs::write(&ruta, "hola").unwrap();
+        let mut layout = layout_con(&ruta);
+        layout.editor_activo_mut().insertar_char('X');
+        std::fs::remove_dir_all(&sub).unwrap(); // guardar va a fallar
+
+        autoguardar(&mut layout);
+        assert!(layout.panel_activo().aviso_guardado.is_some());
+        assert!(layout.editor_activo().buffer().modificado());
+
+        // Si la carpeta vuelve, el próximo intento funciona y limpia el aviso.
+        std::fs::create_dir_all(&sub).unwrap();
+        autoguardar(&mut layout);
+        assert!(layout.panel_activo().aviso_guardado.is_none());
+        assert_eq!(std::fs::read_to_string(&ruta).unwrap(), "Xhola");
+    }
+
+    #[test]
+    fn abrir_otro_archivo_al_perder_foco_guarda_antes_de_reemplazar() {
+        let dir = DirTemporal::nuevo("abrir");
+        let a = dir.archivo("a.txt", "a");
+        let b = dir.archivo("b.txt", "b");
+        let mut layout = layout_con(&a);
+        layout.editor_activo_mut().insertar_char('X');
+        let mut foco = Foco::Editor;
+
+        abrir_ruta_desde_explorador(&mut layout, &mut foco, b.clone(), &con_guardado_al_perder_foco());
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "Xa");
+        assert_eq!(layout.panel_activo().ruta_mostrada, b.display().to_string());
+    }
+
+    #[test]
+    fn abrir_otro_archivo_con_guardado_nunca_no_escribe_nada() {
+        let dir = DirTemporal::nuevo("nunca");
+        let a = dir.archivo("a.txt", "a");
+        let b = dir.archivo("b.txt", "b");
+        let mut layout = layout_con(&a);
+        layout.editor_activo_mut().insertar_char('X');
+        let mut foco = Foco::Editor;
+
+        abrir_ruta_desde_explorador(&mut layout, &mut foco, b, &ConfigEditor::default());
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "a");
+    }
+
+    #[test]
+    fn si_el_guardado_previo_falla_no_se_abre_el_otro_archivo() {
+        let dir = DirTemporal::nuevo("no-abre");
+        let sub = dir.0.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let a = sub.join("a.txt");
+        std::fs::write(&a, "a").unwrap();
+        let b = dir.archivo("b.txt", "b");
+        let mut layout = layout_con(&a);
+        layout.editor_activo_mut().insertar_char('X');
+        std::fs::remove_dir_all(&sub).unwrap();
+        let mut foco = Foco::Editor;
+
+        abrir_ruta_desde_explorador(&mut layout, &mut foco, b, &con_guardado_al_perder_foco());
+        assert_eq!(layout.panel_activo().ruta_mostrada, a.display().to_string(), "no se reemplazó el documento");
+        assert!(layout.editor_activo().buffer().modificado());
+        assert!(layout.panel_activo().aviso_guardado.is_some());
     }
 }
