@@ -31,6 +31,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use lsp_types::FormattingOptions;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio_stream::StreamExt;
@@ -286,6 +287,16 @@ struct EstadoApp {
     /// explorador enfocado) — separada de `prompt_explorador` porque no
     /// tiene ningún campo de texto, solo `y`/cualquier otra tecla.
     confirmar_borrado: EstadoConfirmarBorrado,
+    /// `archivo.guardar` pedido sobre un archivo con ruta, pendiente de
+    /// ejecutarse al principio de la próxima vuelta del bucle de
+    /// `ejecutar` (`guardar_archivo_activo`). No se guarda ahí mismo
+    /// porque `procesar_comando` es síncrona y guardar puede tener que
+    /// esperar la respuesta del LSP a `textDocument/formatting`
+    /// ("formatear al guardar", BACKLOG.md P2 #5); se ejecuta antes de
+    /// procesar cualquier otra tecla, así que el orden de los eventos no
+    /// cambia (`Ctrl+S` seguido de `Ctrl+Q` en la misma ráfaga guarda
+    /// primero).
+    guardado_pendiente: bool,
     /// Resaltador de sintaxis (árbol de tree-sitter incremental por
     /// documento). Vive acá, no suelto en `ejecutar`, porque además de
     /// dibujar lo usan los comandos de plegado (BACKLOG.md P2 #7) para
@@ -353,6 +364,7 @@ async fn ejecutar(
         logs_lsp: EstadoLogsLsp::nuevo(),
         prompt_explorador: EstadoPromptExplorador::nuevo(),
         confirmar_borrado: EstadoConfirmarBorrado::nuevo(),
+        guardado_pendiente: false,
         resaltador: Resaltador::nuevo(),
     };
 
@@ -369,6 +381,10 @@ async fn ejecutar(
     let mut ultimo_dibujo = Instant::now();
 
     loop {
+        if std::mem::take(&mut estado.guardado_pendiente) {
+            let _ = guardar_archivo_activo(layout, &mut estado).await;
+        }
+
         // Si ya hay más teclas esperando (una flecha mantenida apretada,
         // o lo pegado en una terminal sin bracketed paste), se procesan
         // TODAS antes de volver a dibujar. Dibujar entre cada una hacía
@@ -449,6 +465,10 @@ async fn ejecutar(
             }
             _ => continue,
         };
+
+        // El aviso transitorio de la barra de estado (p. ej. "Formateado
+        // al guardar") dura hasta la próxima tecla.
+        layout.panel_activo_mut().mensaje_estado = None;
 
         // El editor visual de tema (`Ctrl+K Ctrl+P`, PLAN.md §7) es otra
         // vista a pantalla completa que captura el teclado por completo:
@@ -602,6 +622,11 @@ async fn ejecutar(
                         }
                         KeyCode::Backspace if estado.panel_admin.seccion_actual() == Seccion::Lenguajes => {
                             quitar_comando_lsp_seleccionado(&mut estado);
+                        }
+                        KeyCode::Char('f')
+                            if sin_modificadores(key) && estado.panel_admin.seccion_actual() == Seccion::Lenguajes =>
+                        {
+                            alternar_formatear_al_guardar_seleccionado(&mut estado);
                         }
                         KeyCode::Enter | KeyCode::Left | KeyCode::Right
                             if estado.panel_admin.seccion_actual() == Seccion::Interfaz =>
@@ -795,7 +820,7 @@ async fn ejecutar(
             match key.code {
                 KeyCode::Esc => estado.guardar_como.cerrar(),
                 KeyCode::Backspace => estado.guardar_como.borrar(),
-                KeyCode::Enter => guardar_como_confirmar(layout, &mut estado.guardar_como),
+                KeyCode::Enter => guardar_como_confirmar(layout, &mut estado).await,
                 KeyCode::Char(c) if sin_modificadores(key) => estado.guardar_como.escribir(c),
                 _ => {}
             }
@@ -1202,7 +1227,8 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             if layout.editor_activo().buffer().ruta().is_none() {
                 estado.guardar_como.abrir("");
             } else {
-                let _ = layout.editor_activo_mut().guardar();
+                // Ver `EstadoApp::guardado_pendiente`.
+                estado.guardado_pendiente = true;
             }
             Accion::Continuar
         }
@@ -1598,20 +1624,95 @@ fn quitar_filtro_csv(layout: &mut PanelLayout) -> bool {
 /// pestaña, detección de lenguaje) y cierra el prompt; si falla (permiso
 /// denegado, directorio inexistente...) el prompt queda abierto con el
 /// motivo, para poder corregir la ruta sin perder lo ya escrito.
-fn guardar_como_confirmar(layout: &mut PanelLayout, guardar_como: &mut EstadoGuardarComo) {
-    let ruta = guardar_como.ruta().trim();
+///
+/// Con "formatear al guardar" prendido para el lenguaje del archivo
+/// (el de su ruta ANTERIOR — es el lenguaje del contenido y el de la
+/// sesión LSP abierta sobre él; un buffer "[Sin nombre]" no tiene
+/// ninguno) se formatea antes de escribir, igual que con `Ctrl+S`.
+async fn guardar_como_confirmar(layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let ruta = estado.guardar_como.ruta().trim();
     if ruta.is_empty() {
-        guardar_como.establecer_error("la ruta no puede estar vacía".to_string());
+        estado.guardar_como.establecer_error("la ruta no puede estar vacía".to_string());
         return;
     }
     let ruta = ruta.to_string();
+    formatear_antes_de_guardar(layout, estado).await;
     match layout.editor_activo_mut().guardar_como(ruta.clone()) {
         Ok(()) => {
             layout.panel_activo_mut().ruta_mostrada = ruta;
-            guardar_como.cerrar();
+            estado.guardar_como.cerrar();
         }
-        Err(e) => guardar_como.establecer_error(e.to_string()),
+        Err(e) => estado.guardar_como.establecer_error(e.to_string()),
     }
+}
+
+/// Camino ÚNICO para guardar el archivo del panel activo en su propia
+/// ruta (`archivo.guardar`, `Ctrl+S`): primero "formatear al guardar" si
+/// corresponde (`formatear_antes_de_guardar`), después escribir a disco.
+/// Cualquier otro disparador de guardado del archivo activo (p. ej. el
+/// guardado automático, BACKLOG.md P2 #4) debería pasar por acá en vez
+/// de llamar a `Editor::guardar` directo, para respetar la misma
+/// configuración. Un panel que NO es el activo no puede formatearse (la
+/// única sesión LSP es la del panel activo, ver `lsp.rs`): para esos,
+/// `Editor::guardar` directo es lo correcto. Falla igual que
+/// `Editor::guardar` (buffer sin ruta, error de disco); formatear nunca
+/// hace fallar el guardado.
+async fn guardar_archivo_activo(layout: &mut PanelLayout, estado: &mut EstadoApp) -> Result<()> {
+    formatear_antes_de_guardar(layout, estado).await;
+    layout.editor_activo_mut().guardar()
+}
+
+/// "Formatear al guardar" (PLAN.md §5 "Editor", BACKLOG.md P2 #5): si
+/// está prendido para el lenguaje del archivo activo (`f` en "Lenguajes
+/// / LSP" del panel de administración), le pide `textDocument/
+/// formatting` al LSP y aplica el resultado como UNA sola edición
+/// deshacible (`Editor::aplicar_ediciones`: un `Ctrl+Z` después de
+/// guardar vuelve al texto sin formatear). Con la opción apagada no hace
+/// absolutamente nada — ni siquiera sincroniza con el LSP —, así que
+/// guardar se comporta exactamente igual que antes de esta pieza.
+///
+/// Nunca bloquea el guardado: si no hay LSP, todavía está iniciando, no
+/// soporta formatear, devuelve error o no responde a tiempo
+/// (`EstadoLsp::pedir_formateo`, ~2 s como mucho), simplemente no se
+/// formatea y el aviso de la barra de estado dice por qué.
+async fn formatear_antes_de_guardar(layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let Some(lenguaje) = Lenguaje::detectar_por_extension(&layout.panel_activo().ruta_mostrada) else { return };
+    if !estado.config.lenguajes.formatear_al_guardar(lenguaje.id()) {
+        return;
+    }
+
+    // Mismo paso que el bucle hace una vez por frame: sin esto, lo
+    // tipeado desde el último frame todavía no le llegó al servidor, y
+    // sus posiciones se referirían a un texto viejo.
+    sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+    let ruta = layout.panel_activo().ruta_mostrada.clone();
+    let texto = layout.editor_activo().buffer().a_texto();
+    // rustfmt/prettier/etc. suelen tener su propia config por proyecto
+    // que manda sobre esto; es lo que se usa cuando no la hay.
+    let opciones = FormattingOptions {
+        tab_size: estado.config.editor.tamano_tabulacion as u32,
+        insert_spaces: estado.config.editor.usar_espacios,
+        ..Default::default()
+    };
+
+    let mensaje = match estado.lsp.pedir_formateo(&ruta, &texto, opciones, layout).await {
+        Ok(ediciones) => {
+            let ediciones: Vec<_> = ediciones.into_iter().map(|e| (e.inicio_byte..e.fin_byte, e.texto)).collect();
+            let editor = layout.editor_activo_mut();
+            if !editor.aplicar_ediciones(&ediciones) {
+                // Ya estaba formateado: nada que avisar.
+                return;
+            }
+            // En modo Normal (VIM) el cursor no puede quedar después del
+            // último carácter de la línea — reaplica ese recorte.
+            if editor.modo() == Modo::Normal {
+                editor.entrar_modo_normal();
+            }
+            "Formateado al guardar".to_string()
+        }
+        Err(motivo) => format!("Sin formatear: {motivo}"),
+    };
+    layout.panel_activo_mut().mensaje_estado = Some(mensaje);
 }
 
 /// `Enter` con el prompt de texto del explorador abierto (`Ctrl+K N`/
@@ -1830,6 +1931,7 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
                 en_path,
                 habilitado: estado.config.lenguajes.lsp_habilitado(lenguaje.id()),
                 personalizado: estado.config.lenguajes.comando_configurado(lenguaje.id()).is_some(),
+                formatear_al_guardar: estado.config.lenguajes.formatear_al_guardar(lenguaje.id()),
                 estado: estado_texto,
             }
         })
@@ -1897,6 +1999,17 @@ fn lenguaje_seleccionado_en_lenguajes(panel: &tcode_config::EstadoPanelAdmin) ->
         return None;
     }
     Lenguaje::TODOS.get(panel.campo()).copied()
+}
+
+/// `f` sobre una fila de "Lenguajes / LSP": prende/apaga "formatear al
+/// guardar" para ese lenguaje (BACKLOG.md P2 #5) y lo persiste al
+/// instante, igual que el resto de la sección. Se puede prender aunque
+/// el lenguaje no tenga LSP configurado todavía: sin sesión, guardar
+/// simplemente avisa que no formateó (ver `formatear_antes_de_guardar`).
+fn alternar_formatear_al_guardar_seleccionado(estado: &mut EstadoApp) {
+    let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
+    estado.config.lenguajes.alternar_formatear_al_guardar(lenguaje.id());
+    let _ = tcode_config::guardar(&estado.config);
 }
 
 /// `c` sobre una fila de "Lenguajes / LSP": empieza a editar su comando
