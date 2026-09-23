@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use ropey::Rope;
@@ -50,6 +51,18 @@ impl Eol {
     }
 }
 
+/// Fuente de números de revisión para TODOS los buffers del proceso (ver
+/// [`Buffer::revision`]). Global y no por buffer a propósito: así una
+/// revisión identifica un único contenido aunque haya varios buffers con
+/// la misma ruta (dos paneles del mismo archivo, o un archivo cerrado y
+/// vuelto a abrir) — quien cachea por "clave + revisión" nunca confunde
+/// el contenido de uno con el de otro.
+static SIGUIENTE_REVISION: AtomicU64 = AtomicU64::new(1);
+
+fn nueva_revision() -> u64 {
+    SIGUIENTE_REVISION.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Contenido de un archivo abierto en el editor.
 ///
 /// Usa un "rope" (`ropey`) en lugar de un `String` plano: permite insertar y
@@ -60,6 +73,8 @@ pub struct Buffer {
     ruta: Option<PathBuf>,
     modificado: bool,
     eol: Eol,
+    /// Ver [`Buffer::revision`].
+    revision: u64,
 }
 
 impl Buffer {
@@ -70,6 +85,7 @@ impl Buffer {
             ruta: None,
             modificado: false,
             eol: Eol::Lf,
+            revision: nueva_revision(),
         }
     }
 
@@ -91,11 +107,34 @@ impl Buffer {
             ruta: Some(ruta.to_path_buf()),
             modificado: false,
             eol,
+            revision: nueva_revision(),
         })
     }
 
     pub fn eol(&self) -> Eol {
         self.eol
+    }
+
+    /// Número que cambia con CADA mutación del texto (insertar, borrar,
+    /// reemplazar, deshacer/rehacer vía `reemplazar_rope`) y con nada
+    /// más — guardar o mover el cursor no lo tocan. Dos lecturas con la
+    /// misma revisión garantizan el mismo texto, así que los consumidores
+    /// que trabajan por frame (el resaltador vía `vista_codigo`, la
+    /// sincronización con el LSP) pueden saltarse `a_texto()` y la
+    /// comparación del archivo entero cuando no hubo cambios
+    /// (BACKLOG.md P1 #14). Es único entre todos los buffers del proceso
+    /// (ver `SIGUIENTE_REVISION`). Lo contrario no vale: una revisión
+    /// nueva puede tener el mismo texto (deshacer y rehacer, o un borrado
+    /// fuera de rango que no hizo nada) — solo cuesta el trabajo que se
+    /// hubiera hecho sin esta optimización.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Marca el texto como cambiado: `modificado` y revisión nueva.
+    fn marcar_cambio(&mut self) {
+        self.modificado = true;
+        self.revision = nueva_revision();
     }
 
     /// Guarda en la ruta ya asociada al buffer. Falla si el buffer nunca se
@@ -151,7 +190,7 @@ impl Buffer {
     /// buffer como modificado: solo `guardar`/`guardar_como` lo limpian.
     pub fn reemplazar_rope(&mut self, rope: Rope) {
         self.rope = rope;
-        self.modificado = true;
+        self.marcar_cambio();
     }
 
     /// Líneas del archivo como texto plano, sin el salto de línea final,
@@ -164,6 +203,18 @@ impl Buffer {
                 texto.strip_suffix('\n').unwrap_or(&texto).to_string()
             })
             .collect()
+    }
+
+    /// Texto de UNA línea, sin su salto de línea (vacío si `linea` no
+    /// existe) — lo mismo que `lineas_texto()[linea]`, sin copiar el
+    /// archivo entero para leer una sola línea. Es lo que usa la vista de
+    /// código para pintar solo las líneas visibles.
+    pub fn linea_texto(&self, linea: usize) -> String {
+        let mut texto = self.linea_con_salto(linea);
+        if texto.ends_with('\n') {
+            texto.pop();
+        }
+        texto
     }
 
     /// Offset en bytes (UTF-8) del inicio de una línea dentro del texto
@@ -233,13 +284,13 @@ impl Buffer {
     pub fn insertar_char(&mut self, linea: usize, columna: usize, c: char) {
         let idx = self.indice_char(linea, columna);
         self.rope.insert_char(idx, c);
-        self.modificado = true;
+        self.marcar_cambio();
     }
 
     pub fn insertar_str(&mut self, linea: usize, columna: usize, texto: &str) {
         let idx = self.indice_char(linea, columna);
         self.rope.insert(idx, texto);
-        self.modificado = true;
+        self.marcar_cambio();
     }
 
     /// Borra el carácter inmediatamente anterior al cursor (Backspace). Si el
@@ -250,7 +301,7 @@ impl Buffer {
             return;
         }
         self.rope.remove(idx - 1..idx);
-        self.modificado = true;
+        self.marcar_cambio();
     }
 
     /// Borra el carácter bajo/después del cursor (Delete).
@@ -260,7 +311,7 @@ impl Buffer {
             return;
         }
         self.rope.remove(idx..idx + 1);
-        self.modificado = true;
+        self.marcar_cambio();
     }
 
     pub fn a_texto(&self) -> String {
@@ -288,7 +339,7 @@ impl Buffer {
         let fin_char = self.rope.byte_to_char(fin_byte);
         self.rope.remove(inicio_char..fin_char);
         self.rope.insert(inicio_char, reemplazo);
-        self.modificado = true;
+        self.marcar_cambio();
     }
 
     /// Offset de bytes absoluto de una posición línea/columna, recortada
@@ -384,6 +435,49 @@ mod tests {
         assert!(con_salto.termina_en_salto_de_linea());
 
         assert!(!Buffer::nuevo().termina_en_salto_de_linea()); // buffer vacío
+    }
+
+    /// La revisión cambia con cada mutación del texto (incluido
+    /// `reemplazar_rope`, que es como deshacen/rehacen) y con nada más —
+    /// es lo que permite a la vista de código y al LSP saltarse el
+    /// trabajo por frame cuando no hubo cambios (BACKLOG.md P1 #14).
+    #[test]
+    fn revision_cambia_con_cada_mutacion_y_solo_con_ellas() {
+        let mut buffer = Buffer::nuevo();
+        let mut vistas = std::collections::HashSet::new();
+        let mut anterior = buffer.revision();
+        vistas.insert(anterior);
+        let mut comprobar_cambio = |buffer: &Buffer| {
+            assert_ne!(buffer.revision(), anterior);
+            assert!(vistas.insert(buffer.revision()), "una revisión nunca se repite");
+            anterior = buffer.revision();
+        };
+
+        buffer.insertar_str(0, 0, "hola\nmundo");
+        comprobar_cambio(&buffer);
+        buffer.insertar_char(0, 0, 'x');
+        comprobar_cambio(&buffer);
+        buffer.borrar_atras(0, 1);
+        comprobar_cambio(&buffer);
+        buffer.borrar_adelante(0, 0);
+        comprobar_cambio(&buffer);
+        buffer.reemplazar_rango_bytes(0, 1, "H");
+        comprobar_cambio(&buffer);
+        buffer.reemplazar_rope(Rope::from_str("otro"));
+        comprobar_cambio(&buffer);
+
+        // Operaciones que no tocan el texto no cambian la revisión.
+        let antes = buffer.revision();
+        buffer.borrar_atras(0, 0); // al inicio: no hay nada que borrar
+        buffer.borrar_adelante(0, 99); // al final: tampoco
+        let _ = buffer.a_texto();
+        let destino = archivo_temporal("revision", b"");
+        buffer.guardar_como(&destino).unwrap();
+        assert_eq!(buffer.revision(), antes);
+        std::fs::remove_file(destino).ok();
+
+        // Dos buffers distintos nunca comparten revisión.
+        assert_ne!(Buffer::nuevo().revision(), Buffer::nuevo().revision());
     }
 
     #[test]

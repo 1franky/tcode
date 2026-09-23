@@ -1,10 +1,13 @@
+use std::ops::Range;
+
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use tcode_core::{Coincidencia, Editor};
+use tcode_core::{linea_de_ordinal, ordinal_visible, tramo_que_oculta, Coincidencia, Editor};
+use tcode_fs::MarcaGit;
 use tcode_lsp::{DiagnosticoSimple, Severidad};
 use tcode_syntax::{Lenguaje, Resaltador, Token};
 
@@ -60,27 +63,135 @@ fn filas_visuales_de(idx_linea: usize, linea: &str, ancho: usize) -> Vec<FilaVis
     filas
 }
 
-/// Índice de la fila visual (posición dentro de la secuencia completa de
-/// filas de todo el archivo, el mismo espacio de coordenadas que
-/// `EstadoUi::scroll`) que contiene la posición `(idx_linea,
-/// columna)` — `columna` es un índice de CARÁCTER dentro de la línea
-/// (`tcode_core::Cursor::columna`), no de byte. Sin ajuste de línea
-/// coincide siempre con `idx_linea` (una fila por línea); con el ajuste
-/// activo, suma las filas de todas las líneas anteriores más la
-/// sub-fila de `columna` dentro de la suya — sin necesitar buscar en la
-/// lista de filas ya construida.
-fn fila_de_cursor(lineas: &[String], idx_linea: usize, columna: usize, ajuste_linea: bool, ancho: usize) -> usize {
-    if !ajuste_linea {
-        return idx_linea;
+/// Cuántas filas visuales ocupa una línea de `num_chars` caracteres con
+/// ajuste de línea a `ancho` — la misma cuenta que hace
+/// [`filas_visuales_de`] (al menos una fila, incluso vacía), sin
+/// necesitar el texto de la línea: alcanza con su largo, que el `Buffer`
+/// da sin copiar nada (`longitud_visible_linea`).
+fn filas_de_linea(num_chars: usize, ancho: usize) -> usize {
+    if num_chars == 0 { 1 } else { num_chars.div_ceil(ancho) }
+}
+
+/// Una posición en filas visuales relativa a una línea lógica: `(línea,
+/// sub-fila dentro de esa línea)`. Así se guarda el scroll con ajuste de
+/// línea (ver [`EstadoUi`]), y así se ubica el cursor.
+type PosicionVisual = (usize, usize);
+
+/// La línea visible que sigue a `linea`, salteando las ocultas por
+/// bloques plegados (`ocultos`, BACKLOG.md P2 #7) — puede ser
+/// `num_lineas` o más si no queda ninguna.
+fn siguiente_visible(ocultos: &[Range<usize>], linea: usize) -> usize {
+    tramo_que_oculta(ocultos, linea + 1).map_or(linea + 1, |t| t.end)
+}
+
+/// La línea visible anterior a `linea`, salteando las plegadas; `None`
+/// en la primera. Una línea oculta siempre tiene su cabecera visible
+/// justo antes del tramo (los tramos nunca empiezan en la línea 0 ni se
+/// tocan entre sí), así que es `tramo.start - 1`.
+fn anterior_visible(ocultos: &[Range<usize>], linea: usize) -> Option<usize> {
+    let anterior = linea.checked_sub(1)?;
+    Some(tramo_que_oculta(ocultos, anterior).map_or(anterior, |t| t.start - 1))
+}
+
+/// `linea` si es visible; si está dentro de un bloque plegado, la
+/// cabecera del bloque (lo que se ve en su lugar).
+fn visible_o_cabecera(ocultos: &[Range<usize>], linea: usize) -> usize {
+    tramo_que_oculta(ocultos, linea).map_or(linea, |t| t.start - 1)
+}
+
+/// Scroll automático con ajuste de línea: el equivalente de
+/// [`ajustar_scroll`] cuando una línea puede ocupar varias filas. Recibe
+/// el scroll actual (`ancla`, la primera fila en pantalla) y la fila del
+/// cursor, y devuelve el scroll nuevo más a cuántas filas debajo de él
+/// queda el cursor (su fila en pantalla).
+///
+/// Antes el scroll era un índice de fila visual sobre el archivo ENTERO,
+/// y ubicarlo obligaba a partir en filas todas las líneas en cada frame —
+/// O(archivo) aunque solo se vieran 40 filas (BACKLOG.md P1 #14). Ahora
+/// el ancla es relativa a una línea lógica y solo se recorren las líneas
+/// visibles entre el ancla y el cursor, cortando en cuanto la distancia
+/// pasa de `alto` (y, si el cursor quedó abajo, `alto` filas hacia atrás
+/// desde él): O(alto de pantalla) sin importar el tamaño del archivo ni
+/// cuánto haya saltado el cursor (`Ctrl+End`). Las líneas plegadas
+/// (`ocultos`) no ocupan filas: se saltan de un tramo entero. El
+/// resultado en pantalla es el mismo que antes — mismo criterio de
+/// "mover lo mínimo para que el cursor se vea" — salvo cuando cambia
+/// cuántas filas ocupan líneas que quedan ARRIBA de lo visible
+/// (redimensionar la ventana, editar con un multi-cursor fuera de
+/// pantalla, plegar algo más arriba): antes se conservaba el número de
+/// fila global y lo visible se corría; ahora se conserva la línea de
+/// arriba, que es lo que se espera.
+///
+/// `filas(l)` da cuántas filas visuales ocupa la línea visible `l` (ver
+/// [`filas_de_linea`]); parámetro en vez de leer del `Buffer` acá adentro
+/// para poder probarla sin armar un editor.
+fn ajustar_scroll_con_ajuste(
+    ancla: PosicionVisual,
+    cursor: PosicionVisual,
+    alto_visible: usize,
+    num_lineas: usize,
+    ocultos: &[Range<usize>],
+    filas: impl Fn(usize) -> usize,
+) -> (PosicionVisual, usize) {
+    let num_lineas = num_lineas.max(1);
+    // Una columna justo al final de una línea cuyo largo es múltiplo del
+    // ancho cae en la sub-fila "siguiente" (`columna / ancho`); con el
+    // índice global de antes eso era la primera fila de la línea visible
+    // de abajo — se normaliza igual para que el cursor se dibuje donde
+    // siempre.
+    let (mut linea_cursor, mut subfila_cursor) = (visible_o_cabecera(ocultos, cursor.0), cursor.1);
+    while siguiente_visible(ocultos, linea_cursor) < num_lineas && subfila_cursor >= filas(linea_cursor) {
+        subfila_cursor -= filas(linea_cursor);
+        linea_cursor = siguiente_visible(ocultos, linea_cursor);
     }
-    let filas_antes: usize = lineas[..idx_linea]
-        .iter()
-        .map(|l| {
-            let num_chars = l.chars().count();
-            if num_chars == 0 { 1 } else { num_chars.div_ceil(ancho) }
-        })
-        .sum();
-    filas_antes + columna / ancho
+    // El texto o los pliegues pudieron cambiar desde el frame anterior
+    // (líneas borradas, una línea que ahora ocupa menos filas, el ancla
+    // quedó adentro de un bloque recién plegado): el ancla se lleva a una
+    // fila que exista y se vea.
+    let linea_ancla = visible_o_cabecera(ocultos, ancla.0.min(num_lineas - 1));
+    let ancla = (linea_ancla, ancla.1.min(filas(linea_ancla) - 1));
+    if alto_visible == 0 {
+        return (ancla, 0);
+    }
+    let cursor = (linea_cursor, subfila_cursor);
+    if cursor < ancla {
+        return (cursor, 0);
+    }
+
+    // Distancia en filas del ancla al cursor, sin pasar de `alto_visible`.
+    let distancia = if linea_cursor == ancla.0 {
+        subfila_cursor - ancla.1
+    } else {
+        let mut distancia = filas(ancla.0) - ancla.1;
+        let mut linea = siguiente_visible(ocultos, ancla.0);
+        while linea < linea_cursor && distancia < alto_visible {
+            distancia += filas(linea);
+            linea = siguiente_visible(ocultos, linea);
+        }
+        distancia + subfila_cursor
+    };
+    if distancia < alto_visible {
+        return (ancla, distancia);
+    }
+
+    // El cursor quedó debajo de lo visible: el ancla nueva es la fila que
+    // deja al cursor en la última fila de la pantalla.
+    let (mut linea, mut subfila) = cursor;
+    let mut faltan = alto_visible - 1;
+    while faltan > 0 {
+        if subfila >= faltan {
+            subfila -= faltan;
+            break;
+        }
+        faltan -= subfila + 1;
+        let Some(anterior) = anterior_visible(ocultos, linea) else {
+            subfila = 0;
+            break;
+        };
+        linea = anterior;
+        subfila = filas(linea) - 1;
+    }
+    ((linea, subfila), alto_visible - 1)
 }
 
 /// Dibuja el contenido del archivo (coloreado por tree-sitter si la
@@ -112,6 +223,10 @@ fn fila_de_cursor(lineas: &[String], idx_linea: usize, columna: usize, ajuste_li
 /// no a la línea lógica, así que con ajuste de línea activo se ve en la
 /// misma columna de pantalla en todas las filas de una línea partida,
 /// consistente con cómo se ve en cualquier otro editor.
+/// `marcas_git` son los indicadores de git (BACKLOG.md P2 #6, ver
+/// `tcode_fs::DiffGit`): `None` = sin columna de git (toggle apagado, o
+/// archivo sin base en `HEAD`); `Some` reserva una columna de 1 carácter
+/// entre los números y el código — ver [`dibujar_gutter`].
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -128,45 +243,88 @@ pub fn dibujar(
     mostrar_numeros: bool,
     ajuste_linea: bool,
     columna_regla: Option<usize>,
+    marcas_git: Option<&[Option<MarcaGit>]>,
 ) {
-    let lineas = editor.buffer().lineas_texto();
-    let (area_gutter, area) = dividir_gutter(area, lineas.len(), mostrar_numeros);
+    let buffer = editor.buffer();
+    let (area_gutter, area) = dividir_gutter(area, buffer.num_lineas(), mostrar_numeros, marcas_git.is_some());
 
     let alto_visible = area.height as usize;
     let ancho_visible = area.width as usize;
     let ancho = ancho_visible.max(1);
     let cursor = editor.cursor();
     let cursores = editor.cursores();
+    // Líneas ocultas por bloques plegados (BACKLOG.md P2 #7): no se
+    // dibujan, y el scroll cuenta solo filas de líneas visibles.
+    let ocultos = editor.plegado().tramos_ocultos();
 
-    // Filas visuales de TODO el archivo, no solo las visibles: hace
-    // falta la secuencia completa para poder calcular scroll/cursor en
-    // términos de fila visual quando el ajuste de línea está activo
-    // (una línea larga puede correr el índice de las que vienen
-    // después). Recorrer todo el archivo cada frame para esto es
-    // aceptable con el mismo criterio que ya usa el resaltador de
-    // sintaxis (recalcula tree-sitter completo cada frame en vez de
-    // parsing incremental, ver `tcode_syntax::Resaltador`): correctitud
-    // primero, optimizar cuando haga falta de verdad. Sin ajuste de
-    // línea esto es tan barato como antes (una fila por línea, sin
-    // partir nada).
-    let filas: Vec<FilaVisual> = if ajuste_linea {
-        lineas.iter().enumerate().flat_map(|(idx, l)| filas_visuales_de(idx, l, ancho)).collect()
+    // Solo las filas que entran en pantalla, leyendo del buffer
+    // únicamente las líneas visibles — copiar todas las líneas en cada
+    // frame costaba ~3 ms con 10.000 líneas (BACKLOG.md P1 #14). Sin
+    // ajuste de línea hay una fila por línea visible (`filas[0]` es la
+    // línea visible número `estado.scroll`); con ajuste, el scroll es la
+    // posición `(estado.scroll, estado.subfila_scroll)` — línea lógica +
+    // sub-fila, ver `ajustar_scroll_con_ajuste` — y se parten en filas
+    // solo las líneas desde ahí hasta llenar la pantalla. En los dos
+    // casos las líneas plegadas se saltan de un tramo entero.
+    let (filas, fila_cursor_en_pantalla) = if ajuste_linea {
+        let filas_de = |l: usize| filas_de_linea(buffer.longitud_visible_linea(l), ancho);
+        let ancla = (estado.scroll, estado.subfila_scroll);
+        let cursor_visual = (cursor.linea, cursor.columna / ancho);
+        let (ancla, fila_cursor) =
+            ajustar_scroll_con_ajuste(ancla, cursor_visual, alto_visible, buffer.num_lineas(), &ocultos, filas_de);
+        (estado.scroll, estado.subfila_scroll) = ancla;
+        let mut filas: Vec<FilaVisual> = Vec::with_capacity(alto_visible);
+        let mut linea = ancla.0;
+        let mut saltear = ancla.1;
+        while filas.len() < alto_visible && linea < buffer.num_lineas() {
+            let texto = buffer.linea_texto(linea);
+            let restantes = alto_visible - filas.len();
+            filas.extend(filas_visuales_de(linea, &texto, ancho).into_iter().skip(saltear).take(restantes));
+            saltear = 0;
+            linea = siguiente_visible(&ocultos, linea);
+        }
+        (filas, fila_cursor)
     } else {
-        lineas.iter().enumerate().map(|(idx, l)| FilaVisual { idx_linea: idx, inicio: 0, fin: l.len() }).collect()
+        estado.subfila_scroll = 0;
+        // Sin pliegues, `linea_de_ordinal`/`ordinal_visible` son la
+        // identidad y esto es exactamente lo de antes: las líneas
+        // `scroll..scroll + alto`.
+        let fila_cursor = ordinal_visible(&ocultos, cursor.linea);
+        ajustar_scroll(estado, fila_cursor, alto_visible);
+        let mut filas = Vec::with_capacity(alto_visible);
+        let mut idx = linea_de_ordinal(&ocultos, estado.scroll);
+        while filas.len() < alto_visible && idx < buffer.num_lineas() {
+            if let Some(tramo) = tramo_que_oculta(&ocultos, idx) {
+                idx = tramo.end;
+                continue;
+            }
+            filas.push(FilaVisual { idx_linea: idx, inicio: 0, fin: buffer.linea_texto(idx).len() });
+            idx += 1;
+        }
+        (filas, fila_cursor.saturating_sub(estado.scroll))
+    };
+    // Texto de las líneas que tocan las filas visibles, indexado desde la
+    // primera de ellas. Las ocultas por un pliegue en el medio no se
+    // leen del buffer (quedan vacías): con todo plegado, lo visible puede
+    // abarcar el archivo entero.
+    let primera_linea = filas.first().map_or(0, |f| f.idx_linea);
+    let ultima_linea = filas.last().map_or(0, |f| f.idx_linea);
+    let lineas: Vec<String> = if filas.is_empty() {
+        Vec::new()
+    } else {
+        (primera_linea..=ultima_linea)
+            .map(|i| if tramo_que_oculta(&ocultos, i).is_some() { String::new() } else { buffer.linea_texto(i) })
+            .collect()
     };
 
-    let fila_cursor = fila_de_cursor(&lineas, cursor.linea, cursor.columna, ajuste_linea, ancho);
-    ajustar_scroll(estado, fila_cursor, alto_visible);
-
-    let tokens = calcular_tokens(editor, resaltador, ruta);
+    let tramos_visibles = tramos_bytes_visibles(editor, &filas);
+    let tokens = calcular_tokens(editor, resaltador, ruta, &tramos_visibles);
     let lineas_con_cursor: Vec<usize> = cursores.iter().map(|c| c.cursor.linea).collect();
 
     let visibles: Vec<Line> = filas
         .iter()
-        .skip(estado.scroll)
-        .take(alto_visible)
         .map(|fila| {
-            let linea = &lineas[fila.idx_linea];
+            let linea = &lineas[fila.idx_linea - primera_linea];
             let inicio_byte_linea = editor.buffer().inicio_byte_linea(fila.idx_linea);
             let inicio_byte = inicio_byte_linea + fila.inicio;
             let fin_byte = inicio_byte_linea + fila.fin;
@@ -199,6 +357,15 @@ pub fn dibujar(
                         estilo
                     }
                 });
+            }
+
+            // Marcador de bloque plegado (BACKLOG.md P2 #7) al final de la
+            // cabecera — en su última fila si la línea está partida por el
+            // ajuste de línea. Solo ASCII: los símbolos Unicode de ancho
+            // ambiguo (el de puntos suspensivos, los triángulos) desalinean
+            // el render en Windows Terminal (ver el fix de v0.5.1).
+            if fila.fin == linea.len() && ocultos.iter().any(|t| t.start == fila.idx_linea + 1) {
+                spans.push(Span::styled(" ... ", Style::default().fg(paleta.numero_linea).bg(paleta.seleccion)));
             }
 
             // Regla vertical (BACKLOG.md P1 #5): entre selección/búsqueda
@@ -296,13 +463,13 @@ pub fn dibujar(
     );
 
     if let Some(area_gutter) = area_gutter {
-        dibujar_gutter(frame, area_gutter, &filas, estado.scroll, alto_visible, cursor.linea, paleta);
+        dibujar_gutter(frame, area_gutter, &filas, alto_visible, cursor.linea, paleta, mostrar_numeros, marcas_git);
     }
 
     if mostrar_cursor {
         let columna_local = if ajuste_linea { cursor.columna % ancho } else { cursor.columna };
         let columna = area.x + columna_local as u16;
-        let fila_pantalla = area.y + (fila_cursor - estado.scroll) as u16;
+        let fila_pantalla = area.y + fila_cursor_en_pantalla as u16;
         frame.set_cursor_position((columna, fila_pantalla));
     }
 }
@@ -337,12 +504,20 @@ fn color_severidad(paleta: &Paleta, severidad: Severidad) -> ratatui::style::Col
 /// demasiado angosta para reservarle aunque sea 3 columnas al gutter (2
 /// dígitos + 1 espacio de separación), no hay gutter: se devuelve `(None,
 /// area)` sin recortar nada, priorizando el código sobre los números.
-fn dividir_gutter(area: Rect, total_lineas: usize, mostrar_numeros: bool) -> (Option<Rect>, Rect) {
-    if !mostrar_numeros {
+///
+/// `con_git` suma la columna de los indicadores de git (BACKLOG.md P2 #6)
+/// entre los números y el espacio de separación. Con los números
+/// apagados, el gutter aparece igual si hay columna de git (marca +
+/// espacio, 2 columnas): el usuario apagó los números, no las marcas —
+/// para no verlas está su propio toggle. Como `con_git` solo es `true`
+/// para archivos con base en `HEAD`, un archivo fuera de un repo sigue
+/// sin gutter con los números apagados, igual que antes de esta pieza.
+fn dividir_gutter(area: Rect, total_lineas: usize, mostrar_numeros: bool, con_git: bool) -> (Option<Rect>, Rect) {
+    if !mostrar_numeros && !con_git {
         return (None, area);
     }
-    let ancho_numero = total_lineas.max(1).to_string().len().max(2) as u16;
-    let ancho_gutter = ancho_numero + 1;
+    let ancho_numero = if mostrar_numeros { total_lineas.max(1).to_string().len().max(2) as u16 } else { 0 };
+    let ancho_gutter = ancho_numero + u16::from(con_git) + 1;
     if area.width <= ancho_gutter {
         return (None, area);
     }
@@ -353,9 +528,9 @@ fn dividir_gutter(area: Rect, total_lineas: usize, mostrar_numeros: bool) -> (Op
     (Some(partes[0]), partes[1])
 }
 
-/// Dibuja los números de línea de las filas visibles (mismo rango de
-/// scroll que el código, `scroll..scroll +
-/// alto_visible`, en términos de FILA VISUAL — con ajuste de línea
+/// Dibuja los números de línea de las filas visibles (`filas` son las
+/// mismas que se ven en el código, ya recortadas al scroll, en términos
+/// de FILA VISUAL — con ajuste de línea
 /// activo, varias filas seguidas pueden compartir línea lógica), alineados
 /// a la derecha con un espacio de separación antes del código. Solo la
 /// primera fila de cada línea (`FilaVisual::primera`) muestra el número
@@ -363,40 +538,100 @@ fn dividir_gutter(area: Rect, total_lineas: usize, mostrar_numeros: bool) -> (Op
 /// de los editores con ajuste de línea. Las filas que quedan más allá
 /// del final del archivo (ventana más alta que el contenido) también van
 /// en blanco en vez de mostrar números inexistentes.
+///
+/// Con `marcas_git` (BACKLOG.md P2 #6), una columna más entre el número y
+/// el espacio de separación: `+` agregada, `~` modificada, `-` hay líneas
+/// borradas justo antes de esta, cada una con su color de la sección
+/// `[git]` del tema. ASCII a propósito, no `▎`/`▔` como en otros
+/// editores: los símbolos de ancho "ambiguo" desalineaban Windows
+/// Terminal (ver `BORDE_ASCII` en `lib.rs`). Agregada/modificada se
+/// repiten en las filas de continuación de una línea partida por el
+/// ajuste de línea (la línea entera cambió); borrada va solo en la
+/// primera, que es donde está el hueco.
+#[allow(clippy::too_many_arguments)]
 fn dibujar_gutter(
     frame: &mut Frame,
     area: Rect,
     filas: &[FilaVisual],
-    scroll: usize,
     alto_visible: usize,
     linea_cursor: usize,
     paleta: &Paleta,
+    mostrar_numeros: bool,
+    marcas_git: Option<&[Option<MarcaGit>]>,
 ) {
-    let ancho_numero = area.width.saturating_sub(1) as usize;
-    let en_blanco = || Line::from(Span::styled(" ".repeat(area.width as usize), Style::default().bg(paleta.fondo)));
+    let ancho_git = usize::from(marcas_git.is_some());
+    let ancho_numero = if mostrar_numeros { (area.width as usize).saturating_sub(1 + ancho_git) } else { 0 };
+    let fondo = Style::default().bg(paleta.fondo);
+    let en_blanco = || Line::from(Span::styled(" ".repeat(area.width as usize), fondo));
     let filas_pantalla: Vec<Line> = (0..alto_visible)
         .map(|offset| {
-            let Some(fila) = filas.get(scroll + offset) else { return en_blanco() };
-            if !fila.primera() {
-                return en_blanco();
+            let Some(fila) = filas.get(offset) else { return en_blanco() };
+            let mut spans = Vec::with_capacity(3);
+            if ancho_numero > 0 {
+                let texto = if fila.primera() {
+                    format!("{:>ancho$}", fila.idx_linea + 1, ancho = ancho_numero)
+                } else {
+                    " ".repeat(ancho_numero)
+                };
+                let color = if fila.idx_linea == linea_cursor { paleta.numero_linea_activo } else { paleta.numero_linea };
+                spans.push(Span::styled(texto, fondo.fg(color)));
             }
-            let color = if fila.idx_linea == linea_cursor { paleta.numero_linea_activo } else { paleta.numero_linea };
-            let texto = format!("{:>ancho$} ", fila.idx_linea + 1, ancho = ancho_numero);
-            Line::from(Span::styled(texto, Style::default().fg(color).bg(paleta.fondo)))
+            if let Some(marcas) = marcas_git {
+                let marca = match marcas.get(fila.idx_linea).copied().flatten() {
+                    Some(MarcaGit::Agregada) => Some(("+", paleta.git_agregada)),
+                    Some(MarcaGit::Modificada) => Some(("~", paleta.git_modificada)),
+                    Some(MarcaGit::Borrada) if fila.primera() => Some(("-", paleta.git_borrada)),
+                    _ => None,
+                };
+                spans.push(match marca {
+                    Some((simbolo, color)) => Span::styled(simbolo, fondo.fg(color)),
+                    None => Span::styled(" ", fondo),
+                });
+            }
+            spans.push(Span::styled(" ", fondo));
+            Line::from(spans)
         })
         .collect();
     frame.render_widget(Paragraph::new(filas_pantalla), area);
 }
 
-/// Resalta el archivo completo si su extensión corresponde a uno de los 5
-/// lenguajes de M1; si no, o si el parseo falla, se sigue mostrando el
-/// texto sin colorear (nunca rompe el render).
-fn calcular_tokens(editor: &Editor, resaltador: &mut Resaltador, ruta: &str) -> Vec<Token> {
+/// Rangos de bytes del texto que ocupan las filas visibles — lo único
+/// que hace falta resaltar. Uno solo (de la primera fila en pantalla a la
+/// última) salvo que haya bloques plegados en el medio: ahí se corta en
+/// un tramo por cada grupo de líneas consecutivas, para no resaltar
+/// también todo lo oculto entre ellos.
+fn tramos_bytes_visibles(editor: &Editor, filas: &[FilaVisual]) -> Vec<Range<usize>> {
+    let buffer = editor.buffer();
+    let mut tramos: Vec<Range<usize>> = Vec::new();
+    let mut linea_anterior: Option<usize> = None;
+    for fila in filas {
+        let inicio_linea = buffer.inicio_byte_linea(fila.idx_linea);
+        let (inicio, fin) = (inicio_linea + fila.inicio, inicio_linea + fila.fin);
+        match (tramos.last_mut(), linea_anterior) {
+            (Some(ultimo), Some(anterior)) if fila.idx_linea <= anterior + 1 => ultimo.end = fin,
+            _ => tramos.push(inicio..fin),
+        }
+        linea_anterior = Some(fila.idx_linea);
+    }
+    tramos
+}
+
+/// Resalta lo visible del archivo si su extensión corresponde a un
+/// lenguaje soportado; si no, o si el parseo falla, se sigue mostrando el
+/// texto sin colorear (nunca rompe el render). La ruta identifica al
+/// documento para que el resaltador re-parsee de forma incremental (ver
+/// `Resaltador::resaltar_documento_tramos_versionado`).
+fn calcular_tokens(editor: &Editor, resaltador: &mut Resaltador, ruta: &str, tramos: &[Range<usize>]) -> Vec<Token> {
     let Some(lenguaje) = Lenguaje::detectar_por_extension(ruta) else {
         return Vec::new();
     };
-    let fuente = editor.buffer().a_texto();
-    resaltador.resaltar(lenguaje, &fuente).unwrap_or_default()
+    // Con la revisión del buffer el resaltador se saltea `a_texto()` (una
+    // copia del archivo entero) y la comparación contra el texto anterior
+    // en todos los frames sin edición (BACKLOG.md P1 #14).
+    let buffer = editor.buffer();
+    resaltador
+        .resaltar_documento_tramos_versionado(ruta, lenguaje, Some(buffer.revision()), || buffer.a_texto(), tramos)
+        .unwrap_or_default()
 }
 
 /// Construye los spans coloreados de una línea a partir de los tokens del
@@ -688,39 +923,192 @@ mod tests {
         assert_eq!(textos_de_filas("áéíóú", &filas), vec!["áé", "íó", "ú"]);
     }
 
-    #[test]
-    fn fila_de_cursor_sin_ajuste_es_siempre_el_indice_de_linea() {
-        let lineas = vec!["una línea bastante larga de verdad".to_string(), "corta".to_string()];
-        assert_eq!(fila_de_cursor(&lineas, 0, 20, false, 10), 0);
-        assert_eq!(fila_de_cursor(&lineas, 1, 3, false, 10), 1);
+    /// Filas por línea de un archivo de prueba: la línea `i` ocupa
+    /// `largos[i]` filas.
+    fn ajustar(largos: &[usize], ancla: PosicionVisual, cursor: PosicionVisual, alto: usize) -> (PosicionVisual, usize) {
+        ajustar_plegado(largos, &[], ancla, cursor, alto)
+    }
+
+    fn ajustar_plegado(
+        largos: &[usize],
+        ocultos: &[Range<usize>],
+        ancla: PosicionVisual,
+        cursor: PosicionVisual,
+        alto: usize,
+    ) -> (PosicionVisual, usize) {
+        ajustar_scroll_con_ajuste(ancla, cursor, alto, largos.len(), ocultos, |l| {
+            assert!(tramo_que_oculta(ocultos, l).is_none(), "nunca pide las filas de una línea plegada ({l})");
+            largos[l]
+        })
+    }
+
+    /// Referencia: el algoritmo de antes (scroll = índice de fila visual
+    /// global, contando las filas de todo el archivo), para comparar.
+    fn ajustar_como_antes(largos: &[usize], scroll: usize, cursor: PosicionVisual, alto: usize) -> (usize, usize) {
+        let fila_cursor = a_global(largos, cursor);
+        let mut scroll = scroll;
+        if fila_cursor < scroll {
+            scroll = fila_cursor;
+        } else if fila_cursor >= scroll + alto {
+            scroll = fila_cursor - alto + 1;
+        }
+        (scroll, fila_cursor - scroll)
+    }
+
+    fn a_global(largos: &[usize], posicion: PosicionVisual) -> usize {
+        a_global_plegado(largos, &[], posicion)
+    }
+
+    /// Índice de fila visual global contando solo las líneas visibles
+    /// (las plegadas no ocupan filas) — el espacio de coordenadas del
+    /// scroll con ajuste de línea antes de BACKLOG.md P1 #14.
+    fn a_global_plegado(largos: &[usize], ocultos: &[Range<usize>], posicion: PosicionVisual) -> usize {
+        let antes: usize =
+            (0..posicion.0).filter(|&l| tramo_que_oculta(ocultos, l).is_none()).map(|l| largos[l]).sum();
+        antes + posicion.1
     }
 
     #[test]
-    fn fila_de_cursor_con_ajuste_suma_las_filas_de_las_lineas_anteriores() {
-        // Línea 0: 8 caracteres, ancho 3 -> 3 filas visuales (0,1,2).
-        // Línea 1 arranca en la fila visual global 3.
-        let lineas = vec!["abcdefgh".to_string(), "xy".to_string()];
-        assert_eq!(fila_de_cursor(&lineas, 1, 0, true, 3), 3);
-        assert_eq!(fila_de_cursor(&lineas, 1, 1, true, 3), 3);
+    fn ajustar_con_ajuste_saltea_las_lineas_plegadas() {
+        // Línea 1 (3 filas) oculta bajo la 0: el cursor en la 2 queda en
+        // la fila 1, igual que si la 1 no existiera.
+        let largos = [1, 3, 1, 1];
+        let ocultos = vec![Range { start: 1, end: 2 }];
+        assert_eq!(ajustar_plegado(&largos, &ocultos, (0, 0), (2, 0), 5), ((0, 0), 1));
+        // Bajar con alto 2: el ancla nueva es la cabecera, no la oculta.
+        assert_eq!(ajustar_plegado(&largos, &ocultos, (0, 0), (3, 0), 2), ((2, 0), 1));
+        assert_eq!(ajustar_plegado(&largos, &ocultos, (3, 0), (2, 0), 2), ((2, 0), 0));
+        // Un ancla que quedó adentro de un bloque recién plegado pasa a
+        // la cabecera.
+        assert_eq!(ajustar_plegado(&largos, &ocultos, (1, 2), (3, 0), 5), ((0, 0), 2));
+    }
+
+    /// Igual que el test de abajo, con bloques plegados al azar.
+    #[test]
+    fn ajustar_con_ajuste_y_pliegues_coincide_con_el_algoritmo_global_de_antes() {
+        let mut semilla: u64 = 0x1234_5678_9abc_def1;
+        let mut azar = |n: usize| {
+            semilla ^= semilla << 13;
+            semilla ^= semilla >> 7;
+            semilla ^= semilla << 17;
+            (semilla % n as u64) as usize
+        };
+        for _ in 0..5000 {
+            let largos: Vec<usize> = (0..2 + azar(30)).map(|_| 1 + azar(4)).collect();
+            // Tramos ordenados, que no empiezan en la línea 0 y no se
+            // tocan (como los arma `Plegado::tramos_ocultos`).
+            let mut ocultos: Vec<Range<usize>> = Vec::new();
+            let mut linea = 1 + azar(3);
+            while linea < largos.len() {
+                let fin = (linea + 1 + azar(4)).min(largos.len());
+                ocultos.push(linea..fin);
+                linea = fin + 1 + azar(4);
+            }
+            let visibles: Vec<usize> = (0..largos.len()).filter(|&l| tramo_que_oculta(&ocultos, l).is_none()).collect();
+            let alto = 1 + azar(8);
+            let linea_ancla = visibles[azar(visibles.len())];
+            let ancla = (linea_ancla, azar(largos[linea_ancla]));
+            let linea_cursor = visibles[azar(visibles.len())];
+            let cursor = (linea_cursor, azar(largos[linea_cursor]));
+            let (nueva, fila) = ajustar_plegado(&largos, &ocultos, ancla, cursor, alto);
+            assert!(tramo_que_oculta(&ocultos, nueva.0).is_none());
+            let esperado = ajustar_como_antes_plegado(&largos, &ocultos, ancla, cursor, alto);
+            assert_eq!(
+                (a_global_plegado(&largos, &ocultos, nueva), fila),
+                esperado,
+                "{largos:?} {ocultos:?} ancla {ancla:?} cursor {cursor:?} alto {alto}"
+            );
+        }
+    }
+
+    fn ajustar_como_antes_plegado(
+        largos: &[usize],
+        ocultos: &[Range<usize>],
+        ancla: PosicionVisual,
+        cursor: PosicionVisual,
+        alto: usize,
+    ) -> (usize, usize) {
+        let fila_cursor = a_global_plegado(largos, ocultos, cursor);
+        let mut scroll = a_global_plegado(largos, ocultos, ancla);
+        if fila_cursor < scroll {
+            scroll = fila_cursor;
+        } else if fila_cursor >= scroll + alto {
+            scroll = fila_cursor - alto + 1;
+        }
+        (scroll, fila_cursor - scroll)
     }
 
     #[test]
-    fn fila_de_cursor_con_ajuste_encuentra_la_sub_fila_dentro_de_su_propia_linea() {
-        let lineas = vec!["abcdefgh".to_string()];
-        // Columna 0..2 -> fila 0 ("abc"); 3..5 -> fila 1 ("def"); 6..7 ->
-        // fila 2 ("gh").
-        assert_eq!(fila_de_cursor(&lineas, 0, 0, true, 3), 0);
-        assert_eq!(fila_de_cursor(&lineas, 0, 2, true, 3), 0);
-        assert_eq!(fila_de_cursor(&lineas, 0, 3, true, 3), 1);
-        assert_eq!(fila_de_cursor(&lineas, 0, 6, true, 3), 2);
-        // Columna 8 (justo después de la última 'h', fin de línea):
-        // sigue siendo la fila 2, igual que el resto de "gh".
-        assert_eq!(fila_de_cursor(&lineas, 0, 8, true, 3), 2);
+    fn filas_de_linea_cuenta_igual_que_filas_visuales_de() {
+        for linea in ["", "a", "abc", "abcd", "áéíóúñ", "abcdefghi"] {
+            let esperado = filas_visuales_de(0, linea, 3).len();
+            assert_eq!(filas_de_linea(linea.chars().count(), 3), esperado, "{linea:?}");
+        }
     }
 
     #[test]
-    fn fila_de_cursor_con_ajuste_y_linea_vacia_cuenta_como_una_fila() {
-        let lineas = vec!["".to_string(), "resto".to_string()];
-        assert_eq!(fila_de_cursor(&lineas, 1, 0, true, 3), 1);
+    fn ajustar_con_ajuste_no_mueve_si_el_cursor_ya_se_ve() {
+        let largos = [1, 3, 1, 2, 1];
+        assert_eq!(ajustar(&largos, (1, 1), (3, 0), 5), ((1, 1), 3));
+    }
+
+    #[test]
+    fn ajustar_con_ajuste_sube_hasta_el_cursor() {
+        let largos = [1, 3, 1, 2, 1];
+        assert_eq!(ajustar(&largos, (3, 0), (1, 2), 5), ((1, 2), 0));
+    }
+
+    #[test]
+    fn ajustar_con_ajuste_baja_dejando_el_cursor_en_la_ultima_fila() {
+        // Filas globales: l0=0, l1=1..3, l2=4, l3=5..6, l4=7. Cursor en
+        // (4,0) = fila 7, alto 3 -> la primera fila visible es la 5 = (3,0).
+        let largos = [1, 3, 1, 2, 1];
+        assert_eq!(ajustar(&largos, (0, 0), (4, 0), 3), ((3, 0), 2));
+        // A mitad de una línea partida: cursor (3,1) = fila 6 -> desde la 4.
+        assert_eq!(ajustar(&largos, (0, 0), (3, 1), 3), ((2, 0), 2));
+    }
+
+    #[test]
+    fn ajustar_con_ajuste_normaliza_la_columna_al_final_de_una_linea_justa() {
+        // Línea 0 de 3 filas: la sub-fila 3 (columna == largo, múltiplo
+        // del ancho) es la primera fila de la línea 1, igual que antes.
+        let largos = [3, 1];
+        assert_eq!(ajustar(&largos, (0, 0), (0, 3), 5), ((0, 0), 3));
+    }
+
+    #[test]
+    fn ajustar_con_ajuste_recorta_un_ancla_que_ya_no_existe() {
+        let largos = [2, 1];
+        assert_eq!(ajustar(&largos, (9, 4), (0, 0), 5), ((0, 0), 0));
+        assert_eq!(ajustar(&largos, (0, 7), (1, 0), 5), ((0, 1), 1));
+    }
+
+    /// Mismo resultado que el algoritmo de antes (sobre el archivo
+    /// entero) para muchas combinaciones pseudoaleatorias de largos de
+    /// línea, scroll y cursor.
+    #[test]
+    fn ajustar_con_ajuste_coincide_con_el_algoritmo_global_de_antes() {
+        let mut semilla: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut azar = |n: usize| {
+            semilla ^= semilla << 13;
+            semilla ^= semilla >> 7;
+            semilla ^= semilla << 17;
+            (semilla % n as u64) as usize
+        };
+        for _ in 0..5000 {
+            let largos: Vec<usize> = (0..1 + azar(30)).map(|_| 1 + azar(4)).collect();
+            let alto = 1 + azar(8);
+            let linea_ancla = azar(largos.len());
+            let ancla = (linea_ancla, azar(largos[linea_ancla]));
+            let linea_cursor = azar(largos.len());
+            let cursor = (linea_cursor, azar(largos[linea_cursor]));
+            let (nueva, fila) = ajustar(&largos, ancla, cursor, alto);
+            let esperado = ajustar_como_antes(&largos, a_global(&largos, ancla), cursor, alto);
+            assert_eq!(
+                (a_global(&largos, nueva), fila),
+                esperado,
+                "{largos:?} ancla {ancla:?} cursor {cursor:?} alto {alto}"
+            );
+        }
     }
 }

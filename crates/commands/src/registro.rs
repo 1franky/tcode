@@ -35,11 +35,27 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "markdown.alternar_preview", descripcion: "Markdown: Alternar preview" },
         Comando { id: "markdown.preview_solo", descripcion: "Markdown: Ver solo preview" },
         Comando { id: "csv.alternar_vista_tabla", descripcion: "CSV: Alternar vista de tabla" },
+        Comando { id: "csv.ordenar", descripcion: "CSV: Ordenar por la columna actual (alterna asc/desc)" },
+        Comando { id: "csv.filtrar", descripcion: "CSV: Filtrar por la columna actual" },
+        Comando { id: "csv.quitar_filtro", descripcion: "CSV: Quitar filtro" },
+        Comando { id: "csv.insertar_fila_debajo", descripcion: "CSV: Insertar fila debajo" },
+        Comando { id: "csv.insertar_fila_arriba", descripcion: "CSV: Insertar fila arriba" },
+        Comando { id: "csv.insertar_columna_derecha", descripcion: "CSV: Insertar columna a la derecha" },
+        Comando { id: "csv.insertar_columna_izquierda", descripcion: "CSV: Insertar columna a la izquierda" },
+        Comando { id: "csv.eliminar_fila", descripcion: "CSV: Eliminar fila" },
+        Comando { id: "csv.eliminar_columna", descripcion: "CSV: Eliminar columna" },
+        Comando { id: "csv.ensanchar_columna", descripcion: "CSV: Ensanchar columna" },
+        Comando { id: "csv.angostar_columna", descripcion: "CSV: Angostar columna" },
+        Comando { id: "csv.restablecer_ancho", descripcion: "CSV: Restablecer ancho automático de columna" },
         Comando {
             id: "cursor.seleccionar_siguiente_ocurrencia",
             descripcion: "Selección: Agregar la siguiente ocurrencia",
         },
         Comando { id: "cursor.seleccionar_todas_ocurrencias", descripcion: "Selección: Seleccionar todas las ocurrencias" },
+        Comando { id: "plegar.actual", descripcion: "Plegado: Plegar el bloque del cursor" },
+        Comando { id: "plegar.desplegar", descripcion: "Plegado: Desplegar el bloque del cursor" },
+        Comando { id: "plegar.todo", descripcion: "Plegado: Plegar todo" },
+        Comando { id: "plegar.desplegar_todo", descripcion: "Plegado: Desplegar todo" },
     ]
 }
 

@@ -10,7 +10,6 @@ description = "Resaltado de sintaxis de tcode vía tree-sitter: parsing incremen
 [dependencies]
 anyhow.workspace = true
 tree-sitter.workspace = true
-tree-sitter-highlight.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-python.workspace = true
 tree-sitter-javascript.workspace = true
@@ -27,3 +26,8 @@ tree-sitter-kotlin-sg.workspace = true
 tree-sitter-html.workspace = true
 tree-sitter-css.workspace = true
 tree-sitter-sequel.workspace = true
+
+[dev-dependencies]
+# Solo como referencia en los tests: el motor anterior, para confirmar que
+# el resaltado incremental produce exactamente los mismos tokens.
+tree-sitter-highlight.workspace = true

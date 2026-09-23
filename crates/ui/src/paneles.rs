@@ -3,6 +3,7 @@ use ratatui::Frame;
 
 use tcode_config::ConfigInterfaz;
 use tcode_core::{delimitador_por_extension, Editor, EstadoBusqueda, EstadoCsv};
+use tcode_fs::DiffGit;
 use tcode_lsp::DiagnosticoSimple;
 use tcode_syntax::{Lenguaje, Resaltador};
 
@@ -61,6 +62,22 @@ pub struct PanelEditor {
     pub modo_markdown: ModoMarkdown,
     pub modo_csv: ModoCsv,
     pub estado_csv: EstadoCsv,
+    /// Base de `HEAD` + marcas por línea para los indicadores de git del
+    /// gutter (BACKLOG.md P2 #6). Se carga sola la primera vez que se
+    /// dibuja el panel con un archivo con ruta (ver `dibujar_panel`).
+    pub git: DiffGit,
+    /// Motivo del último intento de guardar este documento que falló
+    /// (permiso denegado, carpeta borrada...), mostrado en la statusbar
+    /// hasta que un guardado posterior funcione o se abra otro archivo
+    /// en el panel. Lo fija `app` (`guardar_panel` en `main.rs`) tanto
+    /// para `Ctrl+S` como para el guardado automático (BACKLOG.md P2 #4)
+    /// — este último corre solo, sin ningún prompt donde mostrar el error.
+    pub aviso_guardado: Option<String>,
+    /// Aviso corto y transitorio para la barra de estado de este panel
+    /// (por ahora solo lo deja el guardado con "formatear al guardar"
+    /// prendido, BACKLOG.md P2 #5: "Formateado al guardar" o por qué no
+    /// se formateó). `app` lo limpia con la siguiente tecla.
+    pub mensaje_estado: Option<String>,
 }
 
 impl PanelEditor {
@@ -74,6 +91,9 @@ impl PanelEditor {
             modo_markdown: ModoMarkdown::default(),
             modo_csv,
             estado_csv: EstadoCsv::nuevo(),
+            git: DiffGit::nuevo(),
+            aviso_guardado: None,
+            mensaje_estado: None,
         }
     }
 
@@ -171,6 +191,13 @@ impl Layout {
         salida
     }
 
+    /// Todos los paneles, en el mismo orden que los índices de
+    /// `ir_a_panel` — para lo que tiene que recorrerlos a todos, no solo
+    /// el activo (el guardado automático, BACKLOG.md P2 #4).
+    pub fn paneles_mut(&mut self) -> Vec<&mut PanelEditor> {
+        self.hojas_mut()
+    }
+
     fn hojas_mut(&mut self) -> Vec<&mut PanelEditor> {
         fn recorrer<'a>(panel: &'a mut Panel, salida: &mut Vec<&'a mut PanelEditor>) {
             match panel {
@@ -214,6 +241,28 @@ impl Layout {
         panel.modo_markdown = ModoMarkdown::default();
         panel.modo_csv = if panel.es_csv() { ModoCsv::Tabla } else { ModoCsv::Fuente };
         panel.estado_csv = EstadoCsv::nuevo();
+        panel.aviso_guardado = None;
+        panel.git = DiffGit::nuevo();
+    }
+
+    /// Vuelve a leer de `HEAD` la base de los indicadores de git de todos
+    /// los paneles (BACKLOG.md P2 #6) — la app lo llama al guardar: es el
+    /// momento natural en que un commit hecho desde otra terminal se
+    /// vuelve visible. Todos y no solo el activo porque el mismo archivo
+    /// puede estar abierto en más de un panel; son pocos y cada uno es un
+    /// `git cat-file` en segundo plano.
+    pub fn refrescar_bases_git(&mut self) {
+        for panel in self.hojas_mut() {
+            panel.git.refrescar_base();
+        }
+    }
+
+    /// Si algún panel está esperando que `git` devuelva su base o que
+    /// termine de calcularse su diff: mientras tanto la app vuelve a
+    /// dibujar cada tanto aunque no lleguen teclas, para que las marcas
+    /// aparezcan solas al terminar.
+    pub fn cargas_git_pendientes(&self) -> bool {
+        self.hojas().iter().any(|p| p.git.pendiente())
     }
 
     /// `Ctrl+K T`: alterna el panel activo entre la vista de tabla y el
@@ -307,6 +356,7 @@ impl Layout {
         mostrar_numeros: bool,
         ajuste_linea: bool,
         columna_regla: Option<usize>,
+        indicadores_git: bool,
         interfaz: &ConfigInterfaz,
     ) {
         let activo = self.activo;
@@ -323,6 +373,7 @@ impl Layout {
             mostrar_numeros,
             ajuste_linea,
             columna_regla,
+            indicadores_git,
             interfaz,
         );
     }
@@ -341,6 +392,7 @@ fn dibujar_panel(
     mostrar_numeros: bool,
     ajuste_linea: bool,
     columna_regla: Option<usize>,
+    indicadores_git: bool,
     interfaz: &ConfigInterfaz,
 ) {
     match panel {
@@ -378,6 +430,12 @@ fn dibujar_panel(
 
             if panel_editor.es_csv() && panel_editor.modo_csv == ModoCsv::Tabla {
                 let tabla = panel_editor.tabla_csv();
+                // Un `Ctrl+Z` (global, no pasa por la vista) o un filtro
+                // que dejó menos filas pueden dejar la selección fuera de
+                // la tabla: se recorta acá, justo antes de dibujar, igual
+                // para cualquier cosa que haya cambiado el buffer.
+                let num_visibles = panel_editor.estado_csv.filas_visibles(&tabla).len();
+                panel_editor.estado_csv.recortar(num_visibles, tabla.num_columnas());
                 vista_csv::dibujar(
                     frame,
                     partes[0],
@@ -393,15 +451,30 @@ fn dibujar_panel(
                         area_statusbar,
                         &panel_editor.editor,
                         &panel_editor.ruta_mostrada,
+                        panel_editor.aviso_guardado.as_deref(),
                         paleta,
                         &panel_editor.diagnosticos,
                         interfaz,
+                        panel_editor.mensaje_estado.as_deref(),
                     );
                 }
                 return;
             }
 
             let area_markdown = if panel_editor.es_markdown() { panel_editor.modo_markdown } else { ModoMarkdown::Fuente };
+
+            // Indicadores de git (BACKLOG.md P2 #6): se ponen al día acá,
+            // al dibujar, y solo para los paneles que muestran código —
+            // `DiffGit::actualizar` no copia nada si el texto no cambió
+            // desde el frame anterior. Sin base (archivo fuera de un repo,
+            // sin trackear, o todavía cargando) no se le reserva columna.
+            let marcas_git = if indicadores_git && area_markdown != ModoMarkdown::SoloPreview {
+                let buffer = panel_editor.editor.buffer();
+                panel_editor.git.actualizar(buffer.ruta(), buffer.rope().chunks());
+                panel_editor.git.tiene_base().then(|| panel_editor.git.marcas())
+            } else {
+                None
+            };
 
             match area_markdown {
                 ModoMarkdown::Fuente => {
@@ -420,6 +493,7 @@ fn dibujar_panel(
                         mostrar_numeros,
                         ajuste_linea,
                         columna_regla,
+                        marcas_git,
                     );
                 }
                 ModoMarkdown::Dividido => {
@@ -457,6 +531,7 @@ fn dibujar_panel(
                         // dos mitades (a diferencia de `ajuste_linea`
                         // arriba).
                         columna_regla,
+                        marcas_git,
                     );
                     vista_markdown::dibujar(
                         frame,
@@ -486,9 +561,11 @@ fn dibujar_panel(
                     area_statusbar,
                     &panel_editor.editor,
                     &panel_editor.ruta_mostrada,
+                    panel_editor.aviso_guardado.as_deref(),
                     paleta,
                     &panel_editor.diagnosticos,
                     interfaz,
+                    panel_editor.mensaje_estado.as_deref(),
                 );
             }
         }
@@ -506,11 +583,11 @@ fn dibujar_panel(
                 .split(area);
             dibujar_panel(
                 frame, partes[0], primero, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
-                ajuste_linea, columna_regla, interfaz,
+                ajuste_linea, columna_regla, indicadores_git, interfaz,
             );
             dibujar_panel(
                 frame, partes[1], segundo, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
-                ajuste_linea, columna_regla, interfaz,
+                ajuste_linea, columna_regla, indicadores_git, interfaz,
             );
         }
     }

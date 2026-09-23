@@ -20,7 +20,18 @@ use crate::protocolo::{escribir_mensaje, leer_mensaje};
 /// nuevas (FIFO).
 const MAX_LINEAS_LOG: usize = 200;
 
-type BufferLogs = Arc<Mutex<VecDeque<String>>>;
+/// Líneas de stderr recordadas + cuántas llegaron en total desde que
+/// arrancó la sesión (incluidas las ya descartadas por
+/// [`MAX_LINEAS_LOG`]). El total es lo que le permite al visor en vivo
+/// (`Ctrl+K R`, BACKLOG.md P1 #2) saber cuántas líneas son nuevas desde
+/// el último vistazo aunque el buffer ya esté lleno y su largo no cambie.
+#[derive(Debug, Default)]
+struct RegistroLogs {
+    lineas: VecDeque<String>,
+    total: u64,
+}
+
+type BufferLogs = Arc<Mutex<RegistroLogs>>;
 
 /// Un mensaje que llega desde el servidor LSP, ya distinguido entre
 /// notificación (sin id, como `textDocument/publishDiagnostics`) y
@@ -75,7 +86,7 @@ impl Cliente {
         let (tx, rx) = mpsc::unbounded_channel();
         tokio::spawn(leer_en_bucle(BufReader::new(stdout), tx));
 
-        let logs: BufferLogs = Arc::new(Mutex::new(VecDeque::new()));
+        let logs: BufferLogs = Arc::new(Mutex::new(RegistroLogs::default()));
         tokio::spawn(leer_stderr_en_bucle(BufReader::new(stderr), logs.clone()));
 
         Ok(Self { proceso, stdin, siguiente_id: 1, receptor: rx, logs })
@@ -87,7 +98,15 @@ impl Cliente {
     /// nunca escribe nada — muchos LSP reales se quedan en silencio
     /// mientras todo funciona bien.
     pub fn logs(&self) -> Vec<String> {
-        self.logs.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
+        self.logs_con_total().0
+    }
+
+    /// Igual que [`Self::logs`], más el total de líneas recibidas desde
+    /// el arranque (ver [`RegistroLogs`]) — tomados bajo el mismo lock
+    /// para que no puedan quedar desfasados entre sí.
+    pub fn logs_con_total(&self) -> (Vec<String>, u64) {
+        let registro = self.logs.lock().unwrap_or_else(|e| e.into_inner());
+        (registro.lineas.iter().cloned().collect(), registro.total)
     }
 
     /// Envía un request identificado; la respuesta llega por `receptor`
@@ -181,17 +200,29 @@ async fn leer_en_bucle(mut reader: BufReader<ChildStdout>, tx: mpsc::UnboundedSe
             Err(_) => break, // el proceso murió o el stream se rompió
         };
 
-        let mensaje = if let Some(id) = valor.get("id").and_then(Value::as_i64) {
+        // Un mensaje con `method` es una notificación o un REQUEST del
+        // servidor hacia nosotros (`workspace/configuration`,
+        // `window/workDoneProgress/create`...), nunca una respuesta —
+        // aunque traiga `id`. Antes se miraba primero el `id` y un
+        // request del servidor se confundía con la respuesta a una
+        // petición nuestra con el mismo número; con una sola petición en
+        // vuelo (`initialize`) daba igual, pero `textDocument/formatting`
+        // (BACKLOG.md P2 #5) correlaciona por id y podía tomar un request
+        // ajeno por su respuesta. Los requests del servidor se pasan como
+        // notificación: `tcode` no responde ninguno todavía (igual que
+        // antes), y quien procesa los mensajes ignora los métodos que no
+        // conoce.
+        let mensaje = if let Some(metodo) = valor.get("method").and_then(Value::as_str) {
+            MensajeEntrante::Notificacion {
+                metodo: metodo.to_string(),
+                params: valor.get("params").cloned().unwrap_or(Value::Null),
+            }
+        } else if let Some(id) = valor.get("id").and_then(Value::as_i64) {
             match valor.get("error") {
                 Some(error) => MensajeEntrante::Respuesta { id, resultado: Err(error.clone()) },
                 None => {
                     MensajeEntrante::Respuesta { id, resultado: Ok(valor.get("result").cloned().unwrap_or(Value::Null)) }
                 }
-            }
-        } else if let Some(metodo) = valor.get("method").and_then(Value::as_str) {
-            MensajeEntrante::Notificacion {
-                metodo: metodo.to_string(),
-                params: valor.get("params").cloned().unwrap_or(Value::Null),
             }
         } else {
             continue;
@@ -210,10 +241,11 @@ async fn leer_en_bucle(mut reader: BufReader<ChildStdout>, tx: mpsc::UnboundedSe
 async fn leer_stderr_en_bucle(reader: BufReader<ChildStderr>, logs: BufferLogs) {
     let mut lineas = reader.lines();
     while let Ok(Some(linea)) = lineas.next_line().await {
-        let mut buffer = logs.lock().unwrap_or_else(|e| e.into_inner());
-        buffer.push_back(linea);
-        if buffer.len() > MAX_LINEAS_LOG {
-            buffer.pop_front();
+        let mut registro = logs.lock().unwrap_or_else(|e| e.into_inner());
+        registro.lineas.push_back(linea);
+        registro.total += 1;
+        if registro.lineas.len() > MAX_LINEAS_LOG {
+            registro.lineas.pop_front();
         }
     }
 }
@@ -357,6 +389,23 @@ mod tests {
         cliente.matar().await;
     }
 
+    /// Un request CON `method` e `id` (lo que `cat` devuelve al hacer eco
+    /// de una `peticion` nuestra — equivalente a un request del servidor
+    /// hacia el cliente) no se tiene que confundir con la respuesta a una
+    /// petición propia con el mismo id: llega como notificación.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn un_request_del_servidor_con_id_no_se_toma_por_una_respuesta() {
+        let mut cliente = Cliente::lanzar("cat", &[], &[]).await.expect("cat debería existir en cualquier Unix");
+        cliente.peticion("workspace/configuration", json!({ "items": [] })).await.unwrap();
+
+        match cliente.receptor.recv().await.expect("cat debería hacer eco del mensaje") {
+            MensajeEntrante::Notificacion { metodo, .. } => assert_eq!(metodo, "workspace/configuration"),
+            MensajeEntrante::Respuesta { .. } => panic!("un mensaje con `method` nunca es una respuesta"),
+        }
+        cliente.matar().await;
+    }
+
     /// `cerrar` manda `shutdown`+`exit` antes de matar el proceso —
     /// `cat` no es un LSP real (no interpreta `exit`, nunca termina
     /// solo), así que ejercita justo el camino "el servidor no
@@ -380,8 +429,9 @@ mod tests {
         // buffer compartido, que empieza vacío. Se prueba acá en vez de
         // como parte del test async de más abajo para no depender de un
         // timing exacto de cuántas líneas ya llegaron.
-        let logs: BufferLogs = Arc::new(Mutex::new(VecDeque::new()));
-        assert!(logs.lock().unwrap().is_empty());
+        let logs: BufferLogs = Arc::new(Mutex::new(RegistroLogs::default()));
+        assert!(logs.lock().unwrap().lineas.is_empty());
+        assert_eq!(logs.lock().unwrap().total, 0);
     }
 
     /// `sh -c 'echo ... >&2'` escribe directo a stderr sin depender de
@@ -416,7 +466,8 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        let logs = cliente.logs();
+        let (logs, total) = cliente.logs_con_total();
+        assert_eq!(total, (MAX_LINEAS_LOG + 10) as u64, "el total cuenta también las ya descartadas");
         assert_eq!(logs.len(), MAX_LINEAS_LOG);
         assert_eq!(logs.first().unwrap(), "10"); // se descartaron 0..10
         assert_eq!(logs.last().unwrap(), &(MAX_LINEAS_LOG + 9).to_string());

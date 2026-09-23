@@ -51,119 +51,42 @@ repetidas lento) se cerró, ver "Hecho recientemente".
 
 ## P1 — Gaps reales de alcance acotado
 
-### 14. Rendimiento con archivos de miles de líneas al EDITAR
-
-Lo que quedó después del arreglo de pegado (PR #89). Medido el
-2026-09-23 en tmux (160x50, release) con 10.000 líneas: pegar, moverse
-y saltar de punta a punta ya es instantáneo (pegar 10k líneas: 0,05 s
-en `.txt`, 0,17 s en `.rs`, 0,47 s en `.py` con pyright; 1000 flechas
-seguidas: < 0,1 s), pero la latencia de UNA tecla que edita crece con
-el tamaño del archivo:
-
-| 10.000 líneas            | flecha | tipear 1 carácter |
-|--------------------------|--------|-------------------|
-| `.txt` (sin resaltado)   | ~19 ms | ~20 ms            |
-| `.rs`                    | ~17 ms | ~69 ms            |
-| `.py` real con pyright   | ~19 ms | ~64 ms            |
-
-(Con 500 líneas no se nota.) Tres costos que hoy son O(archivo) por
-frame o por edición, de mayor a menor impacto:
-
-- **tree-sitter no incremental**: cada edición re-parsea el archivo
-  entero (`tcode_syntax::Resaltador`; la cache de PR #89 solo evita
-  re-parsear cuando el texto no cambió). La solución de fondo es
-  guardar el `Tree` y usar `tree.edit()` + parseo incremental, y
-  resaltar solo el rango visible.
-- **`Buffer::lineas_texto()` y las filas visuales** se recalculan sobre
-  todo el archivo en cada frame (`vista_codigo::dibujar`) — explica el
-  piso de ~20 ms incluso en `.txt`. Debería trabajar solo con las
-  líneas visibles leyendo del `Rope`.
-- **LSP con sync completo**: `didChange` manda el texto entero una vez
-  por frame con cambios (`lsp.rs`, `sincronizar_contenido`); la
-  sincronización incremental por rangos lo reduciría a lo editado.
-
-Ojo con un caso patológico: un archivo con MUCHOS errores de sintaxis
-para su lenguaje (p. ej. código Rust guardado como `.py`) llegó a
-~400 ms por tecla — la recuperación de errores de tree-sitter es cara;
-el parseo incremental también lo mitiga.
-
-Nota aparte (no es de tcode, no hace falta arreglarlo): en una ráfaga
-artificial de cientos de secuencias de escape de una sola vez (`tmux
-send-keys` con 1000 flechas en un llamado), crossterm puede recibir un
-`ESC` al final de una lectura parcial y entregarlo como tecla `Esc`,
-dejando `[B` como texto. Pasa igual con la versión anterior a PR #89;
-con teclado real o pegando texto no se da. Para benchmarks, mandar las
-teclas en tandas de ~50.
-
-### 2. "Ver logs del LSP" (`Ctrl+K R`, ya implementado) es una foto, no en vivo
-
-Nota, no gap nuevo: `PLAN.md` §5.3 pedía "logs en tiempo real"; lo que
-hay (PR #78) es un snapshot al momento de abrir — cerrar y volver a
-abrir trae lo último, pero no se actualiza solo mientras está abierto.
-Decisión consciente de alcance en su momento (evita la complejidad de
-una vista que recibe actualizaciones de una tarea de fondo mientras el
-usuario está tipeando un filtro). Si en algún momento hace falta de
-verdad ver un log mientras se reproduce un problema en curso, esta es
-la pieza para revisarla — hasta entonces, cerrar/reabrir alcanza.
+Ninguno pendiente — los que había (#14 rendimiento con archivos grandes,
+#2 logs del LSP en vivo) se cerraron, ver "Hecho recientemente".
 
 ---
 
 ## P2 — Del plan original, alcance grande o valor dudoso
 
-### 4. Guardado automático
+Ninguno pendiente — #4 a #9 se cerraron el 2026-09-23, ver "Hecho
+recientemente". Limitaciones conocidas que quedaron de esas piezas (no
+son gaps nuevos, anotadas para no redescubrirlas):
 
-`PLAN.md` §5 "Editor": nunca / al perder foco / cada N segundos. No
-implementado. Alcance mediano: un campo de config + lógica de timer
-(perder foco es fácil de detectar — cambio de panel/archivo activo;
-"cada N segundos" necesita un tick periódico en el loop de eventos, que
-hoy es puramente reactivo a `tokio::select!` entre teclado y LSP —
-agregar un `tokio::time::interval` al select).
-
-### 5. Formatear al guardar (vía LSP)
-
-`PLAN.md` §5 "Editor": on/off por lenguaje. No implementado — no hay
-ninguna llamada a `textDocument/formatting` en `crates/lsp`/`app/src/
-lsp.rs` hoy. Alcance grande: nuevo método LSP, aplicar el `TextEdit[]`
-resultante al buffer antes de escribir a disco, manejar el caso "el LSP
-no soporta formatting" o "tardó demasiado" sin bloquear el guardado.
-
-### 6. Indicadores de git en el gutter
-
-Colores `TemaGit` (`added`/`modified`/`deleted`) ya existen en cada
-tema, sin conectar a nada (confirmado: cero integración con git en todo
-el repo). Implica correr `git diff`/leer el índice para saber qué
-líneas cambiaron respecto al último commit — trabajo real, y una
-dependencia nueva (`git2` o invocar el binario `git`). Grande.
-
-### 7. Code folding (plegado de bloques)
-
-`PLAN.md` §4 lo lista con atajos propios (`Ctrl+Shift+[`/`]`, `Ctrl+K
-Ctrl+0`/`Ctrl+K Ctrl+J`) — cero implementación. Necesita: queries de
-plegado de tree-sitter por lenguaje (no todas las gramáticas ya
-embebidas las traen listas), estado de "qué rangos están plegados" por
-buffer, e integrar ese estado con el scroll/gutter de `vista_codigo`
-(ya bastante compleja desde el ajuste de línea/reflow). Una de las
-piezas más grandes de todo este documento — considerar dividirla en
-sub-piezas (soporte para 2-3 lenguajes primero, resto incremental, como
-se hizo con LSP).
-
-### 8. Config por proyecto (`.tcode/config.toml` con override)
-
-`PLAN.md` §12, decisión abierta #5: "sí a ambas, con override" — nunca
-se implementó, solo existe config global de usuario. Alcance: al
-arrancar, buscar `.tcode/config.toml` subiendo desde el directorio del
-archivo abierto (o el cwd) hasta la raíz de git o el filesystem, y
-mezclarlo sobre la config global (probablemente campo por campo, no
-todo-o-nada). Mediano — la parte de "mezclar dos `Config` parciales"
-requiere pensar bien las reglas de merge.
-
-### 9. CSV: funciones que quedaron fuera de M3
-
-Ya documentado en `PRUEBAS.md` (sección "M3 — Vista CSV/TSV"), sigue
-pendiente: ordenar por columna, filtrar por columna, insertar/eliminar
-filas y columnas, resize manual de ancho de columna (hoy es automático
-según contenido, con el scroll horizontal de PR #71). Ninguna es
-urgente; se usan mucho menos que ver/editar celdas, que ya funciona.
+- **Plegado (#7)**: Markdown no pliega (a propósito); una línea
+  modificada que queda dentro de un bloque plegado no se marca con git en
+  la cabecera del pliegue; los pliegues no se guardan entre sesiones.
+- **Git en el gutter (#6)**: la base de `HEAD` se relee al abrir y al
+  guardar, no sola — un commit hecho desde otra terminal se ve recién en
+  el próximo `Ctrl+S`. Archivos sin trackear no se marcan.
+- **Config por proyecto (#8)**: la carpeta de búsqueda se fija al
+  arrancar (abrir después un archivo de otro repo no cambia la config);
+  un proyecto no puede apagar un valor opcional que la global prende
+  (TOML no tiene `null`); los errores del TOML del proyecto solo se ven
+  en la cabecera del panel `Ctrl+,`. Por seguridad no puede definir
+  comandos LSP; un mecanismo de "confiar en este proyecto" quedó fuera.
+- **Guardado automático (#4)**: nunca formatea (solo `Ctrl+S`, mismo
+  criterio que VSCode con autoguardado por demora); "al perder foco" en
+  tmux requiere `set -g focus-events on`.
+- **Formatear al guardar (#5)**: solo vía LSP (`textDocument/formatting`);
+  no hay formateadores externos por lenguaje.
+- **CSV (#9)**: insertar/eliminar columnas re-serializa con quoting mínimo
+  (pierde líneas en blanco entre filas); ordenar texto pliega tildes y ñ
+  sin collation completa.
+- **Rendimiento (#14)**: en un frame con edición, el texto se sigue
+  copiando una vez para el resaltador y otra para el LSP (evitarlo del
+  todo requiere que el `Buffer` registre las ediciones). En archivos con
+  muchos errores de sintaxis el re-parseo tiene un tope de 250 ms: los
+  colores de lo recién editado quedan aproximados hasta el reintento.
 
 ---
 
@@ -213,6 +136,49 @@ formatos campo por campo.
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-23 — todo P1 y P2 cerrado en paralelo** (7 agentes en worktrees
+aislados; cada rama verificada de forma independiente — tests, clippy,
+tmux — e integrada de a una a `develop`, resolviendo conflictos):
+- **P2 #7 Plegado de bloques** (PR #94): rangos por tree-sitter
+  (reusando el árbol del resaltador) en todos los lenguajes con gramática
+  salvo Markdown, por indentación en el resto; `Ctrl+Shift+[`/`]`,
+  `Ctrl+K Ctrl+0`/`Ctrl+K Ctrl+J` (+ alternativas `Ctrl+K [`/`]`/`0`).
+- **P2 #9 CSV** (PR #95): ordenar, filtrar, insertar/eliminar filas y
+  columnas, ancho manual (chords `Ctrl+K` en la vista de tabla).
+- **P2 #5 Formatear al guardar** (PR #97): vía LSP, por lenguaje, apagado
+  por defecto, una sola edición deshacible, nunca bloquea el guardado.
+- **P2 #4 Guardado automático + P1 #2 logs del LSP en vivo** (PR #98):
+  nunca / al perder foco / cada N segundos; el visor `Ctrl+K R` se
+  actualiza solo. Tick en el bucle solo cuando hace falta.
+- **P2 #8 Config por proyecto** (PR #99): `.tcode/config.toml` mezclado
+  campo por campo sobre la global; el panel edita solo la global; sin
+  comandos LSP desde el proyecto (seguridad).
+- **P1 #14 Rendimiento, segunda parte** (PR #100): LSP incremental,
+  revisión del `Buffer`, ajuste de línea sin recorrer el archivo, tope de
+  250 ms al re-parsear archivos llenos de errores (~1,3 s → ~7 ms/tecla).
+- **P2 #6 Git en el gutter** (PR #101): `+`/`~`/`-` en vivo respecto de
+  `HEAD`, diff en un hilo aparte, sin dependencias nuevas.
+- De paso (PR #96): el test del resaltado incremental ahora compara solo
+  sobre código válido — con errores de sintaxis el árbol incremental
+  puede diferir legítimamente del de parsear de cero.
+
+**2026-09-23 — rendimiento al editar archivos grandes** (P1 #14, primera
+parte). Medido por dentro del proceso con 10.000 líneas, frame al tipear:
+`.rs` 45,5 → 4,4 ms, `.py` 39,9 → 5,3 ms; al moverse, ~5-6 → ~2,5 ms.
+- **Resaltado incremental**: `tcode_syntax::Resaltador` deja
+  `tree-sitter-highlight` (que siempre parseaba el archivo entero) por
+  un motor propio sobre `tree-sitter`: guarda el árbol de cada documento,
+  deduce la edición por prefijo/sufijo común, re-parsea de forma
+  incremental y consulta solo el rango visible
+  (`Resaltador::resaltar_documento`). Mismo algoritmo de resolución de
+  capturas, verificado con un test que compara token por token contra
+  `tree-sitter-highlight` en los 16 lenguajes, otro de 360 ediciones
+  pseudoaleatorias contra parsear de cero, y capturas de pantalla con
+  color idénticas a v0.7.0 (con y sin ajuste de línea).
+- **Solo las líneas visibles**: sin ajuste de línea, `vista_codigo` lee
+  del buffer únicamente las filas en pantalla (`Buffer::linea_texto`)
+  en vez de copiar todas las líneas en cada frame.
 
 **2026-09-23 — rendimiento al pegar y con teclas repetidas** (PR #89)
 — era el P0 reportado usando el editor de verdad: pegar ~500 líneas
