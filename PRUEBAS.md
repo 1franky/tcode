@@ -190,6 +190,25 @@ de columnas completas que sí entran, siguiendo a la selección.
 - [ ] El encabezado (fila congelada) se desplaza junto con el cuerpo — nunca queda desalineado con las columnas que se ven abajo.
 - [ ] Editar una celda de una columna fuera de la ventana original: el cursor de edición aparece en la posición correcta de pantalla tras el scroll (no en la posición "vieja" antes de desplazarse).
 
+### Ordenar, filtrar, insertar/eliminar y ancho de columna (BACKLOG.md P2 #9)
+
+Lo que había quedado fuera de M3. Probar con un CSV y un TSV que tengan
+acentos y alguna celda citada con el delimitador adentro (p. ej.
+`"Ciudad, de México"`), y revisar el archivo con `cat` después de
+guardar.
+
+- [ ] `Ctrl+K O` sobre una columna de texto: ordena ascendente sin distinguir mayúsculas ni tildes ("Ángel" antes que "beto"; "ñ" después de "n"); el encabezado no se mueve. Repetir `Ctrl+K O`: pasa a descendente, y de vuelta.
+- [ ] `Ctrl+K O` sobre una columna numérica: ordena como número (`9` antes que `10`, negativos y decimales incluidos), no como texto. Las celdas vacías quedan al final en los dos sentidos.
+- [ ] Tras ordenar, un solo `Ctrl+Z` devuelve el orden original completo. Guardar y `cat`: las celdas citadas siguen citadas igual que antes (ordenar no reescribe las filas, solo las mueve).
+- [ ] `Ctrl+K /`, escribir un texto y `Enter`: quedan solo las filas cuya celda en la columna seleccionada lo contiene (sin distinguir mayúsculas ni tildes: "mexico" encuentra "México"); el encabezado sigue visible y una barra al pie muestra el filtro y "N de M filas".
+- [ ] Con un filtro activo, editar una celda (`Enter`/`F2`) y guardar: el cambio quedó en la fila correcta del archivo (no en la que ocupa esa misma posición sin filtro).
+- [ ] Quitar el filtro con `Esc` (con la tabla enfocada), con `Ctrl+K /` + `Enter` con el texto vacío, y con "CSV: Quitar filtro" desde la paleta: vuelven todas las filas y la selección sigue sobre la misma fila del archivo. `Esc` con el prompt abierto solo lo cierra, sin tocar el filtro vigente.
+- [ ] `Ctrl+K ↓` / `Ctrl+K ↑`: inserta una fila vacía debajo/arriba de la seleccionada (y la selecciona al insertar debajo). Con un filtro activo, primero se quita el filtro. Un solo `Ctrl+Z` la quita.
+- [ ] `Ctrl+K →` / `Ctrl+K ←`: inserta una columna vacía a la derecha/izquierda en todas las filas. Guardar y `cat`: las celdas con comas/comillas siguen correctamente citadas (y en el TSV, una coma no provoca comillas). Un solo `Ctrl+Z` lo revierte.
+- [ ] `Ctrl+K E` elimina la fila seleccionada y `Ctrl+K Shift+E` la columna seleccionada; cada una se deshace con un solo `Ctrl+Z`. Con una sola columna, `Ctrl+K Shift+E` no hace nada.
+- [ ] `Ctrl+K Shift+→` / `Ctrl+K Shift+←`: la columna seleccionada se ensancha/angosta de a 2 (más allá del máximo automático de 30, para leer una celda larga entera); `Ctrl+K W` la devuelve al ancho automático. Nada de esto marca el archivo como modificado.
+- [ ] Probar un archivo cuya última línea NO termina en salto de línea: ordenar/insertar al final/eliminar la última fila no pegan dos filas en una línea, y el archivo sigue sin `\n` final.
+
 ## M3 — Multi-cursor (`Ctrl+D` / `Ctrl+Shift+L` / `Ctrl+Alt+↑↓`)
 
 - [ ] Poner el cursor sobre una palabra y `Ctrl+D`: selecciona esa palabra (sin agregar un cursor nuevo todavía).

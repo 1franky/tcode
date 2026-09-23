@@ -48,7 +48,7 @@ use tcode_fs::{BuscadorArchivos, EstadoConfirmarBorrado, EstadoPromptExplorador,
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_lsp::EstadoLogsLsp;
 use tcode_syntax::{Lenguaje, Resaltador};
-use tcode_ui::{DireccionSplit, FilaLenguajeLsp, Layout as PanelLayout, ModoCsv, Paleta};
+use tcode_ui::{ancho_columna_csv, DireccionSplit, FilaLenguajeLsp, Layout as PanelLayout, ModoCsv, Paleta};
 
 type Backend = CrosstermBackend<Stdout>;
 
@@ -903,6 +903,25 @@ async fn ejecutar(
             continue;
         }
 
+        // Prompt de filtro de la vista CSV/TSV (`Ctrl+K /`, BACKLOG.md P2
+        // #9): mismo patrón modal que la edición de celda de arriba.
+        if layout.panel_activo().estado_csv.prompt_filtro().is_some() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => {
+                    layout.panel_activo_mut().estado_csv.cerrar_prompt_filtro();
+                }
+                KeyCode::Backspace => layout.panel_activo_mut().estado_csv.borrar_en_prompt_filtro(),
+                KeyCode::Enter => confirmar_filtro_csv(layout),
+                KeyCode::Char(c) if sin_modificadores(key) => {
+                    layout.panel_activo_mut().estado_csv.escribir_en_prompt_filtro(c)
+                }
+                _ => {}
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            continue;
+        }
+
         // Modo VIM (`config.editor.modo_vim`, M5, apagado por defecto —
         // ninguno de estos dos bloques hace nada si `editor.modo()` nunca
         // llegó a `Normal`, y a eso solo se llega si la config lo prende,
@@ -1012,6 +1031,7 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
         || estado.logs_lsp.activo()
         || estado.prompt_explorador.activo()
         || layout.panel_activo().estado_csv.editando()
+        || layout.panel_activo().estado_csv.prompt_filtro().is_some()
         || (estado.panel_admin.activo() && estado.panel_admin.editando_comando_lsp().is_some());
     if prompt_de_texto {
         teclas.extend(
@@ -1268,6 +1288,14 @@ fn ejecutar_comando(
             return Accion::Continuar;
         }
         "explorador.enfocar_editor" => {
+            // En la vista de tabla CSV/TSV con un filtro activo, `Esc`
+            // lo quita (BACKLOG.md P2 #9) — es lo que anuncia la barra
+            // del filtro. Solo con el foco ya en el editor: con el foco
+            // en el explorador, `Esc` sigue significando "volver al
+            // editor" y nada más.
+            if *foco == Foco::Editor && layout.panel_activo().modo_csv == ModoCsv::Tabla && quitar_filtro_csv(layout) {
+                return Accion::Continuar;
+            }
             // `Esc` siempre significa "volver a un solo cursor" también
             // (PLAN.md §11 M3, `cursor.una_seleccion`) — no hace falta un
             // atajo aparte: si ya había uno solo, esto no hace nada.
@@ -1416,13 +1444,25 @@ fn abrir_ruta_desde_explorador(layout: &mut PanelLayout, foco: &mut Foco, ruta: 
 /// hoja de cálculo) y `Enter`/`F2` para empezar a editar la celda actual
 /// — la edición en sí (escribir/confirmar/cancelar) la captura un bloque
 /// modal aparte en el bucle principal, igual que la barra de búsqueda.
+///
+/// También los comandos propios de la tabla (BACKLOG.md P2 #9), que solo
+/// tienen efecto acá (desde la paleta, en cualquier otro archivo o en
+/// modo texto, no hacen nada): ordenar, filtrar, insertar/eliminar filas
+/// y columnas — estas cuatro modifican el archivo, cada una como UNA
+/// sola edición (`aplicar_edicion_csv`), así que se deshace con un único
+/// `Ctrl+Z` — y el ancho manual de columna (solo de vista, como el
+/// filtro). Con un filtro activo, `estado_csv.fila()` es una posición
+/// entre las filas visibles: todo lo que lee o escribe el archivo usa
+/// `EstadoCsv::fila_real`.
 fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
     let delimitador = delimitador_por_extension(&layout.panel_activo().ruta_mostrada);
     let texto = layout.panel_activo().editor.buffer().a_texto();
     let tabla = analizar_csv(&texto, delimitador).unwrap_or_default();
-    let (num_filas, num_columnas) = (tabla.num_filas(), tabla.num_columnas());
-
     let panel = layout.panel_activo_mut();
+    let num_filas = panel.estado_csv.filas_visibles(&tabla).len();
+    let num_columnas = tabla.num_columnas();
+    let columna = panel.estado_csv.columna();
+
     match comando {
         "cursor.arriba" => panel.estado_csv.mover_arriba(),
         "cursor.abajo" => panel.estado_csv.mover_abajo(num_filas),
@@ -1432,12 +1472,122 @@ fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
         "editor.desindentar" => panel.estado_csv.shift_tab(num_columnas),
         "editor.nueva_linea" | "csv.editar_celda" => {
             let valor_actual =
-                tabla.filas.get(panel.estado_csv.fila()).and_then(|f| f.celdas.get(panel.estado_csv.columna()));
+                panel.estado_csv.fila_real(&tabla).and_then(|r| tabla.filas[r].celdas.get(columna));
             panel.estado_csv.iniciar_edicion(valor_actual.map(String::as_str).unwrap_or(""));
         }
+        "csv.ordenar" => {
+            let ascendente = panel.estado_csv.siguiente_orden(columna);
+            aplicar_edicion_csv(panel, tcode_core::csv::ordenar_por_columna(&texto, &tabla, columna, ascendente));
+        }
+        "csv.filtrar" => {
+            let inicial = match panel.estado_csv.filtro() {
+                Some(filtro) if filtro.columna == columna => filtro.texto.clone(),
+                _ => String::new(),
+            };
+            panel.estado_csv.abrir_prompt_filtro(&inicial);
+        }
+        "csv.quitar_filtro" => {
+            panel.estado_csv.quitar_filtro(&tabla);
+        }
+        // Insertar una fila con un filtro activo quita el filtro primero:
+        // la fila nueva está vacía, así que (salvo coincidencia) el
+        // filtro la ocultaría apenas creada — insertar algo que no se ve
+        // es peor que perder el filtro, que se vuelve a poner con dos
+        // teclas. `quitar_filtro` deja la selección sobre la misma fila
+        // real, así que la posición de inserción no cambia.
+        "csv.insertar_fila_debajo" | "csv.insertar_fila_arriba" => {
+            panel.estado_csv.quitar_filtro(&tabla);
+            let actual = panel.estado_csv.fila_real(&tabla);
+            let indice = match (actual, comando == "csv.insertar_fila_debajo") {
+                (Some(r), true) => r + 1,
+                (Some(r), false) => r,
+                (None, _) => 0,
+            };
+            aplicar_edicion_csv(panel, tcode_core::csv::insertar_fila(&texto, &tabla, indice).ok());
+            // Seleccionar la fila recién insertada (sin filtro, fila
+            // visible == fila real). `mover_abajo` avanza de a una.
+            if comando == "csv.insertar_fila_debajo" && actual.is_some() {
+                panel.estado_csv.mover_abajo(tabla.num_filas() + 1);
+            }
+        }
+        "csv.eliminar_fila" => {
+            if let Some(r) = panel.estado_csv.fila_real(&tabla) {
+                aplicar_edicion_csv(panel, tcode_core::csv::eliminar_fila(&texto, &tabla, r));
+            }
+        }
+        "csv.insertar_columna_derecha" | "csv.insertar_columna_izquierda" => {
+            let indice = if comando == "csv.insertar_columna_derecha" && num_columnas > 0 { columna + 1 } else { columna };
+            if aplicar_edicion_csv(panel, tcode_core::csv::insertar_columna(&texto, &tabla, indice).ok().flatten()) {
+                panel.estado_csv.columna_insertada(indice);
+                if indice > columna {
+                    panel.estado_csv.mover_derecha(num_columnas + 1);
+                }
+            }
+        }
+        "csv.eliminar_columna" => {
+            if aplicar_edicion_csv(panel, tcode_core::csv::eliminar_columna(&texto, &tabla, columna).ok().flatten()) {
+                panel.estado_csv.columna_eliminada(columna);
+            }
+        }
+        "csv.ensanchar_columna" | "csv.angostar_columna" if num_columnas > 0 => {
+            let actual = ancho_columna_csv(&tabla, &panel.estado_csv, columna);
+            let nuevo = if comando == "csv.ensanchar_columna" {
+                actual + PASO_ANCHO_COLUMNA_CSV
+            } else {
+                actual.saturating_sub(PASO_ANCHO_COLUMNA_CSV)
+            };
+            panel.estado_csv.fijar_ancho(columna, nuevo);
+        }
+        "csv.restablecer_ancho" => panel.estado_csv.restablecer_ancho(columna),
         _ => {}
     }
     Accion::Continuar
+}
+
+/// Cuántas columnas de terminal ensancha/angosta cada `Ctrl+K Shift+→`/
+/// `Ctrl+K Shift+←` en la vista CSV. De a 1 haría falta repetir el chord
+/// decenas de veces para leer una celda larga; de a 2 sigue siendo fino
+/// y la mitad de tedioso.
+const PASO_ANCHO_COLUMNA_CSV: usize = 2;
+
+/// Aplica una edición de la vista CSV (ordenar, insertar/eliminar) sobre
+/// el buffer como UN solo reemplazo — un solo snapshot en el historial,
+/// un solo `Ctrl+Z` para deshacerla. Devuelve si había algo que aplicar
+/// (`None` = la operación no cambiaba nada, p. ej. ordenar algo ya
+/// ordenado), para que quien llama solo actualice su estado de vista en
+/// ese caso.
+fn aplicar_edicion_csv(panel: &mut tcode_ui::PanelEditor, edicion: Option<tcode_core::EdicionCsv>) -> bool {
+    let Some(edicion) = edicion else { return false };
+    panel.editor.reemplazar_rango_bytes(edicion.inicio_byte, edicion.fin_byte, &edicion.reemplazo);
+    true
+}
+
+/// `Enter` con el prompt de filtro de la vista CSV abierto: aplica el
+/// texto escrito como filtro sobre la columna seleccionada, o quita el
+/// filtro si quedó vacío (así el mismo prompt sirve para las dos cosas,
+/// además de `Esc` con la tabla enfocada).
+fn confirmar_filtro_csv(layout: &mut PanelLayout) {
+    let delimitador = delimitador_por_extension(&layout.panel_activo().ruta_mostrada);
+    let tabla = analizar_csv(&layout.panel_activo().editor.buffer().a_texto(), delimitador).unwrap_or_default();
+    let estado_csv = &mut layout.panel_activo_mut().estado_csv;
+    let Some(texto) = estado_csv.cerrar_prompt_filtro() else { return };
+    if texto.is_empty() {
+        estado_csv.quitar_filtro(&tabla);
+    } else {
+        let columna = estado_csv.columna();
+        estado_csv.filtrar(columna, &texto);
+    }
+}
+
+/// Quita el filtro de la vista CSV del panel activo, si había uno
+/// (devuelve si lo había) — `Esc` con la tabla enfocada.
+fn quitar_filtro_csv(layout: &mut PanelLayout) -> bool {
+    if layout.panel_activo().estado_csv.filtro().is_none() {
+        return false;
+    }
+    let delimitador = delimitador_por_extension(&layout.panel_activo().ruta_mostrada);
+    let tabla = analizar_csv(&layout.panel_activo().editor.buffer().a_texto(), delimitador).unwrap_or_default();
+    layout.panel_activo_mut().estado_csv.quitar_filtro(&tabla)
 }
 
 /// `Enter` con el prompt "Guardar como" abierto: intenta escribir el
@@ -1492,7 +1642,11 @@ fn confirmar_prompt_explorador(explorador: &mut Explorador, prompt: &mut EstadoP
 /// `Enter` con una celda de la vista CSV/TSV en edición: reemplaza la
 /// fila completa reserializada (ver `tcode_core::csv::serializar_fila`)
 /// en el buffer, y si `avanzar` es `true` mueve la selección a la fila
-/// siguiente (como confirmar una celda en una hoja de cálculo).
+/// siguiente (como confirmar una celda en una hoja de cálculo). Con un
+/// filtro activo edita la fila REAL detrás de la fila visible
+/// seleccionada (`EstadoCsv::fila_real`); si el valor nuevo ya no
+/// coincide con el filtro, la fila deja de verse — el filtro se evalúa
+/// siempre sobre el contenido actual, como en una hoja de cálculo.
 fn confirmar_edicion_celda_csv(layout: &mut PanelLayout, avanzar: bool) {
     let panel = layout.panel_activo_mut();
     let Some(nuevo_valor) = panel.estado_csv.confirmar_edicion() else { return };
@@ -1500,7 +1654,7 @@ fn confirmar_edicion_celda_csv(layout: &mut PanelLayout, avanzar: bool) {
     let delimitador = delimitador_por_extension(&panel.ruta_mostrada);
     let texto = panel.editor.buffer().a_texto();
     let Ok(tabla) = analizar_csv(&texto, delimitador) else { return };
-    let Some(fila) = tabla.filas.get(panel.estado_csv.fila()) else { return };
+    let Some(fila) = panel.estado_csv.fila_real(&tabla).map(|r| &tabla.filas[r]) else { return };
 
     let mut celdas = fila.celdas.clone();
     if panel.estado_csv.columna() >= celdas.len() {
@@ -1512,9 +1666,13 @@ fn confirmar_edicion_celda_csv(layout: &mut PanelLayout, avanzar: bool) {
     panel.editor.reemplazar_rango_bytes(fila.inicio_byte, fila.fin_byte, &nueva_fila_texto);
 
     if avanzar {
-        let num_filas =
-            analizar_csv(&panel.editor.buffer().a_texto(), delimitador).map(|t| t.num_filas()).unwrap_or(0);
-        panel.estado_csv.mover_abajo(num_filas);
+        let tabla_nueva = analizar_csv(&panel.editor.buffer().a_texto(), delimitador).unwrap_or_default();
+        let num_filas = panel.estado_csv.filas_visibles(&tabla_nueva).len();
+        // Si la fila editada dejó de pasar el filtro, desapareció y la
+        // siguiente ya ocupa su lugar: avanzar además se la saltearía.
+        if num_filas == panel.estado_csv.filas_visibles(&tabla).len() {
+            panel.estado_csv.mover_abajo(num_filas);
+        }
     }
 }
 

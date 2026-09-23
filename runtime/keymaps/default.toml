@@ -151,3 +151,24 @@
 [csv]
 "Ctrl+K T" = "csv.alternar_vista_tabla"
 "F2"       = "csv.editar_celda"
+# Funciones de la tabla (BACKLOG.md P2 #9): solo hacen algo en la vista de
+# tabla (en cualquier otro lado el comando no hace nada). Todas son chords
+# con Ctrl+K: PLAN.md §9 pedía Ctrl+Shift+S/Ctrl+Shift+F, pero además de
+# chocar con "Guardar como" y perder el Shift en terminales sin protocolo
+# Kitty, una tecla simple no sirve — en un archivo normal escribiría texto.
+# Ordenar alterna ascendente/descendente sobre la columna seleccionada;
+# filtrar abre un prompt de una línea (Esc con la tabla enfocada, o Enter
+# con el prompt vacío, quita el filtro). Las flechas del chord insertan en
+# esa dirección; E/Shift+E eliminan fila/columna; Shift+→/Shift+← ajustan
+# el ancho de la columna (solo de vista) y W lo devuelve al automático.
+"Ctrl+K O"           = "csv.ordenar"
+"Ctrl+K /"           = "csv.filtrar"
+"Ctrl+K Down"        = "csv.insertar_fila_debajo"
+"Ctrl+K Up"          = "csv.insertar_fila_arriba"
+"Ctrl+K Right"       = "csv.insertar_columna_derecha"
+"Ctrl+K Left"        = "csv.insertar_columna_izquierda"
+"Ctrl+K E"           = "csv.eliminar_fila"
+"Ctrl+K Shift+E"     = "csv.eliminar_columna"
+"Ctrl+K Shift+Right" = "csv.ensanchar_columna"
+"Ctrl+K Shift+Left"  = "csv.angostar_columna"
+"Ctrl+K W"           = "csv.restablecer_ancho"
