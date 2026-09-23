@@ -15,7 +15,10 @@ pub mod history;
 
 pub use buffer::{Buffer, Eol};
 pub use busqueda::{buscar_coincidencias, Coincidencia, OpcionesBusqueda};
-pub use csv::{analizar as analizar_csv, delimitador_por_extension, serializar_fila as serializar_fila_csv, FilaCsv, TablaCsv};
+pub use csv::{
+    analizar as analizar_csv, delimitador_por_extension, filas_visibles as filas_visibles_csv,
+    serializar_fila as serializar_fila_csv, EdicionCsv, FilaCsv, FiltroCsv, TablaCsv,
+};
 pub use cursor::{Cursor, CursorMultiple};
 pub use editor::{Editor, Modo};
 pub use estado_busqueda::{CampoBusqueda, EstadoBusqueda};

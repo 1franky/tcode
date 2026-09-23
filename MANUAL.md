@@ -222,6 +222,32 @@ Ambos se cierran con `Esc` y se navegan con `↑`/`↓` + `Enter`.
   `Tab`/`Shift+Tab` saltan a la celda siguiente/anterior (en vez de
   indentar) y `Enter`/`F2` empiezan a editar la celda actual.
 
+En modo tabla también podés ordenar, filtrar, insertar/eliminar filas y
+columnas y ajustar el ancho de las columnas. Todos son chords con
+`Ctrl+K` (y están en la paleta como "CSV: ..."); fuera de la vista de
+tabla no hacen nada.
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+K O` | Ordenar las filas por la columna seleccionada; repetirlo alterna ascendente/descendente. Detecta sola si la columna es numérica (si no, ordena como texto sin distinguir mayúsculas ni tildes). El encabezado no se mueve y las celdas vacías quedan al final |
+| `Ctrl+K /` | Filtrar: muestra solo las filas cuya celda en la columna seleccionada contiene el texto escrito (sin distinguir mayúsculas ni tildes). Una barra al pie indica el filtro activo |
+| `Esc` (con un filtro activo) | Quitar el filtro (también: `Enter` con el prompt de filtro vacío, o "CSV: Quitar filtro") |
+| `Ctrl+K ↓` / `Ctrl+K ↑` | Insertar una fila vacía debajo / arriba de la seleccionada |
+| `Ctrl+K →` / `Ctrl+K ←` | Insertar una columna vacía a la derecha / izquierda de la seleccionada |
+| `Ctrl+K E` / `Ctrl+K Shift+E` | Eliminar la fila / la columna seleccionada |
+| `Ctrl+K Shift+→` / `Ctrl+K Shift+←` | Ensanchar / angostar la columna seleccionada (de a 2) |
+| `Ctrl+K W` | Volver la columna seleccionada a su ancho automático |
+
+Ordenar e insertar/eliminar **modifican el archivo** (cada una se
+deshace con un solo `Ctrl+Z`); filtrar y el ancho de columna son solo de
+vista y no cambian nada en disco. Con un filtro activo, editar una celda
+edita la fila correcta del archivo; insertar una fila quita el filtro
+primero (si no, la fila nueva, vacía, quedaría oculta). Ordenar conserva
+el texto original de cada fila tal cual; insertar/eliminar una
+**columna** reescribe todas las filas con el quoting mínimo necesario
+(se citan solo las celdas con el delimitador, comillas o saltos de
+línea).
+
 ## Temas
 
 `tcode` trae 13 temas incluidos (Dracula, Monokai, One Dark, Nord,

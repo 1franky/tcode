@@ -43,6 +43,11 @@ const ESPACIADO_COLUMNAS: usize = 1;
 /// desplazamiento (`estado_ui.scroll`) reutilice el mismo campo de
 /// `EstadoUi` donde vive el scroll vertical del código (un `PanelEditor`
 /// nunca está en los dos modos a la vez, así que no se pisan).
+///
+/// Con un filtro activo (BACKLOG.md P2 #9) solo se dibujan las filas
+/// visibles (`EstadoCsv::filas_visibles`; `estado.fila()` es un índice
+/// en esa lista) y la última línea del área muestra una barra con el
+/// filtro vigente — o, mientras se escribe uno (`Ctrl+K /`), el prompt.
 pub fn dibujar(
     frame: &mut Frame,
     area: Rect,
@@ -59,8 +64,11 @@ pub fn dibujar(
         return;
     }
 
+    let visibles = estado.filas_visibles(tabla);
+    let area = dibujar_barra_filtro(frame, area, tabla, estado, visibles.len(), paleta, mostrar_cursor);
+
     let num_columnas = tabla.num_columnas();
-    let anchos = anchos_por_columna(tabla, num_columnas);
+    let anchos: Vec<usize> = (0..num_columnas).map(|col| ancho_columna(tabla, estado, col)).collect();
 
     ajustar_scroll_horizontal(&mut estado_ui.scroll, &anchos, estado.columna(), area.width as usize);
     let primera_col = estado_ui.scroll;
@@ -94,9 +102,15 @@ pub fn dibujar(
         Row::new(celdas_estilizadas)
     };
 
+    // `visibles[0]` es siempre el encabezado (0), filtre lo que filtre.
+    // `i` es la posición visible — lo que se compara con `estado.fila()`.
     let encabezado = fila_a_row(0, &tabla.filas[0].celdas, true);
-    let filas_cuerpo: Vec<Row> =
-        tabla.filas[1..].iter().enumerate().map(|(i, f)| fila_a_row(i + 1, &f.celdas, false)).collect();
+    let filas_cuerpo: Vec<Row> = visibles
+        .iter()
+        .enumerate()
+        .skip(1)
+        .map(|(i, &real)| fila_a_row(i, &tabla.filas[real].celdas, false))
+        .collect();
 
     let mut estado_tabla = TableState::default();
     // Fila 0 = encabezado, fuera de `filas_cuerpo`: la selección relativa
@@ -114,6 +128,63 @@ pub fn dibujar(
             let columna = rect.x + ancho_texto.min(rect.width.saturating_sub(1));
             frame.set_cursor_position((columna, rect.y));
         }
+    }
+}
+
+/// Barra de una línea al pie de la tabla (BACKLOG.md P2 #9): el prompt
+/// de filtro mientras se escribe (`Ctrl+K /`, con el cursor real de la
+/// terminal ahí, igual que los demás prompts de una línea), o el
+/// indicador de filtro activo con cuántas filas quedan y cómo quitarlo —
+/// sin esto, una tabla filtrada sería indistinguible de un archivo con
+/// menos filas. Devuelve el área que le queda a la tabla (toda, si no
+/// hay nada que mostrar).
+fn dibujar_barra_filtro(
+    frame: &mut Frame,
+    area: Rect,
+    tabla: &TablaCsv,
+    estado: &EstadoCsv,
+    num_visibles: usize,
+    paleta: &Paleta,
+    mostrar_cursor: bool,
+) -> Rect {
+    let (texto, cursor) = if let Some(prompt) = estado.prompt_filtro() {
+        let prefijo = format!(
+            " Filtrar «{}» por (Enter aplica · vacío quita · Esc cancela): ",
+            nombre_columna(tabla, estado.columna())
+        );
+        let columna_cursor = (prefijo.chars().count() + prompt.chars().count()) as u16;
+        (format!("{prefijo}{prompt}"), Some(columna_cursor))
+    } else if let Some(filtro) = estado.filtro() {
+        let texto = format!(
+            " Filtro: «{}» contiene «{}» — {} de {} filas · Esc lo quita",
+            nombre_columna(tabla, filtro.columna),
+            filtro.texto,
+            num_visibles.saturating_sub(1),
+            tabla.num_filas().saturating_sub(1)
+        );
+        (texto, None)
+    } else {
+        return area;
+    };
+    if area.height < 2 {
+        return area;
+    }
+
+    let barra = Rect { x: area.x, y: area.y + area.height - 1, width: area.width, height: 1 };
+    let estilo = Style::default().bg(paleta.statusbar_fondo).fg(paleta.statusbar_texto);
+    frame.render_widget(Paragraph::new(texto).style(estilo), barra);
+    if let (Some(columna), true) = (cursor, mostrar_cursor) {
+        frame.set_cursor_position((barra.x + columna.min(barra.width.saturating_sub(1)), barra.y));
+    }
+    Rect { height: area.height - 1, ..area }
+}
+
+/// Nombre de una columna para mostrar en la barra de filtro: su celda de
+/// encabezado, o "columna N" (desde 1) si está vacía o no existe.
+fn nombre_columna(tabla: &TablaCsv, columna: usize) -> String {
+    match tabla.filas.first().and_then(|f| f.celdas.get(columna)) {
+        Some(nombre) if !nombre.is_empty() => nombre.clone(),
+        _ => format!("columna {}", columna + 1),
     }
 }
 
@@ -157,17 +228,23 @@ fn columna_final_visible(anchos: &[usize], primera_col: usize, ancho_disponible:
     fin
 }
 
-/// Ancho de cada columna en columnas de terminal: el contenido más largo
-/// entre todas las filas (encabezado incluido), recortado a
-/// `[ANCHO_MIN_COLUMNA, ANCHO_MAX_COLUMNA]`.
-fn anchos_por_columna(tabla: &TablaCsv, num_columnas: usize) -> Vec<usize> {
-    (0..num_columnas)
-        .map(|col| {
-            let max_contenido =
-                tabla.filas.iter().map(|f| f.celdas.get(col).map(|c| c.chars().count()).unwrap_or(0)).max().unwrap_or(0);
-            max_contenido.clamp(ANCHO_MIN_COLUMNA, ANCHO_MAX_COLUMNA)
-        })
-        .collect()
+/// Ancho efectivo de `columna` en la vista: el fijado a mano
+/// (`Ctrl+K Shift+→`/`Ctrl+K Shift+←`, BACKLOG.md P2 #9) si lo hay, o si
+/// no el automático según contenido. Público porque `app` lo necesita
+/// para ensanchar/angostar a partir del ancho que se está viendo (la
+/// primera vez, el automático) en vez de desde un valor arbitrario.
+pub fn ancho_columna(tabla: &TablaCsv, estado: &EstadoCsv, columna: usize) -> usize {
+    estado.ancho_manual(columna).unwrap_or_else(|| ancho_automatico(tabla, columna))
+}
+
+/// Ancho automático de una columna en columnas de terminal: el contenido
+/// más largo entre todas las filas (encabezado incluido, y también las
+/// ocultas por un filtro — así filtrar no hace "bailar" los anchos),
+/// recortado a `[ANCHO_MIN_COLUMNA, ANCHO_MAX_COLUMNA]`.
+fn ancho_automatico(tabla: &TablaCsv, columna: usize) -> usize {
+    let max_contenido =
+        tabla.filas.iter().map(|f| f.celdas.get(columna).map(|c| c.chars().count()).unwrap_or(0)).max().unwrap_or(0);
+    max_contenido.clamp(ANCHO_MIN_COLUMNA, ANCHO_MAX_COLUMNA)
 }
 
 /// Rectángulo de pantalla que ocupa la celda seleccionada, o `None` si
@@ -217,7 +294,7 @@ mod tests {
     #[test]
     fn ancho_de_columna_es_el_contenido_mas_largo_recortado_al_maximo() {
         let tabla = tabla_de_prueba();
-        let anchos = anchos_por_columna(&tabla, 2);
+        let anchos: Vec<usize> = (0..2).map(|col| ancho_automatico(&tabla, col)).collect();
         // "nombre"/"Ana"/"Bo" -> 6 (el más largo, "nombre").
         assert_eq!(anchos[0], 6);
         // "Ciudad de México" (16 caracteres) queda por debajo del máximo.
@@ -230,7 +307,7 @@ mod tests {
             delimitador: b',',
             filas: vec![FilaCsv { celdas: vec!["a".into()], inicio_byte: 0, fin_byte: 0 }],
         };
-        assert_eq!(anchos_por_columna(&tabla, 1)[0], ANCHO_MIN_COLUMNA);
+        assert_eq!(ancho_automatico(&tabla, 0), ANCHO_MIN_COLUMNA);
     }
 
     #[test]
@@ -238,7 +315,7 @@ mod tests {
         let celda_enorme = "x".repeat(200);
         let tabla =
             TablaCsv { delimitador: b',', filas: vec![FilaCsv { celdas: vec![celda_enorme], inicio_byte: 0, fin_byte: 0 }] };
-        assert_eq!(anchos_por_columna(&tabla, 1)[0], ANCHO_MAX_COLUMNA);
+        assert_eq!(ancho_automatico(&tabla, 0), ANCHO_MAX_COLUMNA);
     }
 
     #[test]
