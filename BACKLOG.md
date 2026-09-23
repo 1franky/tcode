@@ -44,18 +44,56 @@ Cuatro niveles:
 
 ## P0 — Gaps sorprendentes
 
-### Rendimiento: pegar texto grande y repetición rápida de teclas
-
-Reportado el 2026-09-23 usando el editor de verdad: pegar ~500 líneas
-desde el portapapeles se ve "línea por línea" y tarda demasiado, y
-mantener apretadas las flechas congela la pantalla un momento y después
-el cursor "se pone al día" de golpe, pasándose de donde se quería ir.
-Para un editor de terminal cuya razón de ser es la velocidad, esto es
-el problema más importante que hay hoy. En investigación.
+Ninguno pendiente por ahora — el último (pegar texto grande / teclas
+repetidas lento) se cerró, ver "Hecho recientemente".
 
 ---
 
 ## P1 — Gaps reales de alcance acotado
+
+### 14. Rendimiento con archivos de miles de líneas al EDITAR
+
+Lo que quedó después del arreglo de pegado (PR #89). Medido el
+2026-09-23 en tmux (160x50, release) con 10.000 líneas: pegar, moverse
+y saltar de punta a punta ya es instantáneo (pegar 10k líneas: 0,05 s
+en `.txt`, 0,17 s en `.rs`, 0,47 s en `.py` con pyright; 1000 flechas
+seguidas: < 0,1 s), pero la latencia de UNA tecla que edita crece con
+el tamaño del archivo:
+
+| 10.000 líneas            | flecha | tipear 1 carácter |
+|--------------------------|--------|-------------------|
+| `.txt` (sin resaltado)   | ~19 ms | ~20 ms            |
+| `.rs`                    | ~17 ms | ~69 ms            |
+| `.py` real con pyright   | ~19 ms | ~64 ms            |
+
+(Con 500 líneas no se nota.) Tres costos que hoy son O(archivo) por
+frame o por edición, de mayor a menor impacto:
+
+- **tree-sitter no incremental**: cada edición re-parsea el archivo
+  entero (`tcode_syntax::Resaltador`; la cache de PR #89 solo evita
+  re-parsear cuando el texto no cambió). La solución de fondo es
+  guardar el `Tree` y usar `tree.edit()` + parseo incremental, y
+  resaltar solo el rango visible.
+- **`Buffer::lineas_texto()` y las filas visuales** se recalculan sobre
+  todo el archivo en cada frame (`vista_codigo::dibujar`) — explica el
+  piso de ~20 ms incluso en `.txt`. Debería trabajar solo con las
+  líneas visibles leyendo del `Rope`.
+- **LSP con sync completo**: `didChange` manda el texto entero una vez
+  por frame con cambios (`lsp.rs`, `sincronizar_contenido`); la
+  sincronización incremental por rangos lo reduciría a lo editado.
+
+Ojo con un caso patológico: un archivo con MUCHOS errores de sintaxis
+para su lenguaje (p. ej. código Rust guardado como `.py`) llegó a
+~400 ms por tecla — la recuperación de errores de tree-sitter es cara;
+el parseo incremental también lo mitiga.
+
+Nota aparte (no es de tcode, no hace falta arreglarlo): en una ráfaga
+artificial de cientos de secuencias de escape de una sola vez (`tmux
+send-keys` con 1000 flechas en un llamado), crossterm puede recibir un
+`ESC` al final de una lectura parcial y entregarlo como tecla `Esc`,
+dejando `[B` como texto. Pasa igual con la versión anterior a PR #89;
+con teclado real o pegando texto no se da. Para benchmarks, mandar las
+teclas en tandas de ~50.
 
 ### 2. "Ver logs del LSP" (`Ctrl+K R`, ya implementado) es una foto, no en vivo
 
@@ -175,6 +213,15 @@ formatos campo por campo.
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-23 — rendimiento al pegar y con teclas repetidas** (PR #89)
+— era el P0 reportado usando el editor de verdad: pegar ~500 líneas
+tardaba 104,6 s y mantener una flecha congelaba la pantalla. Bracketed
+paste (`Editor::insertar_texto`, un solo paso de deshacer), el bucle
+principal procesa todos los eventos encolados antes de dibujar,
+`sincronizar_lsp` una vez por frame, cache en `Resaltador` y búsqueda
+binaria de tokens por línea. Ahora: 500 líneas en 0,02 s, 10.000 en
+< 0,5 s; lo que queda para archivos grandes está en el P1 #14.
 
 **2026-09-21, dos P1 más (misma verificación independiente):**
 - **Scroll-follow real en overlays y en el explorador** (PR #86) — era
