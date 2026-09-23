@@ -120,6 +120,23 @@ impl CampoEditor {
         }
     }
 
+    /// Clave de este campo dentro de `[editor]` en `config.toml` — la
+    /// usa el panel para marcar la fila si una `.tcode/config.toml` de
+    /// proyecto la pisa (`ConfigProyecto::pisa`, BACKLOG.md P2 #8).
+    pub fn clave_toml(&self) -> (&'static str, &'static str) {
+        let clave = match self {
+            CampoEditor::TamanoTabulacion => "tamano_tabulacion",
+            CampoEditor::UsarEspacios => "usar_espacios",
+            CampoEditor::AjusteLinea => "ajuste_linea",
+            CampoEditor::NumerosDeLinea => "numeros_de_linea",
+            CampoEditor::ModoVim => "modo_vim",
+            CampoEditor::ColumnaRegla => "columna_regla",
+            CampoEditor::GuardadoAutomatico => "guardado_automatico",
+            CampoEditor::SegundosGuardadoAutomatico => "segundos_guardado_automatico",
+        };
+        ("editor", clave)
+    }
+
     /// Valor actual como texto, para dibujarlo en la fila.
     pub fn valor_actual(&self, config: &Config) -> String {
         match self {
@@ -253,6 +270,21 @@ impl CampoInterfaz {
             CampoInterfaz::StatusbarDiagnosticos => "Statusbar: resumen de diagnósticos LSP",
             CampoInterfaz::StatusbarModo => "Statusbar: modo",
         }
+    }
+
+    /// Clave de este campo dentro de `[interfaz]` — ver
+    /// `CampoEditor::clave_toml`.
+    pub fn clave_toml(&self) -> (&'static str, &'static str) {
+        let clave = match self {
+            CampoInterfaz::MostrarStatusbar => "mostrar_statusbar",
+            CampoInterfaz::StatusbarPosicionCursor => "statusbar_posicion_cursor",
+            CampoInterfaz::StatusbarCodificacion => "statusbar_codificacion",
+            CampoInterfaz::StatusbarEol => "statusbar_eol",
+            CampoInterfaz::StatusbarLenguaje => "statusbar_lenguaje",
+            CampoInterfaz::StatusbarDiagnosticos => "statusbar_diagnosticos",
+            CampoInterfaz::StatusbarModo => "statusbar_modo",
+        };
+        ("interfaz", clave)
     }
 
     pub fn valor_actual(&self, config: &Config) -> String {
@@ -758,6 +790,19 @@ impl Default for EstadoPanelAdmin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clave_toml_de_cada_campo_existe_en_config_toml() {
+        // Si una `clave_toml` tuviera un typo, la marca "[proyecto: ...]"
+        // del panel nunca aparecería para esa fila, sin ningún error.
+        let mut config = Config::default();
+        config.editor.columna_regla = Some(80); // `None` no se serializa
+        let tabla = toml::Table::try_from(&config).unwrap();
+        let claves = CampoEditor::TODOS.iter().map(|c| c.clave_toml()).chain(CampoInterfaz::TODOS.iter().map(|c| c.clave_toml()));
+        for (seccion, clave) in claves {
+            assert!(tabla[seccion].as_table().unwrap().contains_key(clave), "{seccion}.{clave} no existe");
+        }
+    }
 
     #[test]
     fn abrir_arranca_en_la_barra_con_la_primera_seccion() {
