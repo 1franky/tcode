@@ -92,50 +92,54 @@ son gaps nuevos, anotadas para no redescubrirlas):
 
 ## P3 — Bloqueado o reconsiderar si debería estar en el plan
 
-### 10. Densidad de UI / tabs / breadcrumbs
+Ninguno pendiente — #10 a #13 se cerraron el 2026-09-24, ver "Hecho
+recientemente". Decisión explícita que sale del plan: el **zoom de
+fuente** (`Ctrl++`/`Ctrl+-`/`Ctrl+0`, PLAN.md §4) no se implementa — en
+una TUI el tamaño de letra lo controla el emulador de terminal, no el
+proceso que corre adentro. "Pantalla completa" (`F11`) sí, reinterpretada
+como maximizar el panel activo.
 
-`PLAN.md` §5 "Interfaz". Genuinamente bloqueado: tcode no tiene ningún
-concepto de "pestaña de archivo abierto" (solo splits) ni de
-breadcrumb (ruta + jerarquía de símbolos arriba del código) — haría
-falta diseñar y construir esos widgets desde cero antes de que
-"mostrar/ocultar" tenga algo que mostrar. No es una pieza chica
-camuflada de toggle; es un feature nuevo con ese toggle como
-consecuencia menor.
+Limitaciones conocidas de estas piezas (no son gaps nuevos):
 
-### 11. Zoom (`Ctrl++`/`Ctrl+-`/`Ctrl+0`) y pantalla completa (`F11`)
-
-`PLAN.md` §4 "Zoom y vista". Sospecha fuerte de que **no aplica a una
-TUI**: el tamaño de fuente en una terminal lo controla el emulador de
-terminal (Ctrl+/Ctrl- de iTerm2/Windows Terminal/etc.), no el proceso
-que corre adentro — `tcode` no tiene forma de "agrandar la letra" sin
-control sobre la terminal misma. Pantalla completa es lo mismo: la
-controla la terminal (o el gestor de ventanas), no la app. Antes de
-tratar esto como "falta implementar", vale la pena decidir
-explícitamente si se saca del plan (lo más probable) o si hay alguna
-interpretación razonable para una terminal (¿"zoom" como ajustar
-cuántas columnas/filas usa el layout interno, sin tocar la fuente
-real?) que valga la pena.
-
-### 12. Modo zen
-
-`PLAN.md` §4, `Ctrl+K Z`. Distinto de "Mostrar barra de estado" (ya
-existe, pero es un toggle persistente en config, no un atajo rápido
-para ocultar TODO — explorador, statusbar — de un solo golpe y
-mostrarlo de nuevo igual de rápido). Factible y chico si se quiere: un
-booleano de sesión (no persistido) que la UI consulta para saltearse
-explorador/statusbar sin importar su config normal.
-
-### 13. Compatibilidad de temas con formato Helix
-
-`PLAN.md` §7 "Compartir temas": "parser tolerante que acepta temas en
-formato Helix". No implementado. Depende de qué tan distinto es el
-esquema TOML de Helix del propio de `tcode` (no investigado a fondo
-todavía) — antes de estimar esfuerzo real haría falta comparar ambos
-formatos campo por campo.
+- **Pestañas (#10)**: sigue habiendo un solo cliente LSP — pasar a una
+  pestaña de otro lenguaje (o sin lenguaje) lo relanza al volver. "Guardar
+  como" hacia un archivo ya abierto en otra pestaña deja dos pestañas del
+  mismo archivo. Un hilo de git inactivo por pestaña con repo.
+- **Breadcrumbs (#10)**: no son interactivos (no se navega desde ahí); en
+  Python, una línea en blanco al final de un `def` muestra solo el
+  contenedor de afuera (tree-sitter no la incluye en el bloque).
+- **Zen / maximizar (#11/#12)**: en zen + maximizado no se ve `[MAX]` (no
+  hay statusbar); si la terminal o el sistema se comen `F11`, queda
+  `Ctrl+K G`.
+- **Temas Helix (#13)**: los scopes que tcode no puede representar
+  (`ui.menu`, `ui.popup`, `ui.virtual.*`, `markup.*`, sub-scopes finos) se
+  ignoran; un tema que hereda de uno incluido en Helix pero ausente
+  localmente se completa con el Oscuro/Claro de tcode; los nombres ANSI
+  usan valores fijos de xterm, no la paleta de la terminal.
 
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-24 — todo P3 cerrado** (4 agentes en paralelo, integrados de a
+uno a `develop` con verificación independiente — tests, clippy, tmux):
+- **Modo zen + maximizar panel** (PR #105, P3 #12 y #11): `Ctrl+K Z` oculta
+  todo lo que no es código (sesión, no config; punto único `Cromo::nuevo`
+  en `crates/ui/src/lib.rs`); `F11`/`Ctrl+K G` maximiza el panel activo
+  del split como `prefix z` de tmux.
+- **Temas en formato Helix** (PR #106, P3 #13): parser tolerante en
+  `crates/config/src/helix.rs` — `[palette]`, `inherits`, scopes
+  jerárquicos; aparecen en `Ctrl+K Ctrl+T` como "(Helix)"; editarlos o
+  duplicarlos produce una copia en formato tcode.
+- **Pestañas** (PR #107, P3 #10): varios documentos por panel con estado
+  propio; `Ctrl+PageUp`/`PageDown`, `Ctrl+W`, `Alt+1…9`. De paso: la
+  sesión LSP sigue al documento activo (antes mandaba el texto de otro
+  archivo con el URI del primero), y los avisos transitorios de la
+  statusbar van pegados a la ruta (en terminales angostas la confirmación
+  de `Ctrl+W` quedaba recortada).
+- **Breadcrumbs** (PR #108, P3 #10): ruta relativa al proyecto + símbolos
+  que contienen al cursor, desde el árbol incremental del resaltador; 11
+  lenguajes con símbolos.
 
 **2026-09-23 — todo P1 y P2 cerrado en paralelo** (7 agentes en worktrees
 aislados; cada rama verificada de forma independiente — tests, clippy,

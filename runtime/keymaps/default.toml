@@ -103,6 +103,34 @@
 "Ctrl+K 1"      = "panel.ir_a_1"
 "Ctrl+K 2"      = "panel.ir_a_2"
 "Ctrl+K 3"      = "panel.ir_a_3"
+# Pestañas de archivos abiertos (BACKLOG.md P3 #10), por panel. Ctrl+W
+# tiene código de control propio (anda en cualquier terminal).
+# Ctrl+PageDown/Ctrl+PageUp llegan en xterm/tmux, pero algunas terminales
+# (GNOME Terminal, Windows Terminal) se los quedan para sus propias
+# pestañas: el chord con Ctrl+K y la tecla sola no depende de eso. Alt+N
+# (ir a la pestaña N) funciona donde Alt/Option se manda como Meta — en
+# macOS hay que activarlo en la terminal; si no, está en la paleta.
+"Ctrl+PageDown"   = "pestana.siguiente"
+"Ctrl+PageUp"     = "pestana.anterior"
+"Ctrl+K PageDown" = "pestana.siguiente"
+"Ctrl+K PageUp"   = "pestana.anterior"
+"Ctrl+W"          = "pestana.cerrar"
+"Alt+1"           = "pestana.ir_a_1"
+"Alt+2"           = "pestana.ir_a_2"
+"Alt+3"           = "pestana.ir_a_3"
+"Alt+4"           = "pestana.ir_a_4"
+"Alt+5"           = "pestana.ir_a_5"
+"Alt+6"           = "pestana.ir_a_6"
+"Alt+7"           = "pestana.ir_a_7"
+"Alt+8"           = "pestana.ir_a_8"
+"Alt+9"           = "pestana.ir_a_9"
+# "Pantalla completa" en una terminal = maximizar el panel activo (como el
+# zoom de tmux); la ventana y la letra las controla el emulador de
+# terminal. Alternativa: F11 lo suele capturar el sistema (en macOS,
+# "mostrar escritorio") o la terminal misma antes de que llegue.
+"F11"           = "vista.pantalla_completa"
+"Ctrl+K G"      = "vista.pantalla_completa"
+"Ctrl+K Z"      = "vista.modo_zen"
 "Ctrl+F"        = "buscar.en_archivo"
 "Ctrl+H"        = "buscar.reemplazar"
 # F3/Shift+F3 y Alt+R/C/W funcionan tanto con la barra abierta (capturados

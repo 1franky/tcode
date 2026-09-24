@@ -233,11 +233,20 @@ fn forzar_redibujado_completo(_terminal: &mut Terminal<Backend>) -> Result<()> {
 /// Resumen barato de "qué tan distinta se ve la pantalla en términos
 /// estructurales" — no del contenido línea a línea (eso cambia
 /// constantemente al escribir, no amerita un redibujado completo), sino
-/// de la forma general: qué archivo está activo, cuántos paneles hay,
-/// si el explorador está visible. Comparar esto antes/después de
-/// procesar una tecla es lo que decide si hace falta forzar limpieza.
-fn firma_estructural(layout: &PanelLayout, explorador: &Explorador) -> (String, usize, bool) {
-    (layout.panel_activo().ruta_mostrada.clone(), layout.num_paneles(), explorador.visible())
+/// de la forma general: qué archivo está activo (y en qué pestaña:
+/// cambiar de pestaña reemplaza todo el código de golpe, igual que abrir
+/// otro archivo, BACKLOG.md P3 #10), cuántos paneles hay, si el
+/// explorador está visible, si hay un panel maximizado o modo zen (los
+/// dos cambian de golpe qué se ve y dónde). Comparar esto antes/después
+/// de procesar una tecla es lo que decide si hace falta forzar limpieza.
+fn firma_estructural(layout: &PanelLayout, estado: &EstadoApp) -> (String, (usize, usize), bool, bool, bool) {
+    (
+        layout.panel_activo().ruta_mostrada.clone(),
+        (layout.num_paneles(), layout.indice_pestana_activa()),
+        estado.explorador.visible(),
+        layout.maximizado(),
+        estado.modo_zen.is_some(),
+    )
 }
 
 /// Además de inicializar la terminal, intenta activar el protocolo de
@@ -316,6 +325,16 @@ struct EstadoApp {
     explorador: Explorador,
     foco: Foco,
     confirmar_salida: bool,
+    /// Cerrar una pestaña (`Ctrl+W`) o un panel (`Ctrl+K F`) con cambios
+    /// sin guardar pide repetir el mismo comando, igual que `Ctrl+Q`
+    /// (BACKLOG.md P3 #10): `cierre_pedido` es el id del comando que pidió
+    /// la confirmación con ESTA tecla, y `cierre_armado` el que la pidió
+    /// con la tecla anterior — se pasa de uno al otro al llegar cada
+    /// tecla, así que cualquier otra tecla de por medio (de cualquier
+    /// modo, overlay o prompt) desarma la confirmación sin tener que
+    /// limpiarla en cada rama del bucle.
+    cierre_pedido: Option<String>,
+    cierre_armado: Option<String>,
     paleta_comandos: EstadoPaleta,
     buscador_archivos: BuscadorArchivos,
     estado_busqueda: EstadoBusqueda,
@@ -369,6 +388,27 @@ struct EstadoApp {
     /// dibujar lo usan los comandos de plegado (BACKLOG.md P2 #7) para
     /// sacar los rangos plegables del mismo árbol, sin volver a parsear.
     resaltador: Resaltador,
+    /// Modo zen (`Ctrl+K Z`, BACKLOG.md P3 #12): `Some` mientras está
+    /// activo, con el foco que había al entrar para devolverlo igual al
+    /// salir. De sesión a propósito — no se guarda en la config ni toca
+    /// sus toggles (`mostrar_statusbar`, visibilidad del explorador): la UI
+    /// solo se saltea esas partes al dibujar (`tcode_ui::dibujar`, ver
+    /// `Cromo` ahí). Ver `alternar_modo_zen`.
+    modo_zen: Option<Foco>,
+}
+
+/// Entra o sale del modo zen (ver `EstadoApp::modo_zen`). Al entrar, el
+/// foco pasa al editor — el explorador deja de verse y las teclas no
+/// pueden quedar yendo a un árbol invisible —; al salir vuelve a donde
+/// estaba.
+fn alternar_modo_zen(modo_zen: &mut Option<Foco>, foco: &mut Foco) {
+    match modo_zen.take() {
+        Some(foco_previo) => *foco = foco_previo,
+        None => {
+            *modo_zen = Some(*foco);
+            *foco = Foco::Editor;
+        }
+    }
 }
 
 fn sin_modificadores(key: KeyEvent) -> bool {
@@ -420,6 +460,8 @@ async fn ejecutar(
         // vez de perder trabajo en silencio (nano-style). Cualquier otra
         // resolución la cancela.
         confirmar_salida: false,
+        cierre_pedido: None,
+        cierre_armado: None,
         paleta_comandos: EstadoPaleta::nueva(),
         buscador_archivos: BuscadorArchivos::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
         estado_busqueda: EstadoBusqueda::nueva(),
@@ -436,6 +478,7 @@ async fn ejecutar(
         ultimo_autoguardado: Instant::now(),
         guardado_pendiente: false,
         resaltador: Resaltador::nuevo(),
+        modo_zen: None,
     };
 
     // Ver `forzar_redibujado_completo`: en Windows, si la "forma" de la
@@ -534,12 +577,13 @@ async fn ejecutar(
                     &estado.logs_lsp,
                     &estado.prompt_explorador,
                     &estado.confirmar_borrado,
+                    estado.modo_zen.is_some(),
                 )
             })?;
             ultimo_dibujo = Instant::now();
         }
 
-        let firma_antes = firma_estructural(layout, &estado.explorador);
+        let firma_antes = firma_estructural(layout, &estado);
 
         let evento = match teclas_sinteticas.pop_front() {
             Some(key) => Event::Key(key),
@@ -575,7 +619,7 @@ async fn ejecutar(
             Event::Key(key) if key.kind == KeyEventKind::Press => key,
             Event::Paste(texto) => {
                 pegar_texto(&texto, layout, &mut estado, &mut teclas_sinteticas);
-                necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+                necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
                 continue;
             }
             // La terminal dejó de tener el foco (otra ventana/pestaña/panel
@@ -594,6 +638,7 @@ async fn ejecutar(
         // El aviso transitorio de la barra de estado (p. ej. "Formateado
         // al guardar") dura hasta la próxima tecla.
         layout.panel_activo_mut().mensaje_estado = None;
+        estado.cierre_armado = estado.cierre_pedido.take();
 
         // El editor visual de tema (`Ctrl+K Ctrl+P`, PLAN.md §7) es otra
         // vista a pantalla completa que captura el teclado por completo:
@@ -659,7 +704,7 @@ async fn ejecutar(
                     _ => {}
                 },
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -805,7 +850,7 @@ async fn ejecutar(
                     },
                 }
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -830,7 +875,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.paleta_comandos.escribir(c),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -849,7 +894,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.buscador_archivos.escribir(c),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -887,7 +932,7 @@ async fn ejecutar(
                 }
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -937,7 +982,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.estado_busqueda.escribir(c, &texto),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -956,7 +1001,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.guardar_como.escribir(c),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -975,7 +1020,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.logs_lsp.escribir(c),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -995,7 +1040,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.prompt_explorador.escribir(c),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -1018,7 +1063,7 @@ async fn ejecutar(
                 }
                 _ => estado.confirmar_borrado.cerrar(),
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -1041,7 +1086,7 @@ async fn ejecutar(
                 }
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -1060,7 +1105,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => layout.panel_activo_mut().estado_csv.escribir(c),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -1079,7 +1124,7 @@ async fn ejecutar(
                 }
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -1100,7 +1145,7 @@ async fn ejecutar(
             editor.colapsar_cursores();
             editor.entrar_modo_normal();
             estado.confirmar_salida = false;
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -1123,7 +1168,7 @@ async fn ejecutar(
             };
             if manejada {
                 estado.confirmar_salida = false;
-                necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+                necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
                 continue;
             }
         }
@@ -1162,7 +1207,7 @@ async fn ejecutar(
             }
         }
 
-        necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+        necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
     }
 
     estado.lsp.cerrar().await;
@@ -1217,13 +1262,15 @@ fn procesar_tick(layout: &mut PanelLayout, estado: &mut EstadoApp) -> bool {
 }
 
 /// Qué tiene el foco, para el guardado automático "al perder foco"
-/// (BACKLOG.md P2 #4): el índice del panel activo, el archivo que
-/// muestra (abrir otro en el mismo panel lo cambia) y si el teclado va
+/// (BACKLOG.md P2 #4): el índice del panel activo, su pestaña activa y
+/// el archivo que muestra (cambiar de pestaña o abrir otro archivo cuenta
+/// como perder el foco, BACKLOG.md P3 #10; el índice solo no alcanza:
+/// cerrar una pestaña puede dejar el mismo número) y si el teclado va
 /// al editor o al explorador. Abrir un overlay (paleta, buscador, panel de
 /// administración...) NO cuenta como perder el foco — es algo que se
 /// hace "sobre" el archivo, y guardar en cada `Ctrl+P` sorprendería.
-fn firma_foco(layout: &PanelLayout, estado: &EstadoApp) -> (usize, String, Foco) {
-    (layout.indice_activo(), layout.panel_activo().ruta_mostrada.clone(), estado.foco)
+fn firma_foco(layout: &PanelLayout, estado: &EstadoApp) -> (usize, usize, String, Foco) {
+    (layout.indice_activo(), layout.indice_pestana_activa(), layout.panel_activo().ruta_mostrada.clone(), estado.foco)
 }
 
 /// Si el guardado automático tiene que tocar este documento: solo con
@@ -1338,7 +1385,37 @@ async fn sincronizar_lsp(layout: &PanelLayout, lsp: &mut lsp::EstadoLsp, config:
 /// overlays, el prompt de "Guardar como"), así que se interceptan aquí
 /// antes de delegar.
 fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, resolvedor: &mut Resolvedor) -> Accion {
+    // En modo zen el explorador no se ve: lo que lo necesita en pantalla
+    // (mostrarlo, saltar a un archivo, crear/renombrar) sale del zen
+    // primero en vez de actuar sobre un árbol invisible. `Ctrl+B` en zen
+    // significa "quiero ver el explorador", no "ocultalo" (que es lo que
+    // haría alternarlo si antes del zen estaba visible).
+    if estado.modo_zen.is_some()
+        && matches!(
+            id,
+            "panel.alternar_lateral"
+                | "explorador.saltar"
+                | "explorador.nuevo_archivo"
+                | "explorador.nueva_carpeta"
+                | "explorador.renombrar"
+        )
+    {
+        alternar_modo_zen(&mut estado.modo_zen, &mut estado.foco);
+        if id == "panel.alternar_lateral" {
+            estado.explorador.mostrar();
+            estado.foco = Foco::Explorador;
+            return Accion::Continuar;
+        }
+    }
     match id {
+        "vista.modo_zen" => {
+            alternar_modo_zen(&mut estado.modo_zen, &mut estado.foco);
+            Accion::Continuar
+        }
+        "vista.pantalla_completa" => {
+            layout.alternar_maximizado();
+            Accion::Continuar
+        }
         "config.recargar" => {
             recargar_config_tema_y_keymap(estado, resolvedor);
             Accion::Continuar
@@ -1498,6 +1575,39 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             }
             Accion::Continuar
         }
+        // Pestañas (BACKLOG.md P3 #10). Globales, como los de panel: van
+        // al panel activo aunque el foco esté en el explorador.
+        "pestana.siguiente" => {
+            layout.siguiente_pestana();
+            Accion::Continuar
+        }
+        "pestana.anterior" => {
+            layout.anterior_pestana();
+            Accion::Continuar
+        }
+        "pestana.cerrar" => {
+            let modificado = layout.editor_activo().buffer().modificado();
+            if cierre_confirmado(layout, estado, id, modificado, "Ctrl+W") {
+                layout.cerrar_pestana_activa();
+            }
+            Accion::Continuar
+        }
+        // Cerrar el panel se lleva todas sus pestañas: con alguna
+        // modificada, mismo pedido de confirmación que `Ctrl+W` (antes
+        // de las pestañas cerraba sin preguntar).
+        "panel.cerrar" => {
+            let modificado = layout.num_paneles() > 1 && layout.panel_activo_modificado();
+            if cierre_confirmado(layout, estado, id, modificado, "Ctrl+K F") {
+                layout.cerrar_activo();
+            }
+            Accion::Continuar
+        }
+        _ if id.starts_with("pestana.ir_a_") => {
+            if let Ok(numero) = id["pestana.ir_a_".len()..].parse::<usize>() {
+                layout.ir_a_pestana(numero.saturating_sub(1));
+            }
+            Accion::Continuar
+        }
         _ => ejecutar_comando(
             id,
             layout,
@@ -1507,6 +1617,21 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             &mut estado.confirmar_salida,
         ),
     }
+}
+
+/// Confirmación de un cierre que perdería cambios (`Ctrl+W`, `Ctrl+K F`,
+/// BACKLOG.md P3 #10) — mismo patrón que `Ctrl+Q`: la primera vez avisa
+/// en la statusbar y no cierra; repetir el mismo comando en la tecla
+/// siguiente cierra igual (ver `EstadoApp::cierre_pedido`). Devuelve si
+/// se puede cerrar ya.
+fn cierre_confirmado(layout: &mut PanelLayout, estado: &mut EstadoApp, id: &str, modificado: bool, atajo: &str) -> bool {
+    if !modificado || estado.cierre_armado.as_deref() == Some(id) {
+        return true;
+    }
+    estado.cierre_pedido = Some(id.to_string());
+    layout.panel_activo_mut().mensaje_estado =
+        Some(format!("Cambios sin guardar: {atajo} de nuevo para cerrar sin guardar"));
+    false
 }
 
 /// Dispatcher comando -> acción. Los nombres coinciden con los de
@@ -1521,9 +1646,18 @@ fn ejecutar_comando(
 ) -> Accion {
     // Comandos globales: funcionan sin importar qué panel tiene el foco.
     match comando {
+        // Mira TODOS los documentos, no solo el visible: con pestañas
+        // (BACKLOG.md P3 #10) lo más común es que lo modificado esté en
+        // otra. El aviso dice cuántos, para que no sorprenda.
         "app.salir" => {
-            if layout.editor_activo().buffer().modificado() && !*confirmar_salida {
+            let modificados = layout.documentos_modificados();
+            if modificados > 0 && !*confirmar_salida {
                 *confirmar_salida = true;
+                layout.panel_activo_mut().mensaje_estado = Some(if modificados == 1 {
+                    "1 archivo con cambios sin guardar: Ctrl+Q de nuevo para salir igual".to_string()
+                } else {
+                    format!("{modificados} archivos con cambios sin guardar: Ctrl+Q de nuevo para salir igual")
+                });
             } else {
                 return Accion::Salir;
             }
@@ -1575,10 +1709,6 @@ fn ejecutar_comando(
         }
         "panel.dividir_horizontal" => {
             layout.dividir(DireccionSplit::Horizontal);
-            return Accion::Continuar;
-        }
-        "panel.cerrar" => {
-            layout.cerrar_activo();
             return Accion::Continuar;
         }
         "panel.ir_a_1" => {
@@ -1695,19 +1825,19 @@ fn ejecutar_comando_explorador(
 /// `Insertar` con el que `Editor::abrir` siempre construye — `Editor` no
 /// conoce esa config, así que la decisión se toma acá.
 ///
-/// Con guardado automático "al perder foco" (BACKLOG.md P2 #4), el
-/// documento que se va a reemplazar se guarda ANTES — después ya no
-/// existe, el cambio de foco que detecta el bucle llegaría tarde. Si ese
-/// guardado falla, no se abre nada: reemplazarlo igual perdería los
-/// cambios, y el motivo queda en la statusbar.
+/// Desde las pestañas (BACKLOG.md P3 #10) abrir nunca reemplaza el
+/// documento anterior: queda en su pestaña, así que ya no hace falta
+/// guardarlo antes de abrir — el guardado automático "al perder foco"
+/// (P2 #4) lo hace el bucle al notar el cambio de `firma_foco`, y
+/// `autoguardar` recorre también las pestañas que no se ven. Si el
+/// archivo ya tenía pestaña en el panel activo solo se la activa, sin
+/// volver a leerlo de disco (y sin perder lo que tuviera sin guardar).
 fn abrir_ruta_desde_explorador(layout: &mut PanelLayout, foco: &mut Foco, ruta: std::path::PathBuf, config: &ConfigEditor) {
+    if layout.activar_pestana_de(&ruta) {
+        *foco = Foco::Editor;
+        return;
+    }
     if let Ok(mut nuevo_editor) = Editor::abrir(&ruta) {
-        if config.guardado_automatico == GuardadoAutomatico::AlPerderFoco {
-            let panel = layout.panel_activo_mut();
-            if necesita_autoguardado(&panel.editor) && guardar_panel(panel).is_err() {
-                return;
-            }
-        }
         if config.modo_vim {
             nuevo_editor.entrar_modo_normal();
         }
@@ -2647,7 +2777,7 @@ mod tests_autoguardado {
     }
 
     #[test]
-    fn abrir_otro_archivo_al_perder_foco_guarda_antes_de_reemplazar() {
+    fn abrir_otro_archivo_lo_agrega_como_pestana_sin_tocar_el_anterior() {
         let dir = DirTemporal::nuevo("abrir");
         let a = dir.archivo("a.txt", "a");
         let b = dir.archivo("b.txt", "b");
@@ -2656,8 +2786,27 @@ mod tests_autoguardado {
         let mut foco = Foco::Editor;
 
         abrir_ruta_desde_explorador(&mut layout, &mut foco, b.clone(), &con_guardado_al_perder_foco());
-        assert_eq!(std::fs::read_to_string(&a).unwrap(), "Xa");
         assert_eq!(layout.panel_activo().ruta_mostrada, b.display().to_string());
+        assert_eq!(layout.num_pestanas(), 2);
+
+        // Volver a abrir `a` solo activa su pestaña, con lo tipeado intacto.
+        abrir_ruta_desde_explorador(&mut layout, &mut foco, a.clone(), &con_guardado_al_perder_foco());
+        assert_eq!(layout.num_pestanas(), 2);
+        assert_eq!(layout.editor_activo().buffer().a_texto(), "Xa");
+    }
+
+    #[test]
+    fn autoguardar_guarda_tambien_las_pestanas_que_no_se_ven() {
+        let dir = DirTemporal::nuevo("pestanas");
+        let a = dir.archivo("a.txt", "a");
+        let b = dir.archivo("b.txt", "b");
+        let mut layout = layout_con(&a);
+        layout.editor_activo_mut().insertar_char('X');
+        let mut foco = Foco::Editor;
+        abrir_ruta_desde_explorador(&mut layout, &mut foco, b, &ConfigEditor::default());
+
+        assert!(autoguardar(&mut layout));
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "Xa");
     }
 
     #[test]
@@ -2672,23 +2821,34 @@ mod tests_autoguardado {
         abrir_ruta_desde_explorador(&mut layout, &mut foco, b, &ConfigEditor::default());
         assert_eq!(std::fs::read_to_string(&a).unwrap(), "a");
     }
+}
+
+#[cfg(test)]
+mod tests_modo_zen {
+    use super::*;
 
     #[test]
-    fn si_el_guardado_previo_falla_no_se_abre_el_otro_archivo() {
-        let dir = DirTemporal::nuevo("no-abre");
-        let sub = dir.0.join("sub");
-        std::fs::create_dir_all(&sub).unwrap();
-        let a = sub.join("a.txt");
-        std::fs::write(&a, "a").unwrap();
-        let b = dir.archivo("b.txt", "b");
-        let mut layout = layout_con(&a);
-        layout.editor_activo_mut().insertar_char('X');
-        std::fs::remove_dir_all(&sub).unwrap();
+    fn modo_zen_desde_el_editor_entra_y_sale_sin_mover_el_foco() {
+        let mut zen = None;
         let mut foco = Foco::Editor;
+        alternar_modo_zen(&mut zen, &mut foco);
+        assert_eq!(zen, Some(Foco::Editor));
+        assert_eq!(foco, Foco::Editor);
 
-        abrir_ruta_desde_explorador(&mut layout, &mut foco, b, &con_guardado_al_perder_foco());
-        assert_eq!(layout.panel_activo().ruta_mostrada, a.display().to_string(), "no se reemplazó el documento");
-        assert!(layout.editor_activo().buffer().modificado());
-        assert!(layout.panel_activo().aviso_guardado.is_some());
+        alternar_modo_zen(&mut zen, &mut foco);
+        assert_eq!(zen, None);
+        assert_eq!(foco, Foco::Editor);
+    }
+
+    #[test]
+    fn modo_zen_con_el_explorador_enfocado_pasa_al_editor_y_lo_devuelve_al_salir() {
+        let mut zen = None;
+        let mut foco = Foco::Explorador;
+        alternar_modo_zen(&mut zen, &mut foco);
+        assert_eq!(foco, Foco::Editor);
+
+        alternar_modo_zen(&mut zen, &mut foco);
+        assert_eq!(zen, None);
+        assert_eq!(foco, Foco::Explorador);
     }
 }

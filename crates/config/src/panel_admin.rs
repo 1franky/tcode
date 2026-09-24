@@ -242,11 +242,12 @@ impl CampoTemas {
 /// Un campo editable de la sección "Interfaz" (PLAN.md §5.5) —
 /// corresponde 1 a 1 con `tcode_config::ConfigInterfaz`, salvo `tema`
 /// (que tiene su propia sección "Temas") y lo que todavía no existe
-/// como feature (densidad de UI, tabs, breadcrumbs, rama git en la
-/// statusbar).
+/// como feature (densidad de UI, rama git en la statusbar).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CampoInterfaz {
     MostrarStatusbar,
+    MostrarPestanas,
+    MostrarBreadcrumbs,
     StatusbarPosicionCursor,
     StatusbarCodificacion,
     StatusbarEol,
@@ -256,8 +257,10 @@ pub enum CampoInterfaz {
 }
 
 impl CampoInterfaz {
-    pub const TODOS: [CampoInterfaz; 7] = [
+    pub const TODOS: [CampoInterfaz; 9] = [
         CampoInterfaz::MostrarStatusbar,
+        CampoInterfaz::MostrarPestanas,
+        CampoInterfaz::MostrarBreadcrumbs,
         CampoInterfaz::StatusbarPosicionCursor,
         CampoInterfaz::StatusbarCodificacion,
         CampoInterfaz::StatusbarEol,
@@ -269,6 +272,8 @@ impl CampoInterfaz {
     pub fn nombre(&self) -> &'static str {
         match self {
             CampoInterfaz::MostrarStatusbar => "Mostrar barra de estado",
+            CampoInterfaz::MostrarPestanas => "Mostrar pestañas",
+            CampoInterfaz::MostrarBreadcrumbs => "Mostrar breadcrumbs (ruta > símbolos)",
             CampoInterfaz::StatusbarPosicionCursor => "Statusbar: posición del cursor",
             CampoInterfaz::StatusbarCodificacion => "Statusbar: codificación",
             CampoInterfaz::StatusbarEol => "Statusbar: fin de línea (EOL)",
@@ -283,6 +288,8 @@ impl CampoInterfaz {
     pub fn clave_toml(&self) -> (&'static str, &'static str) {
         let clave = match self {
             CampoInterfaz::MostrarStatusbar => "mostrar_statusbar",
+            CampoInterfaz::MostrarPestanas => "mostrar_pestanas",
+            CampoInterfaz::MostrarBreadcrumbs => "mostrar_breadcrumbs",
             CampoInterfaz::StatusbarPosicionCursor => "statusbar_posicion_cursor",
             CampoInterfaz::StatusbarCodificacion => "statusbar_codificacion",
             CampoInterfaz::StatusbarEol => "statusbar_eol",
@@ -296,6 +303,8 @@ impl CampoInterfaz {
     pub fn valor_actual(&self, config: &Config) -> String {
         let activo = match self {
             CampoInterfaz::MostrarStatusbar => config.interfaz.mostrar_statusbar,
+            CampoInterfaz::MostrarPestanas => config.interfaz.mostrar_pestanas,
+            CampoInterfaz::MostrarBreadcrumbs => config.interfaz.mostrar_breadcrumbs,
             CampoInterfaz::StatusbarPosicionCursor => config.interfaz.statusbar_posicion_cursor,
             CampoInterfaz::StatusbarCodificacion => config.interfaz.statusbar_codificacion,
             CampoInterfaz::StatusbarEol => config.interfaz.statusbar_eol,
@@ -312,6 +321,8 @@ impl CampoInterfaz {
     pub fn aplicar(&self, config: &mut Config) {
         let campo = match self {
             CampoInterfaz::MostrarStatusbar => &mut config.interfaz.mostrar_statusbar,
+            CampoInterfaz::MostrarPestanas => &mut config.interfaz.mostrar_pestanas,
+            CampoInterfaz::MostrarBreadcrumbs => &mut config.interfaz.mostrar_breadcrumbs,
             CampoInterfaz::StatusbarPosicionCursor => &mut config.interfaz.statusbar_posicion_cursor,
             CampoInterfaz::StatusbarCodificacion => &mut config.interfaz.statusbar_codificacion,
             CampoInterfaz::StatusbarEol => &mut config.interfaz.statusbar_eol,
@@ -845,6 +856,16 @@ mod tests {
         assert_eq!(panel.foco(), FocoPanelAdmin::Central);
         assert_eq!(panel.num_campos(), CampoInterfaz::TODOS.len());
         assert_eq!(panel.campo_interfaz_actual(), Some(CampoInterfaz::MostrarStatusbar));
+    }
+
+    #[test]
+    fn mostrar_breadcrumbs_viene_prendido_y_se_alterna() {
+        let mut config = Config::default();
+        assert!(config.interfaz.mostrar_breadcrumbs);
+        assert_eq!(CampoInterfaz::MostrarBreadcrumbs.clave_toml(), ("interfaz", "mostrar_breadcrumbs"));
+        CampoInterfaz::MostrarBreadcrumbs.aplicar(&mut config);
+        assert!(!config.interfaz.mostrar_breadcrumbs);
+        assert!(config.interfaz.mostrar_statusbar, "no toca otros campos");
     }
 
     #[test]

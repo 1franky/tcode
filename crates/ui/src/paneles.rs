@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use ratatui::layout::{Constraint, Direction, Rect};
 use ratatui::Frame;
 
@@ -7,7 +9,7 @@ use tcode_fs::DiffGit;
 use tcode_lsp::DiagnosticoSimple;
 use tcode_syntax::{Lenguaje, Resaltador};
 
-use crate::{statusbar, vista_codigo, vista_csv, vista_markdown, EstadoUi, Paleta};
+use crate::{barra_pestanas, breadcrumbs, statusbar, vista_codigo, vista_csv, vista_markdown, EstadoUi, Paleta};
 
 /// Cómo se divide un panel (`Ctrl+\`/`Ctrl+K Ctrl+\`, PLAN.md §4): en
 /// paneles lado a lado (una línea divisoria vertical entre ellos) o
@@ -48,12 +50,15 @@ pub enum ModoCsv {
     Fuente,
 }
 
-/// Un documento abierto en un panel: su editor, la ruta que se muestra en
-/// la statusbar, su propio desplazamiento vertical (cada panel se
-/// desplaza de forma independiente), los diagnósticos LSP más recientes
-/// para ese archivo (M2, PLAN.md §2: "diagnósticos inline") y, según el
-/// tipo de archivo, su [`ModoMarkdown`] (PLAN.md §8) o su [`ModoCsv`] +
-/// [`EstadoCsv`] (selección/edición de celda, PLAN.md §9).
+/// Un documento abierto en un panel — una pestaña (BACKLOG.md P3 #10):
+/// su editor, la ruta que se muestra en la statusbar, su propio
+/// desplazamiento vertical (cada documento se desplaza de forma
+/// independiente, y lo conserva al cambiar de pestaña), los diagnósticos
+/// LSP más recientes para ese archivo (M2, PLAN.md §2: "diagnósticos
+/// inline") y, según el tipo de archivo, su [`ModoMarkdown`] (PLAN.md §8)
+/// o su [`ModoCsv`] + [`EstadoCsv`] (selección/edición de celda, PLAN.md
+/// §9). El nombre es de antes de las pestañas, cuando cada panel tenía un
+/// solo documento; se mantuvo para no tocar a todos los que lo usan.
 pub struct PanelEditor {
     pub editor: Editor,
     pub ruta_mostrada: String,
@@ -109,6 +114,26 @@ impl PanelEditor {
         es_csv(&self.ruta_mostrada)
     }
 
+    /// Si es el "[Sin nombre]" vacío e intacto con el que arranca `tcode`
+    /// sin argumentos (o un panel recién dividido): abrir un archivo lo
+    /// reemplaza en vez de dejarlo como una pestaña más que nadie pidió
+    /// (mismo criterio que VSCode con su pestaña "Untitled" sin tocar).
+    fn es_descartable(&self) -> bool {
+        let buffer = self.editor.buffer();
+        buffer.ruta().is_none() && !buffer.modificado() && buffer.len_bytes() == 0
+    }
+
+    /// Si este documento es el archivo `ruta` — comparando rutas
+    /// canónicas, porque el mismo archivo puede llegar escrito distinto
+    /// (relativo desde la línea de comandos, absoluto desde el
+    /// explorador o el buscador). Solo se llama al abrir un archivo, nunca
+    /// por frame: `canonicalize` toca el disco.
+    fn es_archivo(&self, ruta: &Path) -> bool {
+        let Some(propia) = self.editor.buffer().ruta() else { return false };
+        propia == ruta
+            || matches!((std::fs::canonicalize(propia), std::fs::canonicalize(ruta)), (Ok(a), Ok(b)) if a == b)
+    }
+
     /// La tabla CSV/TSV analizada a partir del contenido actual del
     /// buffer — se recalcula cada vez que hace falta (igual que
     /// `vista_markdown` re-parsea en cada frame): un archivo CSV de
@@ -124,25 +149,84 @@ fn es_csv(ruta: &str) -> bool {
     matches!(ruta.rsplit('.').next().map(|e| e.to_ascii_lowercase()), Some(e) if e == "csv" || e == "tsv")
 }
 
-/// Árbol de paneles: una hoja con un documento, o una división en dos
+/// Las pestañas de un panel (BACKLOG.md P3 #10): los documentos abiertos
+/// en él, en el orden de la barra de pestañas, y cuál se ve. Nunca está
+/// vacía — cerrar la última pestaña deja un "[Sin nombre]" en blanco (o
+/// cierra el panel entero, si hay otros: ver
+/// [`Layout::cerrar_pestana_activa`]). Cada `PanelEditor` es dueño de
+/// todo su estado (cursor, scroll, historial, pliegues, diagnósticos,
+/// git, vista Markdown/CSV), así que cambiar de pestaña es solo cambiar
+/// `activa`: no se copia ni se recalcula nada del documento.
+struct Pestanas {
+    documentos: Vec<PanelEditor>,
+    activa: usize,
+}
+
+impl Pestanas {
+    fn con(documento: PanelEditor) -> Self {
+        Self { documentos: vec![documento], activa: 0 }
+    }
+
+    fn activo(&self) -> &PanelEditor {
+        &self.documentos[self.activa]
+    }
+
+    fn activo_mut(&mut self) -> &mut PanelEditor {
+        &mut self.documentos[self.activa]
+    }
+
+    /// Agrega `documento` como pestaña nueva, justo a la derecha de la
+    /// activa (como VSCode: lo recién abierto queda al lado de lo que se
+    /// estaba mirando), y la activa — salvo que la activa sea un "[Sin
+    /// nombre]" descartable, que se reemplaza.
+    fn abrir(&mut self, documento: PanelEditor) {
+        if self.activo().es_descartable() {
+            self.documentos[self.activa] = documento;
+        } else {
+            self.activa += 1;
+            self.documentos.insert(self.activa, documento);
+        }
+    }
+
+    /// Activa la pestaña del archivo `ruta`, si ya está abierto en este
+    /// panel. Devuelve si la encontró.
+    fn activar_ruta(&mut self, ruta: &Path) -> bool {
+        match self.documentos.iter().position(|d| d.es_archivo(ruta)) {
+            Some(indice) => {
+                self.activa = indice;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Cierra la pestaña activa y activa la de su derecha (o la de su
+    /// izquierda, si era la última). Con una sola pestaña no hace nada:
+    /// eso lo decide `Layout::cerrar_pestana_activa`.
+    fn cerrar_activa(&mut self) {
+        if self.documentos.len() <= 1 {
+            return;
+        }
+        self.documentos.remove(self.activa);
+        self.activa = self.activa.min(self.documentos.len() - 1);
+    }
+}
+
+/// Árbol de paneles: una hoja con sus pestañas, o una división en dos
 /// sub-árboles. Privado — quien usa `tcode-ui` solo interactúa con
-/// [`Layout`], nunca navega el árbol directamente. `Hoja` va en `Box`
-/// porque `PanelEditor` (que incluye un `Editor` completo: buffer, rope,
-/// cursores, historial de deshacer/rehacer) es mucho más grande que
-/// `Division` — sin el `Box`, cada `Division` tendría que reservar tanto
-/// espacio como la hoja más grande posible aunque no contenga ninguna
-/// (`clippy::large_enum_variant`); ya se había topado con este límite dos
-/// veces creciendo campos de `PanelEditor`/`Editor` por otros motivos,
-/// así que esta vez se resuelve de raíz en vez de volver a acotar el
-/// crecimiento en el próximo campo nuevo que haga falta.
+/// [`Layout`], nunca navega el árbol directamente. Antes de las pestañas
+/// la hoja era un `Box<PanelEditor>` (un `Editor` completo es mucho más
+/// grande que `Division`, `clippy::large_enum_variant`); ahora los
+/// documentos viven en el `Vec` de [`Pestanas`], que ya está en el heap,
+/// así que la hoja quedó chica sin necesitar el `Box`.
 enum Panel {
-    Hoja(Box<PanelEditor>),
+    Hoja(Pestanas),
     Division { direccion: DireccionSplit, primero: Box<Panel>, segundo: Box<Panel> },
 }
 
 impl Panel {
     fn vacio() -> Self {
-        Panel::Hoja(Box::new(PanelEditor::vacio()))
+        Panel::Hoja(Pestanas::con(PanelEditor::vacio()))
     }
 
     fn contar_hojas(&self) -> usize {
@@ -161,11 +245,34 @@ impl Panel {
 pub struct Layout {
     raiz: Panel,
     activo: usize,
+    /// "Pantalla completa" (`F11`/`Ctrl+K G`, BACKLOG.md P3 #11): el panel
+    /// activo ocupa toda el área de edición, como el zoom de tmux
+    /// (`prefix z`). Solo cambia cómo se dibuja — el árbol de splits queda
+    /// intacto detrás, así que al salir vuelve exactamente igual. Cualquier
+    /// cosa que cambie la estructura o el panel activo (dividir, cerrar,
+    /// `Ctrl+1/2/3`) sale primero del maximizado, igual que tmux.
+    maximizado: bool,
 }
 
 impl Layout {
     pub fn nuevo(editor: Editor, ruta_mostrada: String) -> Self {
-        Self { raiz: Panel::Hoja(Box::new(PanelEditor::nuevo(editor, ruta_mostrada))), activo: 0 }
+        Self {
+            raiz: Panel::Hoja(Pestanas::con(PanelEditor::nuevo(editor, ruta_mostrada))),
+            activo: 0,
+            maximizado: false,
+        }
+    }
+
+    /// Si el panel activo está maximizado (ver campo `maximizado`).
+    pub fn maximizado(&self) -> bool {
+        self.maximizado
+    }
+
+    /// `F11`/`Ctrl+K G`: maximiza el panel activo o lo restaura. Con un
+    /// solo panel no hace nada — ya ocupa toda el área, y un `[MAX]`
+    /// prendido sin nada que restaurar solo confundiría.
+    pub fn alternar_maximizado(&mut self) {
+        self.maximizado = !self.maximizado && self.num_paneles() > 1;
     }
 
     pub fn num_paneles(&self) -> usize {
@@ -176,8 +283,8 @@ impl Layout {
         self.activo
     }
 
-    fn hojas(&self) -> Vec<&PanelEditor> {
-        fn recorrer<'a>(panel: &'a Panel, salida: &mut Vec<&'a PanelEditor>) {
+    fn hojas(&self) -> Vec<&Pestanas> {
+        fn recorrer<'a>(panel: &'a Panel, salida: &mut Vec<&'a Pestanas>) {
             match panel {
                 Panel::Hoja(p) => salida.push(p),
                 Panel::Division { primero, segundo, .. } => {
@@ -191,15 +298,17 @@ impl Layout {
         salida
     }
 
-    /// Todos los paneles, en el mismo orden que los índices de
-    /// `ir_a_panel` — para lo que tiene que recorrerlos a todos, no solo
-    /// el activo (el guardado automático, BACKLOG.md P2 #4).
+    /// Todos los documentos abiertos: cada pestaña de cada panel, en el
+    /// orden de los paneles de `ir_a_panel` y, dentro de cada uno, en el
+    /// de su barra de pestañas — para lo que tiene que recorrerlos a
+    /// todos, no solo el visible (el guardado automático, BACKLOG.md P2
+    /// #4: una pestaña que se dejó de mirar también tiene que guardarse).
     pub fn paneles_mut(&mut self) -> Vec<&mut PanelEditor> {
-        self.hojas_mut()
+        self.hojas_mut().into_iter().flat_map(|p| p.documentos.iter_mut()).collect()
     }
 
-    fn hojas_mut(&mut self) -> Vec<&mut PanelEditor> {
-        fn recorrer<'a>(panel: &'a mut Panel, salida: &mut Vec<&'a mut PanelEditor>) {
+    fn hojas_mut(&mut self) -> Vec<&mut Pestanas> {
+        fn recorrer<'a>(panel: &'a mut Panel, salida: &mut Vec<&'a mut Pestanas>) {
             match panel {
                 Panel::Hoja(p) => salida.push(p),
                 Panel::Division { primero, segundo, .. } => {
@@ -213,13 +322,22 @@ impl Layout {
         salida
     }
 
-    pub fn panel_activo(&self) -> &PanelEditor {
+    fn pestanas_activas(&self) -> &Pestanas {
         self.hojas()[self.activo]
     }
 
-    pub fn panel_activo_mut(&mut self) -> &mut PanelEditor {
+    fn pestanas_activas_mut(&mut self) -> &mut Pestanas {
         let activo = self.activo;
         self.hojas_mut().remove(activo)
+    }
+
+    /// El documento visible del panel activo (su pestaña activa).
+    pub fn panel_activo(&self) -> &PanelEditor {
+        self.pestanas_activas().activo()
+    }
+
+    pub fn panel_activo_mut(&mut self) -> &mut PanelEditor {
+        self.pestanas_activas_mut().activo_mut()
     }
 
     pub fn editor_activo(&self) -> &Editor {
@@ -230,39 +348,114 @@ impl Layout {
         &mut self.panel_activo_mut().editor
     }
 
-    /// Reemplaza el documento del panel activo (abrir un archivo nuevo
-    /// desde el explorador o el buscador de archivos).
+    /// Abre un documento en el panel activo (explorador, buscador de
+    /// archivos) como pestaña nueva y la activa (BACKLOG.md P3 #10). Si
+    /// ese archivo ya tenía pestaña en este panel, solo la activa y
+    /// `editor` se descarta — mejor todavía es preguntar antes con
+    /// [`Layout::activar_pestana_de`], para no leer el archivo de disco en
+    /// vano. Un "[Sin nombre]" vacío e intacto se reemplaza en vez de
+    /// quedar como pestaña de más.
     pub fn abrir_en_activo(&mut self, editor: Editor, ruta_mostrada: String) {
-        let panel = self.panel_activo_mut();
-        panel.editor = editor;
-        panel.ruta_mostrada = ruta_mostrada;
-        panel.estado_ui = EstadoUi::default();
-        panel.diagnosticos.clear();
-        panel.modo_markdown = ModoMarkdown::default();
-        panel.modo_csv = if panel.es_csv() { ModoCsv::Tabla } else { ModoCsv::Fuente };
-        panel.estado_csv = EstadoCsv::nuevo();
-        panel.aviso_guardado = None;
-        panel.git = DiffGit::nuevo();
+        let pestanas = self.pestanas_activas_mut();
+        if let Some(ruta) = editor.buffer().ruta() {
+            if pestanas.activar_ruta(ruta) {
+                return;
+            }
+        }
+        pestanas.abrir(PanelEditor::nuevo(editor, ruta_mostrada));
     }
 
-    /// Vuelve a leer de `HEAD` la base de los indicadores de git de todos
-    /// los paneles (BACKLOG.md P2 #6) — la app lo llama al guardar: es el
-    /// momento natural en que un commit hecho desde otra terminal se
-    /// vuelve visible. Todos y no solo el activo porque el mismo archivo
-    /// puede estar abierto en más de un panel; son pocos y cada uno es un
-    /// `git cat-file` en segundo plano.
-    pub fn refrescar_bases_git(&mut self) {
-        for panel in self.hojas_mut() {
-            panel.git.refrescar_base();
+    /// Si el archivo `ruta` ya está abierto en alguna pestaña del panel
+    /// activo, la activa y devuelve `true`. Solo mira el panel activo:
+    /// con splits, cada panel tiene sus propias pestañas (igual que los
+    /// grupos de VSCode), y abrir en uno un archivo que está en otro le
+    /// agrega una pestaña propia.
+    pub fn activar_pestana_de(&mut self, ruta: &Path) -> bool {
+        self.pestanas_activas_mut().activar_ruta(ruta)
+    }
+
+    /// Cantidad de pestañas del panel activo.
+    pub fn num_pestanas(&self) -> usize {
+        self.pestanas_activas().documentos.len()
+    }
+
+    /// Índice (0-based) de la pestaña activa del panel activo.
+    pub fn indice_pestana_activa(&self) -> usize {
+        self.pestanas_activas().activa
+    }
+
+    /// `Ctrl+PageDown`: la pestaña de la derecha, dando la vuelta al
+    /// llegar a la última (como VSCode y los navegadores).
+    pub fn siguiente_pestana(&mut self) {
+        let pestanas = self.pestanas_activas_mut();
+        pestanas.activa = (pestanas.activa + 1) % pestanas.documentos.len();
+    }
+
+    /// `Ctrl+PageUp`: la pestaña de la izquierda, dando la vuelta.
+    pub fn anterior_pestana(&mut self) {
+        let pestanas = self.pestanas_activas_mut();
+        let total = pestanas.documentos.len();
+        pestanas.activa = (pestanas.activa + total - 1) % total;
+    }
+
+    /// `Alt+1`..`Alt+9`: va a la pestaña `indice` (0-based) del panel
+    /// activo; no hace nada si está fuera de rango.
+    pub fn ir_a_pestana(&mut self, indice: usize) {
+        let pestanas = self.pestanas_activas_mut();
+        if indice < pestanas.documentos.len() {
+            pestanas.activa = indice;
         }
     }
 
-    /// Si algún panel está esperando que `git` devuelva su base o que
+    /// `Ctrl+W`: cierra la pestaña activa, descartando sus cambios — la
+    /// confirmación si hay cambios sin guardar la pide `app` antes de
+    /// llamar esto. Si era la última del panel: con otros paneles
+    /// abiertos se cierra el panel entero (como un grupo vacío de
+    /// VSCode, un panel sin nada adentro no sirve para nada); si es el
+    /// único panel, queda un "[Sin nombre]" en blanco — `tcode` siempre
+    /// tiene algo abierto.
+    pub fn cerrar_pestana_activa(&mut self) {
+        if self.num_pestanas() > 1 {
+            self.pestanas_activas_mut().cerrar_activa();
+        } else if self.num_paneles() > 1 {
+            self.cerrar_activo();
+        } else {
+            *self.pestanas_activas_mut() = Pestanas::con(PanelEditor::vacio());
+        }
+    }
+
+    /// Cuántos documentos (todas las pestañas de todos los paneles)
+    /// tienen cambios sin guardar — para que `Ctrl+Q` avise aunque lo
+    /// modificado no sea lo que se está viendo.
+    pub fn documentos_modificados(&self) -> usize {
+        self.hojas().iter().flat_map(|p| p.documentos.iter()).filter(|d| d.editor.buffer().modificado()).count()
+    }
+
+    /// Si alguna pestaña del panel activo tiene cambios sin guardar (lo
+    /// que se perdería al cerrarlo con `Ctrl+K F`).
+    pub fn panel_activo_modificado(&self) -> bool {
+        self.pestanas_activas().documentos.iter().any(|d| d.editor.buffer().modificado())
+    }
+
+    /// Vuelve a leer de `HEAD` la base de los indicadores de git de todos
+    /// los documentos (BACKLOG.md P2 #6) — la app lo llama al guardar: es
+    /// el momento natural en que un commit hecho desde otra terminal se
+    /// vuelve visible. Todos y no solo el activo porque el mismo archivo
+    /// puede estar abierto en más de un panel, y una pestaña que no se
+    /// está viendo también tiene que tener la base al día cuando se
+    /// vuelva a ella; cada uno es un `git cat-file` en segundo plano.
+    pub fn refrescar_bases_git(&mut self) {
+        for documento in self.paneles_mut() {
+            documento.git.refrescar_base();
+        }
+    }
+
+    /// Si algún documento está esperando que `git` devuelva su base o que
     /// termine de calcularse su diff: mientras tanto la app vuelve a
     /// dibujar cada tanto aunque no lleguen teclas, para que las marcas
     /// aparezcan solas al terminar.
     pub fn cargas_git_pendientes(&self) -> bool {
-        self.hojas().iter().any(|p| p.git.pendiente())
+        self.hojas().iter().flat_map(|p| p.documentos.iter()).any(|p| p.git.pendiente())
     }
 
     /// `Ctrl+K T`: alterna el panel activo entre la vista de tabla y el
@@ -317,6 +510,7 @@ impl Layout {
     /// primer sub-panel, un buffer nuevo en blanco en el segundo, que
     /// pasa a ser el panel activo (igual que VSCode).
     pub fn dividir(&mut self, direccion: DireccionSplit) {
+        self.maximizado = false;
         let raiz = std::mem::replace(&mut self.raiz, Panel::vacio());
         self.raiz = dividir_en_indice(raiz, self.activo, direccion);
         self.activo += 1;
@@ -328,6 +522,7 @@ impl Layout {
         if self.num_paneles() <= 1 {
             return;
         }
+        self.maximizado = false;
         let raiz = std::mem::replace(&mut self.raiz, Panel::vacio());
         let (nueva_raiz, _) = cerrar_en_indice(raiz, self.activo);
         self.raiz = nueva_raiz;
@@ -338,6 +533,7 @@ impl Layout {
     /// nada si está fuera de rango.
     pub fn ir_a_panel(&mut self, indice: usize) {
         if indice < self.num_paneles() {
+            self.maximizado = false;
             self.activo = indice;
         }
     }
@@ -345,6 +541,8 @@ impl Layout {
     /// Dibuja el árbol de paneles completo dentro de `area`, recursivo:
     /// cada división reparte el espacio 50/50 entre sus dos sub-árboles.
     /// Solo el panel activo recibe el cursor real de la terminal.
+    /// Maximizado, se dibuja solo la hoja activa en toda `area`, con
+    /// `[MAX]` al final de su barra de estado (si la barra se ve).
     #[allow(clippy::too_many_arguments)]
     pub fn dibujar(
         &mut self,
@@ -359,12 +557,19 @@ impl Layout {
         indicadores_git: bool,
         interfaz: &ConfigInterfaz,
     ) {
-        let activo = self.activo;
+        // Maximizado: la hoja activa se dibuja sola, como si fuera la raíz
+        // (índice 0 de un árbol de un solo panel) — el resto del árbol ni
+        // se recorre.
+        let (raiz, activo) = if self.maximizado {
+            (hoja_en_indice(&mut self.raiz, self.activo), 0)
+        } else {
+            (&mut self.raiz, self.activo)
+        };
         let mut indice_actual = 0;
         dibujar_panel(
             frame,
             area,
-            &mut self.raiz,
+            raiz,
             activo,
             &mut indice_actual,
             paleta,
@@ -376,7 +581,70 @@ impl Layout {
             indicadores_git,
             interfaz,
         );
+        if self.maximizado && interfaz.mostrar_statusbar && area.height > 0 {
+            // Pegado a la derecha de la última fila (la de la statusbar),
+            // encima de su relleno: así no hace falta tocar
+            // `statusbar::dibujar` para un indicador que solo existe acá.
+            let indicador = " [MAX] ";
+            let ancho = (indicador.len() as u16).min(area.width);
+            let fila = Rect { x: area.x + area.width - ancho, y: area.y + area.height - 1, width: ancho, height: 1 };
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(indicador)
+                    .style(ratatui::style::Style::default().bg(paleta.statusbar_fondo).fg(paleta.statusbar_texto)),
+                fila,
+            );
+        }
     }
+}
+
+/// La hoja (nodo `Panel::Hoja`, no su `PanelEditor`) en la posición
+/// `indice` del recorrido en profundidad — para dibujarla sola al
+/// maximizar. Fuera de rango devuelve la última (no pasa: `activo`
+/// siempre es válido).
+fn hoja_en_indice(panel: &mut Panel, indice: usize) -> &mut Panel {
+    match panel {
+        Panel::Hoja(_) => panel,
+        Panel::Division { primero, segundo, .. } => {
+            let n = primero.contar_hojas();
+            if indice < n {
+                hoja_en_indice(primero, indice)
+            } else {
+                hoja_en_indice(segundo, indice - n)
+            }
+        }
+    }
+}
+
+/// Filas angostas que van arriba del contenido de un panel (código,
+/// tabla o preview), de arriba hacia abajo: barra de pestañas y
+/// breadcrumbs (ambos BACKLOG.md P3 #10). Se recortan del área en este
+/// único lugar, así las vistas de abajo no se enteran y una franja nueva
+/// se apila acá mismo.
+struct FranjasSuperiores {
+    pestanas: Option<Rect>,
+    breadcrumbs: Option<Rect>,
+    resto: Rect,
+}
+
+/// Reparte `area` en [`FranjasSuperiores`]. Cada franja solo se reserva
+/// si después queda al menos una fila para el contenido (el contenido
+/// tiene prioridad en un panel muy bajo); las pestañas antes que los
+/// breadcrumbs, que son lo primero que se sacrifica.
+fn franjas_superiores(area: Rect, interfaz: &ConfigInterfaz) -> FranjasSuperiores {
+    fn tomar_fila(resto: &mut Rect, mostrar: bool) -> Option<Rect> {
+        (mostrar && resto.height > 1).then(|| {
+            let fila = Rect { height: 1, ..*resto };
+            *resto = Rect { y: resto.y + 1, height: resto.height - 1, ..*resto };
+            fila
+        })
+    }
+    let mut resto = area;
+    let pestanas = tomar_fila(&mut resto, interfaz.mostrar_pestanas);
+    // Con la statusbar prendida el contenido además pierde su última
+    // fila: los breadcrumbs solo si igual queda una para el código.
+    let hay_lugar = !interfaz.mostrar_statusbar || resto.height > 2;
+    let breadcrumbs = tomar_fila(&mut resto, interfaz.mostrar_breadcrumbs && hay_lugar);
+    FranjasSuperiores { pestanas, breadcrumbs, resto }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -396,9 +664,22 @@ fn dibujar_panel(
     interfaz: &ConfigInterfaz,
 ) {
     match panel {
-        Panel::Hoja(panel_editor) => {
+        Panel::Hoja(pestanas) => {
             let es_activo = *indice_actual == activo;
             *indice_actual += 1;
+
+            // Barra de pestañas (BACKLOG.md P3 #10): una fila arriba del
+            // código, también con una sola pestaña — es además donde se
+            // ve qué archivo tiene cada panel sin mirar la statusbar.
+            // "Mostrar pestañas" apagado la saca y devuelve la fila.
+            // Debajo, los breadcrumbs del documento activo (se dibujan
+            // más abajo, cuando ya se sabe qué vista usa el panel).
+            let franjas = franjas_superiores(area, interfaz);
+            if let Some(barra) = franjas.pestanas {
+                barra_pestanas::dibujar(frame, barra, &pestanas.documentos, pestanas.activa, es_activo, paleta);
+            }
+            let (area, area_breadcrumbs) = (franjas.resto, franjas.breadcrumbs);
+            let panel_editor = pestanas.activo_mut();
 
             // "Mostrar barra de estado" (PLAN.md §5.5, M4): si está
             // apagado, el panel de código/tabla usa el área completa —
@@ -428,7 +709,23 @@ fn dibujar_panel(
             // `panel_busqueda::dibujar`), no en el código.
             let mostrar_cursor = es_activo && !estado_busqueda.activa();
 
-            if panel_editor.es_csv() && panel_editor.modo_csv == ModoCsv::Tabla {
+            let es_tabla_csv = panel_editor.es_csv() && panel_editor.modo_csv == ModoCsv::Tabla;
+            if let Some(area_breadcrumbs) = area_breadcrumbs {
+                breadcrumbs::dibujar(
+                    frame,
+                    area_breadcrumbs,
+                    &panel_editor.editor,
+                    &panel_editor.ruta_mostrada,
+                    &mut panel_editor.estado_ui.breadcrumbs,
+                    resaltador,
+                    paleta,
+                    // En la tabla CSV la posición del cursor en el texto
+                    // no es la celda seleccionada: solo la ruta.
+                    !es_tabla_csv,
+                );
+            }
+
+            if es_tabla_csv {
                 let tabla = panel_editor.tabla_csv();
                 // Un `Ctrl+Z` (global, no pasa por la vista) o un filtro
                 // que dejó menos filas pueden dejar la selección fuera de
@@ -600,7 +897,7 @@ fn dividir_en_indice(panel: Panel, indice: usize, direccion: DireccionSplit) -> 
         Panel::Hoja(original) if indice == 0 => Panel::Division {
             direccion,
             primero: Box::new(Panel::Hoja(original)),
-            segundo: Box::new(Panel::Hoja(Box::new(PanelEditor::vacio()))),
+            segundo: Box::new(Panel::vacio()),
         },
         Panel::Hoja(_) => panel,
         Panel::Division { direccion: d, primero, segundo } => {
@@ -831,5 +1128,230 @@ mod tests {
             })
             .collect();
         assert_eq!(rutas, vec!["a.txt", "b.txt"]);
+    }
+
+    fn layout_de_tres_paneles() -> Layout {
+        let mut layout = layout_de_prueba();
+        layout.dividir(DireccionSplit::Vertical);
+        layout.abrir_en_activo(Editor::nuevo(), "b.txt".to_string());
+        layout.dividir(DireccionSplit::Horizontal);
+        layout.abrir_en_activo(Editor::nuevo(), "c.txt".to_string());
+        layout
+    }
+
+    #[test]
+    fn maximizar_con_un_solo_panel_no_hace_nada() {
+        let mut layout = layout_de_prueba();
+        layout.alternar_maximizado();
+        assert!(!layout.maximizado());
+    }
+
+    #[test]
+    fn maximizar_y_restaurar_deja_el_layout_intacto() {
+        let mut layout = layout_de_tres_paneles();
+        layout.ir_a_panel(1);
+        layout.alternar_maximizado();
+        assert!(layout.maximizado());
+        assert_eq!(layout.num_paneles(), 3);
+        assert_eq!(layout.panel_activo().ruta_mostrada, "b.txt");
+
+        layout.alternar_maximizado();
+        assert!(!layout.maximizado());
+        assert_eq!(layout.num_paneles(), 3);
+        assert_eq!(layout.indice_activo(), 1);
+    }
+
+    #[test]
+    fn cambiar_de_panel_dividir_o_cerrar_sale_del_maximizado() {
+        let mut layout = layout_de_tres_paneles();
+        layout.alternar_maximizado();
+        layout.ir_a_panel(0);
+        assert!(!layout.maximizado());
+        assert_eq!(layout.indice_activo(), 0);
+
+        layout.alternar_maximizado();
+        layout.dividir(DireccionSplit::Vertical);
+        assert!(!layout.maximizado());
+        assert_eq!(layout.num_paneles(), 4);
+
+        layout.alternar_maximizado();
+        layout.cerrar_activo();
+        assert!(!layout.maximizado());
+        assert_eq!(layout.num_paneles(), 3);
+    }
+
+    #[test]
+    fn ir_a_un_panel_fuera_de_rango_no_sale_del_maximizado() {
+        let mut layout = layout_de_tres_paneles();
+        layout.alternar_maximizado();
+        layout.ir_a_panel(7);
+        assert!(layout.maximizado());
+    }
+
+    #[test]
+    fn hoja_en_indice_encuentra_cada_panel() {
+        let mut layout = layout_de_tres_paneles();
+        for (i, ruta) in ["a.txt", "b.txt", "c.txt"].iter().enumerate() {
+            match hoja_en_indice(&mut layout.raiz, i) {
+                Panel::Hoja(p) => assert_eq!(p.activo().ruta_mostrada, *ruta),
+                Panel::Division { .. } => panic!("no es una hoja"),
+            }
+        }
+    }
+
+    // --- Pestañas (BACKLOG.md P3 #10) ---
+
+    /// Archivos reales en una carpeta temporal única, borrada al final:
+    /// reusar una pestaña compara rutas, y `Editor::abrir` las necesita.
+    struct DirTemporal(std::path::PathBuf);
+
+    impl DirTemporal {
+        fn nuevo(nombre: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("tcode-test-pestanas-{nombre}-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        /// Abre (creándolo) el archivo `nombre` y devuelve su editor y su
+        /// ruta mostrada.
+        fn abrir(&self, nombre: &str) -> (Editor, String) {
+            let ruta = self.0.join(nombre);
+            if !ruta.exists() {
+                std::fs::write(&ruta, nombre).unwrap();
+            }
+            (Editor::abrir(&ruta).unwrap(), ruta.display().to_string())
+        }
+    }
+
+    impl Drop for DirTemporal {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).ok();
+        }
+    }
+
+    fn nombres_de_pestanas(layout: &Layout) -> Vec<String> {
+        layout.pestanas_activas().documentos.iter().map(|d| barra_pestanas::titulos(&[&d.ruta_mostrada])[0].clone()).collect()
+    }
+
+    fn layout_con(dir: &DirTemporal, nombres: &[&str]) -> Layout {
+        let mut layout = Layout::nuevo(Editor::nuevo(), String::new());
+        for nombre in nombres {
+            let (editor, ruta) = dir.abrir(nombre);
+            layout.abrir_en_activo(editor, ruta);
+        }
+        layout
+    }
+
+    #[test]
+    fn abrir_reemplaza_el_sin_nombre_intacto_y_agrega_pestanas_a_la_derecha() {
+        let dir = DirTemporal::nuevo("abrir");
+        let mut layout = layout_con(&dir, &["a.txt", "b.txt"]);
+        assert_eq!(nombres_de_pestanas(&layout), vec!["a.txt", "b.txt"]);
+        assert_eq!(layout.indice_pestana_activa(), 1);
+
+        // Lo nuevo va justo a la derecha de la activa, no al final.
+        layout.ir_a_pestana(0);
+        let (editor, ruta) = dir.abrir("c.txt");
+        layout.abrir_en_activo(editor, ruta);
+        assert_eq!(nombres_de_pestanas(&layout), vec!["a.txt", "c.txt", "b.txt"]);
+        assert_eq!(layout.indice_pestana_activa(), 1);
+    }
+
+    #[test]
+    fn un_sin_nombre_modificado_no_se_reemplaza() {
+        let dir = DirTemporal::nuevo("sin-nombre");
+        let mut layout = Layout::nuevo(Editor::nuevo(), String::new());
+        layout.editor_activo_mut().insertar_char('x');
+        let (editor, ruta) = dir.abrir("a.txt");
+        layout.abrir_en_activo(editor, ruta);
+        assert_eq!(nombres_de_pestanas(&layout), vec!["[Sin nombre]", "a.txt"]);
+    }
+
+    #[test]
+    fn abrir_un_archivo_ya_abierto_solo_activa_su_pestana_y_conserva_su_estado() {
+        let dir = DirTemporal::nuevo("reusar");
+        let mut layout = layout_con(&dir, &["a.txt", "b.txt"]);
+        layout.ir_a_pestana(0);
+        layout.editor_activo_mut().insertar_char('X');
+        layout.ir_a_pestana(1);
+
+        assert!(layout.activar_pestana_de(&dir.0.join("a.txt")));
+        assert_eq!(layout.num_pestanas(), 2);
+        assert_eq!(layout.indice_pestana_activa(), 0);
+        assert_eq!(layout.editor_activo().buffer().a_texto(), "Xa.txt");
+
+        // Por `abrir_en_activo` directo (el editor que llega se descarta).
+        layout.ir_a_pestana(1);
+        let (editor, ruta) = dir.abrir("a.txt");
+        layout.abrir_en_activo(editor, ruta);
+        assert_eq!(layout.num_pestanas(), 2);
+        assert!(layout.editor_activo().buffer().modificado(), "no se reemplazó por la copia recién leída");
+        assert!(!layout.activar_pestana_de(&dir.0.join("z.txt")));
+    }
+
+    #[test]
+    fn siguiente_y_anterior_dan_la_vuelta() {
+        let dir = DirTemporal::nuevo("ciclo");
+        let mut layout = layout_con(&dir, &["a.txt", "b.txt", "c.txt"]);
+        assert_eq!(layout.indice_pestana_activa(), 2);
+        layout.siguiente_pestana();
+        assert_eq!(layout.indice_pestana_activa(), 0);
+        layout.anterior_pestana();
+        assert_eq!(layout.indice_pestana_activa(), 2);
+        layout.anterior_pestana();
+        assert_eq!(layout.indice_pestana_activa(), 1);
+        layout.ir_a_pestana(7);
+        assert_eq!(layout.indice_pestana_activa(), 1, "fuera de rango no hace nada");
+    }
+
+    #[test]
+    fn cerrar_pestana_activa_la_de_la_derecha_o_la_anterior_si_era_la_ultima() {
+        let dir = DirTemporal::nuevo("cerrar");
+        let mut layout = layout_con(&dir, &["a.txt", "b.txt", "c.txt"]);
+        layout.ir_a_pestana(1);
+        layout.cerrar_pestana_activa();
+        assert_eq!(nombres_de_pestanas(&layout), vec!["a.txt", "c.txt"]);
+        assert_eq!(layout.indice_pestana_activa(), 1);
+
+        layout.cerrar_pestana_activa();
+        assert_eq!(nombres_de_pestanas(&layout), vec!["a.txt"]);
+        assert_eq!(layout.indice_pestana_activa(), 0);
+    }
+
+    #[test]
+    fn cerrar_la_ultima_pestana_del_unico_panel_deja_un_sin_nombre() {
+        let dir = DirTemporal::nuevo("ultima");
+        let mut layout = layout_con(&dir, &["a.txt"]);
+        layout.cerrar_pestana_activa();
+        assert_eq!(layout.num_paneles(), 1);
+        assert_eq!(nombres_de_pestanas(&layout), vec!["[Sin nombre]"]);
+    }
+
+    #[test]
+    fn cerrar_la_ultima_pestana_con_split_cierra_el_panel() {
+        let dir = DirTemporal::nuevo("split");
+        let mut layout = layout_con(&dir, &["a.txt", "b.txt"]);
+        layout.dividir(DireccionSplit::Vertical);
+        let (editor, ruta) = dir.abrir("c.txt");
+        layout.abrir_en_activo(editor, ruta);
+        assert_eq!(nombres_de_pestanas(&layout), vec!["c.txt"], "cada panel tiene sus propias pestañas");
+
+        layout.cerrar_pestana_activa();
+        assert_eq!(layout.num_paneles(), 1);
+        assert_eq!(nombres_de_pestanas(&layout), vec!["a.txt", "b.txt"]);
+    }
+
+    #[test]
+    fn modificados_cuenta_todas_las_pestanas_de_todos_los_paneles() {
+        let dir = DirTemporal::nuevo("modificados");
+        let mut layout = layout_con(&dir, &["a.txt", "b.txt"]);
+        layout.ir_a_pestana(0);
+        layout.editor_activo_mut().insertar_char('X');
+        layout.ir_a_pestana(1);
+        assert!(layout.panel_activo_modificado());
+        layout.dividir(DireccionSplit::Vertical);
+        layout.editor_activo_mut().insertar_char('Y');
+        assert_eq!(layout.documentos_modificados(), 2);
+        assert_eq!(layout.paneles_mut().len(), 3, "todas las pestañas de todos los paneles");
     }
 }

@@ -733,6 +733,100 @@ diff se recalcula en vivo al escribir. Preparar un repo de prueba:
 - [ ] Archivo de 10.000 líneas commiteado: tipear de corrido en el medio sigue siendo instantáneo.
 - [ ] Sin `git` en el `PATH` (p. ej. `PATH=/nada "$(command -v tcode)" archivo`): abre normal, sin columna ni errores.
 
+## Modo zen y panel maximizado (`Ctrl+K Z`, `F11`/`Ctrl+K G`)
+
+BACKLOG.md P3 #12 y #11. El modo zen es de sesión (no se guarda en la
+config): oculta explorador y statusbar sin tocar sus toggles. "Pantalla
+completa" en una terminal = maximizar el panel activo de un split (como
+el zoom de tmux); el tamaño de letra y la ventana los controla el
+emulador de terminal, no tcode.
+
+- [ ] Con el explorador visible y enfocado (`Ctrl+B`), `Ctrl+K Z`: se ven solo los paneles de código, sin explorador ni statusbar; las flechas mueven el cursor del editor, no la selección del árbol.
+- [ ] Otra vez `Ctrl+K Z`: vuelven explorador y statusbar, y el foco vuelve al explorador (las flechas mueven la selección del árbol).
+- [ ] Con la statusbar apagada en `Ctrl+,` → Interfaz, entrar y salir de zen: sigue apagada (zen no toca la config; `config.toml` no cambia).
+- [ ] En zen: `F1`/`Ctrl+Shift+P` abre la paleta, `Ctrl+P` el buscador, `Ctrl+F` la búsqueda, `Ctrl+K Ctrl+T` el selector de temas — todos se ven y funcionan; al cerrarlos se sigue en zen.
+- [ ] En zen, abrir un archivo desde `Ctrl+P`: se abre y se sigue en zen.
+- [ ] En zen, `Ctrl+B`: sale del zen y muestra el explorador enfocado (aunque antes del zen estuviera oculto). `Ctrl+K J`, `Ctrl+K N`/`C`/`M` también salen del zen antes de actuar.
+- [ ] Con 2 paneles, `F11` (o `Ctrl+K G` si la terminal/SO se come `F11`): el panel activo ocupa toda el área de edición, con `[MAX]` a la derecha de su statusbar. Otra vez: vuelven los dos paneles como estaban.
+- [ ] Con 3 paneles (vertical + horizontal), maximizar el del medio y restaurar: el layout vuelve idéntico, con el mismo panel activo.
+- [ ] Maximizado, `Ctrl+K 1`/`2`/`3` (o `Ctrl+1/2/3`): sale del maximizado y va a ese panel (como tmux). Dividir (`Ctrl+K \`) o cerrar (`Ctrl+K F`) también sale del maximizado primero.
+- [ ] Con un solo panel, `F11` no hace nada (sin `[MAX]`).
+- [ ] Zen + maximizado: solo el código del panel activo en toda la pantalla (sin `[MAX]`, porque no hay statusbar). Salir de zen: vuelve la statusbar con `[MAX]`; `F11`: vuelven todos los paneles.
+- [ ] En la paleta, buscar "zen" y "maximizar": aparecen "Ver: Alternar modo zen (solo el código)" y "Ver: Maximizar/restaurar el panel activo" y funcionan.
+- [ ] Salir de tcode en zen y volver a abrir: arranca normal (el zen no se recuerda).
+
+## Pestañas de archivos abiertos (`Ctrl+PageDown`/`Ctrl+PageUp`, `Ctrl+W`, `Alt+N`)
+
+BACKLOG.md P3 #10 (primera mitad). Cada panel tiene sus pestañas; abrir
+un archivo agrega una en vez de reemplazar lo que se estaba viendo.
+
+- [ ] `tcode` sin argumentos y abrir un archivo con `Ctrl+P`: queda una sola pestaña (el "[Sin nombre]" vacío se reemplaza, no queda al lado).
+- [ ] Abrir 4 archivos con `Ctrl+P`/explorador: 4 pestañas, cada una nueva a la derecha de la activa, y la activa resaltada.
+- [ ] Dos archivos con el mismo nombre en carpetas distintas (`a/mod.rs`, `b/mod.rs`): las pestañas muestran `a/mod.rs` y `b/mod.rs`; uno solo muestra `mod.rs`.
+- [ ] `Ctrl+PageDown`/`Ctrl+PageUp` recorren las pestañas y dan la vuelta en los extremos. `Ctrl+K PageDown`/`Ctrl+K PageUp` hacen lo mismo.
+- [ ] `Alt+1`..`Alt+9` van a esa pestaña (en macOS con Option como Meta); un número sin pestaña no hace nada. En la paleta, "Pestañas" lista siguiente/anterior/cerrar/ir a la N.
+- [ ] Editar en una pestaña, mover el cursor y el scroll, plegar un bloque, cambiar de pestaña y volver: texto, `*`, cursor, scroll, pliegue y `Ctrl+Z` siguen ahí.
+- [ ] Un `.md` con preview (`Ctrl+K V`) y un `.csv` en vista tabla con una celda seleccionada: al ir y volver conservan su vista.
+- [ ] Volver a abrir con `Ctrl+P` un archivo ya abierto (y modificado) en el panel: solo se activa su pestaña, sin perder los cambios.
+- [ ] `Ctrl+W` en una pestaña sin cambios: se cierra y queda activa la de su derecha (o la anterior, si era la última).
+- [ ] `Ctrl+W` con cambios: no cierra y la statusbar dice "Cambios sin guardar: Ctrl+W de nuevo...". Otra tecla y después `Ctrl+W`: vuelve a avisar. `Ctrl+W` dos veces seguidas: cierra sin guardar (el archivo en disco no cambia).
+- [ ] `Ctrl+W` en la última pestaña del único panel: queda "[Sin nombre]" vacío. Con split: se cierra ese panel.
+- [ ] `Ctrl+K F` sobre un panel con alguna pestaña modificada (aunque no sea la visible): pide repetirlo; sin cambios, cierra directo.
+- [ ] Con cambios en una pestaña que NO es la activa, `Ctrl+Q`: no sale y avisa "1 archivo con cambios sin guardar"; otro `Ctrl+Q` seguido sale.
+- [ ] Split (`Ctrl+K \`) con pestañas distintas en cada panel: cada barra muestra las suyas; la activa del panel con foco va en negrita.
+- [ ] 15 pestañas en un panel angosto: la activa siempre se ve, con `<`/`>` en los bordes cuando hay más de ese lado; `Alt+1` lleva la barra al principio.
+- [ ] `Ctrl+,` → Interfaz → "Mostrar pestañas" en No: desaparece la barra y el código sube una fila; los atajos siguen andando. `config.toml` global tiene `mostrar_pestanas = false`.
+- [ ] Modo zen (`Ctrl+K Z`): sin barra de pestañas; al salir vuelve. Maximizado (`F11`/`Ctrl+K G`): la barra del panel maximizado se ve.
+- [ ] Guardado automático "al perder foco": editar una pestaña y cambiar a otra con `Ctrl+PageDown`: la primera se guarda (desaparece el `*`).
+- [ ] LSP (pyright): `malo.py` con un error de tipos y `bueno.py` sin errores en dos pestañas: al alternar, la statusbar muestra "1 error" solo en `malo.py`; escribir un error en `bueno.py` lo marca ahí y no en `malo.py`.
+- [ ] Archivo de 200.000 líneas en una pestaña: `Ctrl+PageDown`/`Ctrl+PageUp` mantenidos cambian de pestaña al instante, y al volver sigue en la misma línea.
+
+## Temas en formato Helix
+
+BACKLOG.md P3 #13. Un `.toml` de tema de Helix dejado en la carpeta de
+temas del usuario (`~/.config/tcode/themes/`, en macOS `~/Library/
+Application Support/tcode/themes/`) se convierte al vuelo al cargarlo;
+el archivo nunca se reescribe. Hay temas de ejemplo en
+`crates/config/tests/fixtures/helix/` (`onedark`, `onelight`, `gruvbox`
+y `gruvbox_dark_hard`, que hereda del anterior); también sirve cualquiera
+de `runtime/themes/` del repo de Helix.
+
+- [ ] Copiar `onedark.toml` y `onelight.toml` a la carpeta de temas: sin reiniciar, `Ctrl+K Ctrl+T` los lista al final como "onedark (Helix)" y "onelight (Helix)".
+- [ ] `Tab` hasta el filtro "Oscuro": aparece `onedark (Helix)` y no `onelight`; en "Claro", al revés.
+- [ ] Moverse sobre `onedark (Helix)`: preview en vivo con fondo `#282c34`, palabras clave violetas, strings verdes, comentarios grises en cursiva; `Enter` lo deja activo y sobrevive a reiniciar `tcode`.
+- [ ] Copiar `gruvbox.toml` y `gruvbox_dark_hard.toml`: el segundo (solo `inherits = "gruvbox"` + otro `bg0`) se ve como gruvbox pero con fondo más oscuro (`#1d2021`).
+- [ ] Borrar `gruvbox.toml` y volver a elegir `gruvbox_dark_hard`: no falla — usa el tema base "Oscuro" de `tcode` para todo lo que no define (fondo `#1d2021` igual).
+- [ ] Un tema de Helix con scopes raros, modificadores desconocidos o colores que no existen en `[palette]`: se lista y se aplica igual (lo que no entiende queda con el color de texto).
+- [ ] Un `.toml` roto (TOML inválido) en la carpeta: no aparece en el selector y no rompe nada.
+- [ ] Con un tema de Helix activo, `Ctrl+,` → Temas → "Duplicar tema activo": crea `<tema>-mio.toml` en formato `tcode` (con `name`, `[ui]`, `[statusbar]`...); el archivo de Helix original queda byte a byte igual.
+- [ ] Con un tema de Helix activo, `Ctrl+K Ctrl+P`: el editor visual muestra sus colores convertidos; cambiar uno guarda en `<tema>-mio.toml` (formato `tcode`) y nunca toca el original.
+
+## Breadcrumbs (ruta > símbolos arriba del código)
+
+BACKLOG.md P3 #10 (segunda mitad). Una fila arriba del código de cada
+panel: ruta del archivo relativa a la raíz del repo git (o al directorio
+de trabajo si no hay repo) y los contenedores con nombre que encierran
+al cursor. Símbolos para Rust, Python, JavaScript/TypeScript, Go, Java,
+C/C++, C#, Kotlin, Ruby, PHP y encabezados de Markdown; el resto (HTML,
+CSS, SQL, texto plano) muestra solo la ruta.
+
+- [ ] Desde la raíz del repo, `tcode crates/core/src/editor.rs`: arriba del código se ve `crates > core > src > editor.rs`.
+- [ ] Bajar hasta adentro de un método de `impl Editor`: `... > editor.rs > impl Editor > fn <método>`; moverse al método siguiente y el breadcrumb cambia; en la línea en blanco entre dos métodos queda solo `impl Editor`.
+- [ ] Con el cursor en la indentación de la línea `fn ...` o justo después del `}` que la cierra: sigue mostrando esa `fn` (no el `impl` de afuera).
+- [ ] Bajar hasta `mod tests`: `mod tests > fn <test>`.
+- [ ] Un `.py` con `class A:` / `def b(self):` adentro: `class A > def b`; una función suelta: `def f`; una línea fuera de todo: solo la ruta.
+- [ ] Un `.ts` con `namespace` > `class` > método: `namespace X > class Y > metodo()`; `const f = () => {...}`: `f()`.
+- [ ] Un `.md`: los encabezados en los que está el cursor (`# Título > ## Sección`).
+- [ ] Un `.txt` (sin lenguaje): solo la ruta. Un buffer nuevo (`tcode` sin argumentos, o el panel nuevo de un split): `[Sin nombre]`.
+- [ ] Un CSV en vista de tabla: solo la ruta (sin símbolos).
+- [ ] Achicar la ventana de a poco: primero desaparecen las carpetas del medio (`crates > .. > src > editor.rs > ...`), después todas (`.. > editor.rs > ...`), después los símbolos de afuera (`editor.rs > .. > fn interna`) y por último se acorta el símbolo más interno con `..`. El nombre del archivo y el símbolo más interno siempre quedan. Sin caracteres raros ni desalineados (separador ASCII ` > `).
+- [ ] Tipear rápido en un archivo Rust de 10.000 líneas, con breadcrumbs prendidos y apagados: se siente igual (la consulta de símbolos usa el árbol que ya tiene el resaltado, cacheada por revisión + posición del cursor).
+- [ ] `Ctrl+,` (o `Ctrl+K A`) → Interfaz → "Mostrar breadcrumbs (ruta > símbolos)": apagarlo saca la fila en todos los paneles y el código sube una fila; `config.toml` queda con `mostrar_breadcrumbs = false`. Prenderlo de nuevo: vuelve.
+- [ ] Con 2 paneles, cada uno muestra su propio breadcrumb; maximizado (`F11`/`Ctrl+K G`) el panel activo lo sigue mostrando.
+- [ ] Con la barra de pestañas prendida: el orden de arriba hacia abajo es pestañas, breadcrumbs, código. Abrir otro archivo en una pestaña nueva y alternar (`Ctrl+PageDown`/`Ctrl+PageUp`): el breadcrumb pasa a la ruta y los símbolos del cursor de la pestaña activa, sin demora.
+- [ ] Apagar "Mostrar pestañas" y dejar los breadcrumbs: los breadcrumbs quedan en la primera fila del panel.
+- [ ] Modo zen (`Ctrl+K Z`): los breadcrumbs se ocultan junto con la statusbar y las pestañas; al salir del zen vuelven (sin tocar la config).
+
 ---
 
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca

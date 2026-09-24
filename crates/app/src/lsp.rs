@@ -5,9 +5,11 @@
 //! pueda dibujar.
 //!
 //! Simplificación deliberada de esta primera pieza: un solo cliente LSP
-//! activo a la vez, asociado al panel activo — no hay todavía un cliente
-//! por lenguaje corriendo en paralelo para cada split abierto. Cambiar de
-//! panel a un archivo de otro lenguaje relanza el cliente.
+//! activo a la vez, asociado al documento activo (pestaña activa del
+//! panel activo) — no hay todavía un cliente por lenguaje corriendo en
+//! paralelo para cada split o pestaña abierta. Cambiar a un archivo de
+//! otro lenguaje relanza el cliente; a otro del mismo lenguaje, le pasa
+//! la sesión (`didClose` + `didOpen`, `SesionLsp::cambiar_documento`).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -15,7 +17,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use lsp_types::{
-    ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingClientCapabilities,
+    ClientCapabilities, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingClientCapabilities,
     DocumentFormattingParams, FormattingOptions, InitializeParams, InitializedParams, TextDocumentClientCapabilities,
     TextDocumentIdentifier, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
 };
@@ -47,6 +49,10 @@ struct SesionLsp {
     /// el lenguaje no haya cambiado, y relance.
     comando_usado: (String, Vec<String>, BTreeMap<String, String>),
     fase: Fase,
+    /// Documento abierto en el servidor: la ruta tal como la tiene el
+    /// panel (para compararla barato en cada frame, sin armar el URI) y
+    /// su URI.
+    ruta: String,
     uri: Uri,
     ultimo_texto_enviado: String,
     /// `Buffer::revision` de `ultimo_texto_enviado`, si se conoce: con la
@@ -62,6 +68,48 @@ struct SesionLsp {
     /// mandar `textDocument/formatting`, para no esperar en vano una
     /// respuesta que va a ser un error "método no soportado".
     soporta_formateo: bool,
+}
+
+impl SesionLsp {
+    /// Pasa la sesión a otro documento del mismo lenguaje: `didClose` del
+    /// anterior y `didOpen` del nuevo con su texto actual (`contenido`,
+    /// que solo se pide acá, al cambiar — nunca por frame). Si el
+    /// handshake todavía no terminó alcanza con cambiar el URI y el
+    /// texto: el `didOpen` de `procesar_mensaje` usa esos. La versión
+    /// vuelve a 1: es por documento, y para el servidor este es un
+    /// documento recién abierto.
+    async fn cambiar_documento(&mut self, ruta: &str, contenido: impl FnOnce() -> String) {
+        let Ok(uri) = uri_de_archivo(Path::new(ruta)) else { return };
+        let texto = contenido();
+        if let Fase::Listo { version, .. } = &mut self.fase {
+            let _ = self
+                .cliente
+                .notificacion(
+                    "textDocument/didClose",
+                    DidCloseTextDocumentParams { text_document: TextDocumentIdentifier { uri: self.uri.clone() } },
+                )
+                .await;
+            let _ = self
+                .cliente
+                .notificacion(
+                    "textDocument/didOpen",
+                    DidOpenTextDocumentParams {
+                        text_document: TextDocumentItem {
+                            uri: uri.clone(),
+                            language_id: self.lenguaje.id().to_string(),
+                            version: 1,
+                            text: texto.clone(),
+                        },
+                    },
+                )
+                .await;
+            *version = 1;
+        }
+        self.ruta = ruta.to_string();
+        self.uri = uri;
+        self.ultimo_texto_enviado = texto;
+        self.ultima_revision_enviada = None;
+    }
 }
 
 /// Cuánto se espera, como mucho, la respuesta a `textDocument/formatting`
@@ -129,6 +177,16 @@ impl EstadoLsp {
             (None, None) => false,
         };
         if !necesita_relanzar {
+            // Mismo lenguaje pero otro archivo (otra pestaña o panel,
+            // BACKLOG.md P3 #10): la sesión sigue al documento activo sin
+            // relanzar el servidor. Antes se quedaba con el URI del
+            // primero y le mandaba el texto del nuevo como `didChange` de
+            // aquel — con pestañas, cambiar entre dos `.py` es lo normal.
+            if let Some(sesion) = &mut self.sesion {
+                if sesion.ruta != ruta {
+                    sesion.cambiar_documento(ruta, contenido).await;
+                }
+            }
             return;
         }
 
@@ -175,6 +233,7 @@ impl EstadoLsp {
             lenguaje,
             comando_usado: (comando, args, env),
             fase: Fase::Iniciando { id_initialize },
+            ruta: ruta.to_string(),
             uri,
             ultimo_texto_enviado: contenido(),
             ultima_revision_enviada: None,

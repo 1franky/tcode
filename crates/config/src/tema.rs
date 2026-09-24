@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::color::analizar_color_hex;
 use crate::config::directorio_temas_usuario;
+use crate::helix::{convertir_tema_helix, es_formato_helix};
 
 /// Un color de sintaxis puede definirse como un string simple
 /// (`string = "#a6e3a1"`) o como una tabla con estilo adicional
@@ -179,7 +180,7 @@ const TEMA_ALTO_CONTRASTE: &str = include_str!("../../../runtime/themes/alto-con
 /// especificado no se encuentra.
 pub const TEMA_POR_DEFECTO: &str = "dracula";
 
-fn tema_embebido(nombre: &str) -> Option<&'static str> {
+pub(crate) fn tema_embebido(nombre: &str) -> Option<&'static str> {
     match nombre {
         "dracula" => Some(TEMA_DRACULA),
         "oscuro" => Some(TEMA_OSCURO),
@@ -265,7 +266,9 @@ impl From<&InfoTema> for InfoTemaListado {
 /// original vía `tema_texto_crudo`: listarlo aparte sería mostrar el
 /// mismo tema dos veces). Un archivo que no exista, no se pueda leer, o
 /// no parsee como `Tema` válido simplemente se ignora — un tema de
-/// terceros corrupto no debería poder romper el selector.
+/// terceros corrupto no debería poder romper el selector. Un tema en
+/// formato Helix (BACKLOG.md P3 #13) se lista convertido: su `tipo`
+/// (claro/oscuro para el filtro) sale de la luminancia de su fondo.
 ///
 /// Vuelve a leer el directorio entero cada vez que se llama (sin cachear
 /// nada): mismo criterio de "correctitud primero, optimizar si hace
@@ -308,7 +311,7 @@ fn descubrir_temas_en(dir: &std::path::Path) -> Vec<InfoTemaListado> {
                 }
             }
             let texto = std::fs::read_to_string(&ruta).ok()?;
-            let tema: Tema = toml::from_str(&texto).ok()?;
+            let tema = parsear_tema(&texto, &id, dir).ok()?;
             Some(InfoTemaListado { id, nombre: tema.name, tipo: tema.tipo, alto_contraste: tema.alto_contraste })
         })
         .collect();
@@ -325,7 +328,13 @@ fn descubrir_temas_en(dir: &std::path::Path) -> Vec<InfoTemaListado> {
 /// serializar la struct `Tema` ya parseada — evita que un duplicado
 /// pierda comentarios o el formato original del archivo.
 fn tema_texto_crudo(nombre: &str) -> Result<String> {
-    let ruta_usuario = directorio_temas_usuario().join(format!("{nombre}.toml"));
+    tema_texto_crudo_en(nombre, &directorio_temas_usuario())
+}
+
+/// [`tema_texto_crudo`] con la carpeta de temas del usuario como
+/// parámetro (para los tests, mismo criterio que `descubrir_temas_en`).
+fn tema_texto_crudo_en(nombre: &str, dir: &std::path::Path) -> Result<String> {
+    let ruta_usuario = dir.join(format!("{nombre}.toml"));
     if ruta_usuario.exists() {
         return std::fs::read_to_string(&ruta_usuario)
             .with_context(|| format!("no se pudo leer el tema '{}'", ruta_usuario.display()));
@@ -336,11 +345,33 @@ fn tema_texto_crudo(nombre: &str) -> Result<String> {
     anyhow::bail!("tema '{nombre}' no encontrado (ni de usuario ni embebido)")
 }
 
-/// Carga un tema por nombre, ya parseado. El resto de los 10+ temas de
-/// PLAN.md §7 llega en M4.
+/// Parsea el texto de un tema, en formato propio o en formato Helix
+/// (detectado solo, ver `helix::es_formato_helix`). `dir` es donde se
+/// buscan los padres de `inherits` de un tema de Helix — la carpeta de
+/// temas del usuario en uso real, una temporal en los tests.
+fn parsear_tema(texto: &str, id: &str, dir: &std::path::Path) -> Result<Tema> {
+    let es_helix = toml::from_str::<toml::Table>(texto).map(|t| es_formato_helix(&t)).unwrap_or(false);
+    if es_helix {
+        return convertir_tema_helix(texto, id, dir);
+    }
+    toml::from_str(texto).with_context(|| format!("el tema '{id}' tiene TOML inválido"))
+}
+
+/// ¿El tema `nombre` (de usuario o embebido) está escrito en formato
+/// Helix? Lo usa el editor visual de tema para no reescribir nunca un
+/// archivo de Helix en formato `tcode` aunque se llame `<algo>-mio`.
+pub(crate) fn tema_es_formato_helix(nombre: &str) -> bool {
+    tema_texto_crudo(nombre)
+        .ok()
+        .and_then(|texto| toml::from_str::<toml::Table>(&texto).ok())
+        .is_some_and(|tabla| es_formato_helix(&tabla))
+}
+
+/// Carga un tema por nombre, ya parseado (convertido si es un tema de
+/// Helix que el usuario dejó en su carpeta de temas).
 pub fn cargar_tema(nombre: &str) -> Result<Tema> {
     let texto = tema_texto_crudo(nombre)?;
-    toml::from_str(&texto).with_context(|| format!("el tema '{nombre}' tiene TOML inválido"))
+    parsear_tema(&texto, nombre, &directorio_temas_usuario())
 }
 
 /// Carga el tema por defecto. Si falla (no debería: es contenido embebido
@@ -365,15 +396,31 @@ pub enum ResultadoDuplicarTema {
 /// PLAN.md §7 ("Duplicar tema base"). El archivo resultante, al ser TOML
 /// plano, también sirve como el "exportar" de esa misma sección: se
 /// puede copiar a cualquier otra instalación de `tcode` sin cambios.
-/// Nunca sobreescribe una copia que ya existía.
+/// Nunca sobreescribe una copia que ya existía. Un tema en formato
+/// Helix no se copia tal cual: la copia se escribe ya convertida a
+/// formato `tcode` (es la que después reescribe el editor visual con
+/// `guardar_tema`), y el `.toml` de Helix original queda intacto.
 pub fn duplicar_tema_para_editar(nombre: &str) -> Result<ResultadoDuplicarTema> {
-    let destino = directorio_temas_usuario().join(format!("{nombre}-mio.toml"));
+    duplicar_tema_en(nombre, &directorio_temas_usuario())
+}
+
+/// La parte testeable de [`duplicar_tema_para_editar`] (mismo motivo que
+/// `descubrir_temas_en`): lee el tema y escribe la copia en `dir`.
+fn duplicar_tema_en(nombre: &str, dir: &std::path::Path) -> Result<ResultadoDuplicarTema> {
+    let destino = dir.join(format!("{nombre}-mio.toml"));
     if destino.exists() {
         return Ok(ResultadoDuplicarTema::YaExistia(destino));
     }
-    let texto = tema_texto_crudo(nombre)?;
-    let dir = directorio_temas_usuario();
-    std::fs::create_dir_all(&dir).with_context(|| format!("no se pudo crear '{}'", dir.display()))?;
+    let texto = tema_texto_crudo_en(nombre, dir)?;
+    if toml::from_str::<toml::Table>(&texto).is_ok_and(|t| es_formato_helix(&t)) {
+        let mut tema = convertir_tema_helix(&texto, nombre, dir)?;
+        // Nombre propio: el original sigue listado en el selector como
+        // "<id> (Helix)" y la copia no debería verse igual.
+        tema.name = format!("{nombre} (copia de Helix)");
+        guardar_tema(&tema, &destino)?;
+        return Ok(ResultadoDuplicarTema::Creado(destino));
+    }
+    std::fs::create_dir_all(dir).with_context(|| format!("no se pudo crear '{}'", dir.display()))?;
     std::fs::write(&destino, texto).with_context(|| format!("no se pudo escribir '{}'", destino.display()))?;
     Ok(ResultadoDuplicarTema::Creado(destino))
 }
@@ -565,6 +612,57 @@ foreground = "#ffffff"
         std::fs::write(dir.join("dracula-mio.toml"), tema_embebido("dracula").unwrap()).unwrap();
 
         assert_eq!(descubrir_temas_en(&dir), Vec::new());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const HELIX_ONEDARK: &str = include_str!("../tests/fixtures/helix/onedark.toml");
+    const HELIX_ONELIGHT: &str = include_str!("../tests/fixtures/helix/onelight.toml");
+    const HELIX_GRUVBOX: &str = include_str!("../tests/fixtures/helix/gruvbox.toml");
+    const HELIX_GRUVBOX_DARK_HARD: &str = include_str!("../tests/fixtures/helix/gruvbox_dark_hard.toml");
+
+    #[test]
+    fn descubrir_temas_en_lista_temas_de_helix_con_su_tipo_por_luminancia() {
+        let dir = dir_temporal("helix");
+        std::fs::write(dir.join("onedark.toml"), HELIX_ONEDARK).unwrap();
+        std::fs::write(dir.join("onelight.toml"), HELIX_ONELIGHT).unwrap();
+        std::fs::write(dir.join("gruvbox.toml"), HELIX_GRUVBOX).unwrap();
+        std::fs::write(dir.join("gruvbox_dark_hard.toml"), HELIX_GRUVBOX_DARK_HARD).unwrap();
+
+        let encontrados = descubrir_temas_en(&dir);
+        let resumen: Vec<(&str, &str)> = encontrados.iter().map(|t| (t.id.as_str(), t.tipo.as_str())).collect();
+        assert_eq!(
+            resumen,
+            vec![("gruvbox", "dark"), ("gruvbox_dark_hard", "dark"), ("onedark", "dark"), ("onelight", "light")]
+        );
+        // El hijo resuelve `inherits` contra el padre de la misma carpeta.
+        let hijo = parsear_tema(HELIX_GRUVBOX_DARK_HARD, "gruvbox_dark_hard", &dir).unwrap();
+        assert_eq!(hijo.ui.background, "#1d2021");
+        assert!(hijo.syntax.keyword.is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn duplicar_un_tema_helix_escribe_formato_tcode_y_no_toca_el_original() {
+        let dir = dir_temporal("duplicar-helix");
+        let original = dir.join("onedark.toml");
+        std::fs::write(&original, HELIX_ONEDARK).unwrap();
+
+        let resultado = duplicar_tema_en("onedark", &dir).unwrap();
+        let copia = dir.join("onedark-mio.toml");
+        assert_eq!(resultado, ResultadoDuplicarTema::Creado(copia.clone()));
+        assert_eq!(std::fs::read_to_string(&original).unwrap(), HELIX_ONEDARK);
+
+        // La copia ya es un `Tema` propio: parsea directo, sin conversión.
+        let texto = std::fs::read_to_string(&copia).unwrap();
+        assert!(!es_formato_helix(&toml::from_str(&texto).unwrap()));
+        let tema: Tema = toml::from_str(&texto).unwrap();
+        assert_eq!(tema.name, "onedark (copia de Helix)");
+        assert_eq!(tema.ui.background, "#282c34");
+
+        // Una segunda vez no pisa la copia.
+        assert_eq!(duplicar_tema_en("onedark", &dir).unwrap(), ResultadoDuplicarTema::YaExistia(copia));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
