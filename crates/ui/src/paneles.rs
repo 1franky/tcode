@@ -161,11 +161,30 @@ impl Panel {
 pub struct Layout {
     raiz: Panel,
     activo: usize,
+    /// "Pantalla completa" (`F11`/`Ctrl+K G`, BACKLOG.md P3 #11): el panel
+    /// activo ocupa toda el área de edición, como el zoom de tmux
+    /// (`prefix z`). Solo cambia cómo se dibuja — el árbol de splits queda
+    /// intacto detrás, así que al salir vuelve exactamente igual. Cualquier
+    /// cosa que cambie la estructura o el panel activo (dividir, cerrar,
+    /// `Ctrl+1/2/3`) sale primero del maximizado, igual que tmux.
+    maximizado: bool,
 }
 
 impl Layout {
     pub fn nuevo(editor: Editor, ruta_mostrada: String) -> Self {
-        Self { raiz: Panel::Hoja(Box::new(PanelEditor::nuevo(editor, ruta_mostrada))), activo: 0 }
+        Self { raiz: Panel::Hoja(Box::new(PanelEditor::nuevo(editor, ruta_mostrada))), activo: 0, maximizado: false }
+    }
+
+    /// Si el panel activo está maximizado (ver campo `maximizado`).
+    pub fn maximizado(&self) -> bool {
+        self.maximizado
+    }
+
+    /// `F11`/`Ctrl+K G`: maximiza el panel activo o lo restaura. Con un
+    /// solo panel no hace nada — ya ocupa toda el área, y un `[MAX]`
+    /// prendido sin nada que restaurar solo confundiría.
+    pub fn alternar_maximizado(&mut self) {
+        self.maximizado = !self.maximizado && self.num_paneles() > 1;
     }
 
     pub fn num_paneles(&self) -> usize {
@@ -317,6 +336,7 @@ impl Layout {
     /// primer sub-panel, un buffer nuevo en blanco en el segundo, que
     /// pasa a ser el panel activo (igual que VSCode).
     pub fn dividir(&mut self, direccion: DireccionSplit) {
+        self.maximizado = false;
         let raiz = std::mem::replace(&mut self.raiz, Panel::vacio());
         self.raiz = dividir_en_indice(raiz, self.activo, direccion);
         self.activo += 1;
@@ -328,6 +348,7 @@ impl Layout {
         if self.num_paneles() <= 1 {
             return;
         }
+        self.maximizado = false;
         let raiz = std::mem::replace(&mut self.raiz, Panel::vacio());
         let (nueva_raiz, _) = cerrar_en_indice(raiz, self.activo);
         self.raiz = nueva_raiz;
@@ -338,6 +359,7 @@ impl Layout {
     /// nada si está fuera de rango.
     pub fn ir_a_panel(&mut self, indice: usize) {
         if indice < self.num_paneles() {
+            self.maximizado = false;
             self.activo = indice;
         }
     }
@@ -345,6 +367,8 @@ impl Layout {
     /// Dibuja el árbol de paneles completo dentro de `area`, recursivo:
     /// cada división reparte el espacio 50/50 entre sus dos sub-árboles.
     /// Solo el panel activo recibe el cursor real de la terminal.
+    /// Maximizado, se dibuja solo la hoja activa en toda `area`, con
+    /// `[MAX]` al final de su barra de estado (si la barra se ve).
     #[allow(clippy::too_many_arguments)]
     pub fn dibujar(
         &mut self,
@@ -359,12 +383,19 @@ impl Layout {
         indicadores_git: bool,
         interfaz: &ConfigInterfaz,
     ) {
-        let activo = self.activo;
+        // Maximizado: la hoja activa se dibuja sola, como si fuera la raíz
+        // (índice 0 de un árbol de un solo panel) — el resto del árbol ni
+        // se recorre.
+        let (raiz, activo) = if self.maximizado {
+            (hoja_en_indice(&mut self.raiz, self.activo), 0)
+        } else {
+            (&mut self.raiz, self.activo)
+        };
         let mut indice_actual = 0;
         dibujar_panel(
             frame,
             area,
-            &mut self.raiz,
+            raiz,
             activo,
             &mut indice_actual,
             paleta,
@@ -376,6 +407,37 @@ impl Layout {
             indicadores_git,
             interfaz,
         );
+        if self.maximizado && interfaz.mostrar_statusbar && area.height > 0 {
+            // Pegado a la derecha de la última fila (la de la statusbar),
+            // encima de su relleno: así no hace falta tocar
+            // `statusbar::dibujar` para un indicador que solo existe acá.
+            let indicador = " [MAX] ";
+            let ancho = (indicador.len() as u16).min(area.width);
+            let fila = Rect { x: area.x + area.width - ancho, y: area.y + area.height - 1, width: ancho, height: 1 };
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(indicador)
+                    .style(ratatui::style::Style::default().bg(paleta.statusbar_fondo).fg(paleta.statusbar_texto)),
+                fila,
+            );
+        }
+    }
+}
+
+/// La hoja (nodo `Panel::Hoja`, no su `PanelEditor`) en la posición
+/// `indice` del recorrido en profundidad — para dibujarla sola al
+/// maximizar. Fuera de rango devuelve la última (no pasa: `activo`
+/// siempre es válido).
+fn hoja_en_indice(panel: &mut Panel, indice: usize) -> &mut Panel {
+    match panel {
+        Panel::Hoja(_) => panel,
+        Panel::Division { primero, segundo, .. } => {
+            let n = primero.contar_hojas();
+            if indice < n {
+                hoja_en_indice(primero, indice)
+            } else {
+                hoja_en_indice(segundo, indice - n)
+            }
+        }
     }
 }
 
@@ -865,5 +927,74 @@ mod tests {
             })
             .collect();
         assert_eq!(rutas, vec!["a.txt", "b.txt"]);
+    }
+
+    fn layout_de_tres_paneles() -> Layout {
+        let mut layout = layout_de_prueba();
+        layout.dividir(DireccionSplit::Vertical);
+        layout.abrir_en_activo(Editor::nuevo(), "b.txt".to_string());
+        layout.dividir(DireccionSplit::Horizontal);
+        layout.abrir_en_activo(Editor::nuevo(), "c.txt".to_string());
+        layout
+    }
+
+    #[test]
+    fn maximizar_con_un_solo_panel_no_hace_nada() {
+        let mut layout = layout_de_prueba();
+        layout.alternar_maximizado();
+        assert!(!layout.maximizado());
+    }
+
+    #[test]
+    fn maximizar_y_restaurar_deja_el_layout_intacto() {
+        let mut layout = layout_de_tres_paneles();
+        layout.ir_a_panel(1);
+        layout.alternar_maximizado();
+        assert!(layout.maximizado());
+        assert_eq!(layout.num_paneles(), 3);
+        assert_eq!(layout.panel_activo().ruta_mostrada, "b.txt");
+
+        layout.alternar_maximizado();
+        assert!(!layout.maximizado());
+        assert_eq!(layout.num_paneles(), 3);
+        assert_eq!(layout.indice_activo(), 1);
+    }
+
+    #[test]
+    fn cambiar_de_panel_dividir_o_cerrar_sale_del_maximizado() {
+        let mut layout = layout_de_tres_paneles();
+        layout.alternar_maximizado();
+        layout.ir_a_panel(0);
+        assert!(!layout.maximizado());
+        assert_eq!(layout.indice_activo(), 0);
+
+        layout.alternar_maximizado();
+        layout.dividir(DireccionSplit::Vertical);
+        assert!(!layout.maximizado());
+        assert_eq!(layout.num_paneles(), 4);
+
+        layout.alternar_maximizado();
+        layout.cerrar_activo();
+        assert!(!layout.maximizado());
+        assert_eq!(layout.num_paneles(), 3);
+    }
+
+    #[test]
+    fn ir_a_un_panel_fuera_de_rango_no_sale_del_maximizado() {
+        let mut layout = layout_de_tres_paneles();
+        layout.alternar_maximizado();
+        layout.ir_a_panel(7);
+        assert!(layout.maximizado());
+    }
+
+    #[test]
+    fn hoja_en_indice_encuentra_cada_panel() {
+        let mut layout = layout_de_tres_paneles();
+        for (i, ruta) in ["a.txt", "b.txt", "c.txt"].iter().enumerate() {
+            match hoja_en_indice(&mut layout.raiz, i) {
+                Panel::Hoja(p) => assert_eq!(p.ruta_mostrada, *ruta),
+                Panel::Division { .. } => panic!("no es una hoja"),
+            }
+        }
     }
 }
