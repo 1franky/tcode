@@ -853,6 +853,16 @@ mod tests {
     }
 
     #[test]
+    fn mostrar_breadcrumbs_viene_prendido_y_se_alterna() {
+        let mut config = Config::default();
+        assert!(config.interfaz.mostrar_breadcrumbs);
+        assert_eq!(CampoInterfaz::MostrarBreadcrumbs.clave_toml(), ("interfaz", "mostrar_breadcrumbs"));
+        CampoInterfaz::MostrarBreadcrumbs.aplicar(&mut config);
+        assert!(!config.interfaz.mostrar_breadcrumbs);
+        assert!(config.interfaz.mostrar_statusbar, "no toca otros campos");
+    }
+
+    #[test]
     fn campo_interfaz_alterna_booleano() {
         let mut config = Config::default();
         assert!(config.interfaz.mostrar_statusbar);

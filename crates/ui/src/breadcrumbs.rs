@@ -52,8 +52,10 @@ impl CacheRuta {
             self.ruta = ruta_mostrada.to_string();
             self.partes = match editor.buffer().ruta() {
                 Some(ruta) => tcode_fs::partes_ruta_en_proyecto(ruta),
-                // Buffer sin archivo ("[Sin nombre]"): lo que muestra la
-                // statusbar, tal cual.
+                // Buffer sin archivo: lo que muestra la statusbar, tal
+                // cual — salvo el panel nuevo de un split, que no trae
+                // ninguna ruta y dejaría la fila en blanco.
+                None if ruta_mostrada.is_empty() => vec!["[Sin nombre]".to_string()],
                 None => vec![ruta_mostrada.to_string()],
             };
         }
@@ -122,7 +124,8 @@ pub(crate) fn dibujar(
 
 /// Símbolos que contienen al cursor principal. La posición que se
 /// consulta es la del cursor, pero nunca antes del primer carácter no
-/// blanco de su línea: con el cursor en la indentación de
+/// blanco de su línea ni después del último: con el cursor en la
+/// indentación de
 /// `    fn f() {` (o en una línea en blanco dentro de un cuerpo) el
 /// breadcrumb ya muestra `fn f`, como se espera, en vez del contenedor
 /// de afuera. Columna en bytes, como la cuenta tree-sitter.
@@ -134,8 +137,12 @@ fn simbolos_del_cursor(editor: &Editor, ruta: &str, resaltador: &mut Resaltador)
     let cursor = editor.cursor();
     let linea = buffer.linea_texto(cursor.linea);
     let primer_no_blanco = linea.len() - linea.trim_start().len();
+    // Inicio del último carácter no blanco: con el cursor al final de
+    // `}` (el cierre de un bloque) la posición cae justo DESPUÉS del
+    // nodo, y tree-sitter devolvería el contenedor de afuera.
+    let ultimo_no_blanco = linea.trim_end().char_indices().last().map_or(primer_no_blanco, |(i, _)| i);
     let columna_cursor = linea.char_indices().nth(cursor.columna).map_or(linea.len(), |(i, _)| i);
-    let columna = columna_cursor.max(primer_no_blanco);
+    let columna = columna_cursor.min(ultimo_no_blanco).max(primer_no_blanco);
     resaltador.simbolos_en(ruta, lenguaje, Some(buffer.revision()), || buffer.a_texto(), cursor.linea, columna)
 }
 
@@ -152,10 +159,11 @@ fn ancho_de(segmentos: &[Segmento]) -> usize {
 /// 1. las carpetas del medio (queda la primera, `..` y las más cercanas
 ///    al archivo), después todas (`..`);
 /// 2. los símbolos de afuera (`archivo > .. > fn interna`);
-/// 3. la marca `..` de las carpetas.
+/// 3. la marca `..` de las carpetas;
+/// 4. el final del símbolo más interno (`fn insertar_te..`).
 ///
-/// Si ni así entra, se deja lo último y el `Paragraph` lo corta por la
-/// derecha (una ventana de 20 columnas no tiene mejor solución).
+/// Si ni así entra (el nombre del archivo solo ya no entra), el
+/// `Paragraph` lo corta por la derecha.
 fn componer(partes_ruta: &[String], simbolos: &[String], ancho: usize) -> Vec<Segmento> {
     let (archivo, carpetas) = match partes_ruta.split_last() {
         Some((archivo, carpetas)) => (archivo.as_str(), carpetas),
@@ -205,7 +213,24 @@ fn componer(partes_ruta: &[String], simbolos: &[String], ancho: usize) -> Vec<Se
         simbolos_mostrados.push(Segmento::nuevo(ELIPSIS, Clase::Elipsis));
     }
     simbolos_mostrados.extend(todos_los_simbolos.last().cloned());
-    armar(Vec::new(), simbolos_mostrados)
+    let mut candidato = armar(Vec::new(), simbolos_mostrados);
+
+    // 4. Se acorta el símbolo más interno terminándolo en `..`, en vez de
+    //    que el corte seco del borde lo deje a mitad de palabra sin aviso
+    //    (el nombre del archivo nunca: sin símbolos, lo corta el borde).
+    let sobra = ancho_de(&candidato).saturating_sub(ancho);
+    if sobra > 0 {
+        if let Some(ultimo) = candidato.last_mut().filter(|s| s.clase == Clase::Simbolo) {
+            let largo = ultimo.texto.chars().count();
+            let queda = largo.saturating_sub(sobra + ELIPSIS.len());
+            // Con menos de 3 caracteres no se reconoce nada: se deja
+            // entero y lo corta el borde.
+            if queda >= 3 {
+                ultimo.texto = ultimo.texto.chars().take(queda).collect::<String>() + ELIPSIS;
+            }
+        }
+    }
+    candidato
 }
 
 #[cfg(test)]
@@ -255,7 +280,11 @@ mod tests {
         assert_eq!(texto(&componer(&ruta, &sim, objetivo.len())), objetivo);
         let objetivo = ".. > editor.rs > .. > fn insertar";
         assert_eq!(texto(&componer(&ruta, &sim, objetivo.len())), objetivo);
-        // Ni eso entra: archivo y símbolo más interno siempre quedan.
+        // Ni eso entra: archivo y símbolo más interno siempre quedan, el
+        // símbolo acortado con `..`.
+        let objetivo = "editor.rs > .. > fn inser..";
+        assert_eq!(texto(&componer(&ruta, &sim, objetivo.len())), objetivo);
+        // Si no entra ni el archivo, se deja tal cual (lo corta el borde).
         assert_eq!(texto(&componer(&ruta, &sim, 5)), "editor.rs > .. > fn insertar");
     }
 
