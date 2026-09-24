@@ -17,6 +17,7 @@
 
 mod formateador;
 mod lsp;
+mod pliegues;
 mod vim;
 
 use std::collections::VecDeque;
@@ -40,7 +41,7 @@ use ratatui::Terminal;
 use tokio::time::MissedTickBehavior;
 use tokio_stream::StreamExt;
 
-use tcode_commands::EstadoPaleta;
+use tcode_commands::{EntradaSimbolo, EstadoPaleta, EstadoSelectorSimbolos};
 use tcode_config::{
     CampoEditor, CampoTemas, ComandoLsp, Config, ConfigEditor, ConfigProyecto, EstadoEditorTema, EstadoPanelAdmin,
     EstadoSelectorTema, FocoPanelAdmin, GuardadoAutomatico, ModoEdicion, ResultadoDuplicarTema, Seccion,
@@ -79,10 +80,11 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let editor = match &ruta_arg {
+    let mut editor = match &ruta_arg {
         Some(ruta) => Editor::abrir(ruta)?,
         None => Editor::nuevo(),
     };
+    pliegues::restaurar(&mut editor);
     let mut layout = PanelLayout::nuevo(editor, ruta_arg.clone().unwrap_or_else(|| "[Sin nombre]".to_string()));
 
     // La config y el keymap nunca hacen fallar el arranque: si el archivo
@@ -111,6 +113,11 @@ async fn main() -> Result<()> {
     let (mut terminal, protocolo_kitty) = iniciar_terminal()?;
     let resultado = ejecutar(&mut terminal, &mut layout, capas_config, keymap, explorador, ruta_arg.as_deref()).await;
     finalizar_terminal(&mut terminal, protocolo_kitty)?;
+    // Al salir, los pliegues de todo lo que quedó abierto (ver `pliegues`).
+    pliegues::recordar(layout.paneles_mut().into_iter().map(|p| {
+        let p: &PanelEditor = p;
+        &p.editor
+    }));
 
     resultado
 }
@@ -341,6 +348,9 @@ struct EstadoApp {
     estado_busqueda: EstadoBusqueda,
     guardar_como: EstadoGuardarComo,
     selector_tema: EstadoSelectorTema,
+    /// Selector de símbolos del archivo actual (`Ctrl+K .`, "Ir a
+    /// símbolo"): otro overlay de lista filtrable, como la paleta.
+    selector_simbolos: EstadoSelectorSimbolos,
     panel_admin: EstadoPanelAdmin,
     editor_tema: EstadoEditorTema,
     /// Keymap activo — fuente de verdad para la sección "Atajos" del
@@ -468,6 +478,7 @@ async fn ejecutar(
         estado_busqueda: EstadoBusqueda::nueva(),
         guardar_como: EstadoGuardarComo::nueva(),
         selector_tema: EstadoSelectorTema::nueva(),
+        selector_simbolos: EstadoSelectorSimbolos::nuevo(),
         panel_admin,
         editor_tema: EstadoEditorTema::nueva(),
         keymap,
@@ -512,6 +523,16 @@ async fn ejecutar(
     // la pantalla entera 4 veces por segundo aunque el LSP estuviera
     // callado.
     let mut omitir_dibujo = false;
+
+    // Revisión periódica de `HEAD` (indicadores de git, ver
+    // `tcode_fs::VigiaHead`): un commit o checkout hecho desde otra
+    // terminal se ve solo, sin esperar al próximo `Ctrl+S`. Mismo esquema
+    // que `tick`, pero con su propio período (más lento: son unos `stat`
+    // por documento visible) y solo mientras algún documento visible
+    // está en un repo con los indicadores prendidos — sin eso el bucle
+    // sigue sin despertarse en reposo.
+    let mut tick_git = tokio::time::interval(tcode_fs::INTERVALO_REVISION_HEAD);
+    tick_git.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     // "Al perder foco" (BACKLOG.md P2 #4): qué panel/archivo/zona tenía
     // el foco en la vuelta anterior del bucle — si cambió (`Ctrl+1/2/3`,
@@ -582,6 +603,7 @@ async fn ejecutar(
                     &estado.logs_lsp,
                     &estado.prompt_explorador,
                     &estado.confirmar_borrado,
+                    &estado.selector_simbolos,
                     estado.modo_zen.is_some(),
                 )
             })?;
@@ -618,6 +640,13 @@ async fn ejecutar(
                     omitir_dibujo = !procesar_tick(layout, &mut estado);
                     continue;
                 }
+                // Si relanzó alguna carga, la rama de `INTERVALO_SONDEO_GIT`
+                // dibuja cuando llegue; si no, no hay nada que redibujar.
+                _ = tick_git.tick(), if estado.config.editor.indicadores_git && layout.vigila_heads_git() => {
+                    layout.revisar_heads_git();
+                    omitir_dibujo = true;
+                    continue;
+                }
             },
         };
 
@@ -635,6 +664,15 @@ async fn ejecutar(
             Event::FocusLost => {
                 if estado.config.editor.guardado_automatico == GuardadoAutomatico::AlPerderFoco {
                     autoguardar(layout);
+                }
+                continue;
+            }
+            // Al volver a la terminal (típicamente después de commitear o
+            // cambiar de rama en otra), se revisa `HEAD` en el acto en vez
+            // de esperar al próximo `tick_git`.
+            Event::FocusGained => {
+                if estado.config.editor.indicadores_git {
+                    layout.revisar_heads_git();
                 }
                 continue;
             }
@@ -887,6 +925,28 @@ async fn ejecutar(
                     }
                 }
                 KeyCode::Char(c) if sin_modificadores(key) => estado.paleta_comandos.escribir(c),
+                _ => {}
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+            continue;
+        }
+
+        // Selector de símbolos (`Ctrl+K .`): misma forma que la paleta.
+        // `Enter` salta al símbolo elegido; `mover_cursor_a_byte`
+        // despliega el pliegue en el que caiga.
+        if estado.selector_simbolos.activo() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => estado.selector_simbolos.cerrar(),
+                KeyCode::Up => estado.selector_simbolos.mover_arriba(),
+                KeyCode::Down => estado.selector_simbolos.mover_abajo(),
+                KeyCode::Backspace => estado.selector_simbolos.borrar(),
+                KeyCode::Enter => {
+                    if let Some(byte) = estado.selector_simbolos.confirmar() {
+                        layout.editor_activo_mut().mover_cursor_a_byte(byte);
+                    }
+                }
+                KeyCode::Char(c) if sin_modificadores(key) => estado.selector_simbolos.escribir(c),
                 _ => {}
             }
             necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
@@ -1345,6 +1405,7 @@ fn guardar_panel(panel: &mut PanelEditor) -> Result<()> {
 fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, teclas: &mut VecDeque<KeyEvent>) {
     let prompt_de_texto = estado.paleta_comandos.activa()
         || estado.buscador_archivos.activo()
+        || estado.selector_simbolos.activo()
         || estado.estado_busqueda.activa()
         || estado.guardar_como.activa()
         || estado.logs_lsp.activo()
@@ -1443,6 +1504,17 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         }
         "buscar.archivos" => {
             estado.buscador_archivos.abrir();
+            Accion::Continuar
+        }
+        // Breadcrumbs navegables: el esquema del archivo entero sale del
+        // mismo árbol de tree-sitter que el resaltado (recorrerlo es
+        // O(archivo), pero solo al abrir el selector, no por frame). Sin
+        // sentido en el explorador o en la vista de tabla CSV.
+        "simbolos.ir_a" => {
+            if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
+                let (simbolos, byte_cursor) = esquema_del_activo(layout, &mut estado.resaltador);
+                estado.selector_simbolos.abrir(simbolos, byte_cursor);
+            }
             Accion::Continuar
         }
         "tema.seleccionar" => {
@@ -1605,6 +1677,7 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         "pestana.cerrar" => {
             let modificado = layout.editor_activo().buffer().modificado();
             if cierre_confirmado(layout, estado, id, modificado, "Ctrl+W") {
+                pliegues::recordar([layout.editor_activo()]);
                 layout.cerrar_pestana_activa();
             }
             Accion::Continuar
@@ -1615,6 +1688,9 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         "panel.cerrar" => {
             let modificado = layout.num_paneles() > 1 && layout.panel_activo_modificado();
             if cierre_confirmado(layout, estado, id, modificado, "Ctrl+K F") {
+                if layout.num_paneles() > 1 {
+                    pliegues::recordar(layout.documentos_panel_activo().map(|d| &d.editor));
+                }
                 layout.cerrar_activo();
             }
             Accion::Continuar
@@ -1855,6 +1931,7 @@ fn abrir_ruta_desde_explorador(layout: &mut PanelLayout, foco: &mut Foco, ruta: 
         return;
     }
     if let Ok(mut nuevo_editor) = Editor::abrir(&ruta) {
+        pliegues::restaurar(&mut nuevo_editor);
         if config.modo_vim {
             nuevo_editor.entrar_modo_normal();
         }
@@ -2714,6 +2791,31 @@ fn rangos_plegables_del_activo(layout: &PanelLayout, resaltador: &mut Resaltador
         .into_iter()
         .map(|r| Pliegue { inicio: r.inicio, fin: r.fin })
         .collect()
+}
+
+/// Símbolos del archivo activo para el selector de símbolos, y el byte
+/// del cursor principal (para arrancar posicionado en el símbolo que lo
+/// contiene). Un archivo sin lenguaje reconocido no tiene símbolos.
+fn esquema_del_activo(layout: &PanelLayout, resaltador: &mut Resaltador) -> (Vec<EntradaSimbolo>, usize) {
+    let panel = layout.panel_activo();
+    let buffer = panel.editor.buffer();
+    let cursor = panel.editor.cursor();
+    let byte_cursor = buffer.offset_byte(cursor.linea, cursor.columna);
+    let Some(lenguaje) = Lenguaje::detectar_por_extension(&panel.ruta_mostrada) else {
+        return (Vec::new(), byte_cursor);
+    };
+    let esquema = resaltador.esquema(&panel.ruta_mostrada, lenguaje, Some(buffer.revision()), || buffer.a_texto());
+    let simbolos = esquema
+        .into_iter()
+        .map(|s| EntradaSimbolo {
+            etiqueta: s.simbolo.etiqueta(),
+            profundidad: s.profundidad,
+            linea: buffer.linea_columna_desde_byte(s.inicio).0 + 1,
+            byte: s.inicio,
+            fin: s.fin,
+        })
+        .collect();
+    (simbolos, byte_cursor)
 }
 
 /// Mueve el cursor del editor activo a la coincidencia de búsqueda

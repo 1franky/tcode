@@ -54,6 +54,7 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+B` | Mostrar/ocultar el explorador de archivos lateral |
 | `Ctrl+K J` | Salto rápido en el explorador (etiquetas de una tecla) |
 | `Ctrl+P` | Buscar archivo por nombre (difuso) |
+| `Ctrl+K .` o `Ctrl+Shift+O` | Ir a un símbolo del archivo (funciones, clases...; ver [Breadcrumbs](#breadcrumbs)) |
 | `Ctrl+Shift+P` o `F1` | Paleta de comandos (buscar cualquier acción por nombre) |
 | `Ctrl+F` / `Ctrl+H` | Buscar / Buscar y reemplazar en el archivo |
 | `Ctrl+,` o `Ctrl+K A` | Panel de administración |
@@ -139,8 +140,18 @@ suelto. Los cuatro comandos también están en la paleta (`Ctrl+Shift+P`,
   los lenguajes con resaltado, salvo Markdown, que no tiene plegado. En
   archivos sin lenguaje reconocido (texto plano, YAML, TOML...) se pliega
   por indentación: una línea seguida de otras más indentadas.
-- El plegado es de cada panel y no se guarda: al volver a abrir el
-  archivo arranca todo desplegado.
+- El plegado es de cada documento abierto y **se recuerda entre
+  sesiones**: al cerrar la pestaña (`Ctrl+W`), el panel (`Ctrl+K F`) o
+  tcode (`Ctrl+Q`), los bloques plegados de cada archivo se guardan, y
+  al volver a abrirlo aparecen plegados igual. Si el archivo cambió por
+  fuera mientras tanto (otro editor, `git checkout`...), arranca todo
+  desplegado en vez de plegar líneas equivocadas; lo mismo si se cerró
+  descartando cambios sin guardar (se conserva lo que había guardado de
+  antes). Se guarda en un archivo de estado aparte de la configuración
+  — `~/.local/state/tcode/estado/pliegues.toml` en Linux,
+  `~/Library/Application Support/tcode/estado/pliegues.toml` en macOS,
+  `%LOCALAPPDATA%\tcode\estado\pliegues.toml` en Windows —, con los
+  últimos 200 archivos; se puede borrar sin problema.
 
 ## Paneles divididos (splits)
 
@@ -201,10 +212,20 @@ encabezados en Markdown (`# Manual > ## Atajos`). En los demás archivos
 la ruta. Si no entra en el ancho del panel, se recorta de a poco: primero
 las carpetas del medio (`..`), después los símbolos de afuera, y por
 último el final del símbolo más interno — el nombre del archivo y el
-símbolo más interno siempre quedan a la vista. No es interactivo (no se
-puede hacer clic ni navegar por él). Se apaga en `Ctrl+,` → Interfaz →
-"Mostrar breadcrumbs" (viene prendido) y se oculta en modo zen. Muestra
-siempre la ubicación del documento de la pestaña activa.
+símbolo más interno siempre quedan a la vista. Se apaga en `Ctrl+,` →
+Interfaz → "Mostrar breadcrumbs" (viene prendido) y se oculta en modo
+zen. Muestra siempre la ubicación del documento de la pestaña activa.
+
+**Ir a un símbolo** (`Ctrl+K .`, o `Ctrl+Shift+O` en terminales con el
+protocolo de teclado de Kitty; en la paleta: "Ir: Símbolo del
+archivo"): abre una lista con todos los símbolos del archivo (los mismos
+que muestra el breadcrumb: funciones, métodos, clases, `impl`...), en el
+orden del archivo, indentados según su anidamiento y con su número de
+línea. Arranca posicionada en el símbolo donde está el cursor. Escribir
+filtra (difuso, como `Ctrl+P`, pero sin reordenar), `↑`/`↓` + `Enter`
+salta al símbolo — desplegando el bloque si estaba plegado — y `Esc`
+cierra sin moverse. En archivos sin símbolos la lista lo avisa. No hace
+nada en la vista de tabla CSV ni con el foco en el explorador.
 
 ## Pestañas de archivos abiertos
 
@@ -495,9 +516,14 @@ Detalles:
   segundo plano, sin frenar nada). Sin `git`, o con un archivo fuera de
   un repo o todavía sin trackear (nunca commiteado), simplemente no hay
   columna ni marcas.
-- La versión de referencia se vuelve a leer al abrir el archivo y al
-  guardar (`Ctrl+S`). Tras un commit hecho desde otra terminal, las marcas
-  se ponen al día con el próximo `Ctrl+S` (aunque no haya cambios).
+- La versión de referencia se vuelve a leer al abrir el archivo, al
+  guardar (`Ctrl+S`) y sola cuando cambia `HEAD`: tras un commit,
+  checkout o reset hecho desde otra terminal, las marcas se ponen al día
+  en un par de segundos sin tocar nada (tcode mira cada 2 segundos las
+  fechas de `.git/HEAD`, de la rama y del índice — sin lanzar procesos —,
+  y también al volver a la terminal si esta avisa del foco; en tmux hace
+  falta `set -g focus-events on`). Con archivos fuera de un repo no se
+  revisa nada.
 - Con los números de línea apagados, la columna de git se sigue viendo
   sola (si el archivo está en un repo); para ocultarla está este mismo
   toggle.
