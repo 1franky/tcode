@@ -2,11 +2,13 @@
 //! visuales (`runtime/themes/*.toml`, PLAN.md §7). No sabe nada de
 //! terminal/`ratatui` — la conversión de hex a un tipo de color de UI vive
 //! en el crate `ui`. La config por proyecto (`.tcode/config.toml`, que
-//! se mezcla encima de la global) vive en `proyecto`.
+//! se mezcla encima de la global) vive en `proyecto`; la conversión de
+//! temas en formato Helix (BACKLOG.md P3 #13), en `helix`.
 
 mod color;
 mod config;
 mod editor_tema;
+mod helix;
 mod panel_admin;
 mod proyecto;
 mod selector;

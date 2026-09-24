@@ -20,8 +20,8 @@ use crate::Paleta;
 /// último guardado fallido del documento (`PanelEditor::aviso_guardado`),
 /// si hay uno: va pegado a la ruta, antes que todo lo demás, para que no
 /// quede recortado por el ancho de la barra — y no se puede ocultar.
-/// `mensaje` es un aviso transitorio opcional que se agrega al final (ver
-/// `PanelEditor::mensaje_estado`).
+/// `mensaje` es un aviso transitorio opcional (ver
+/// `PanelEditor::mensaje_estado`), que también va pegado a la ruta.
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -46,6 +46,15 @@ pub fn dibujar(
     let mut partes = vec![format!("{ruta_mostrada}{marca_modificado}")];
     if let Some(aviso) = aviso_guardado {
         partes.push(format!("ERROR: {aviso}"));
+    }
+    // Aviso transitorio del panel (`PanelEditor::mensaje_estado`: p. ej.
+    // "Formateado al guardar", o la confirmación de `Ctrl+W`/`Ctrl+Q` con
+    // cambios sin guardar) — pegado a la ruta, como el error de guardado,
+    // y no al final: en una terminal angosta el final se recorta, y una
+    // confirmación que no se ve invita a repetir la tecla... que es
+    // justamente lo que cierra sin guardar.
+    if let Some(mensaje) = mensaje {
+        partes.push(mensaje.to_string());
     }
 
     if interfaz.statusbar_posicion_cursor {
@@ -81,13 +90,6 @@ pub fn dibujar(
             }
             .to_string(),
         );
-    }
-
-    // Aviso transitorio del panel (`PanelEditor::mensaje_estado`, p. ej.
-    // "Formateado al guardar") — al final, para no correr de lugar los
-    // segmentos fijos mientras está visible.
-    if let Some(mensaje) = mensaje {
-        partes.push(mensaje.to_string());
     }
 
     // Separador ASCII (`|`, no `│`): el de box-drawing tiene ancho
