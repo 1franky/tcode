@@ -846,6 +846,22 @@ anterior.
 - [ ] Dos pestañas del mismo repo; commitear con la pestaña oculta y después cambiar a ella: sus marcas se ponen al día al mostrarse.
 - [ ] Tipear de corrido en un archivo grande de un repo: se siente igual que antes (la revisión es a lo sumo cada 2 segundos).
 
+## Ir a un símbolo (`Ctrl+K .`, breadcrumbs navegables)
+
+Selector con el esquema (outline) del archivo actual, sobre el mismo
+árbol de tree-sitter que el resaltado y los breadcrumbs.
+
+- [ ] En un `.rs` con `struct`, `impl` con dos métodos y una `fn` suelta, con el cursor adentro del segundo método: `Ctrl+K .` abre "Ir a símbolo" con todos en orden, los métodos indentados bajo el `impl`, cada uno con `:línea`, y la selección en el segundo método.
+- [ ] Escribir `ins`: quedan solo los que coinciden (con las letras en negrita), en el orden del archivo; `Backspace` vuelve a mostrar más.
+- [ ] `Enter`: el cursor salta a la línea del símbolo y el breadcrumb lo muestra. `Esc` en otro intento: cierra sin mover el cursor.
+- [ ] Plegar todo (`Ctrl+K 0`) y saltar a un método de adentro del `impl` plegado: el `impl` se despliega y el cursor queda en el método.
+- [ ] Un `.py` con `class` + `def`s y una función suelta: mismo comportamiento; con el cursor fuera de todo, la selección arranca en el primero.
+- [ ] Un filtro que no coincide con nada: lista vacía, `Enter` no hace nada (cierra).
+- [ ] Un `.txt` o `.css`: la lista dice que el archivo no tiene símbolos.
+- [ ] Con el protocolo de Kitty, `Ctrl+Shift+O` hace lo mismo. En la paleta (`F1`), "Ir: Símbolo del archivo" también.
+- [ ] Con el foco en el explorador o en la vista de tabla de un CSV: no abre nada.
+- [ ] Pegar texto (bracketed paste) con el selector abierto: se escribe en el filtro, no en el archivo.
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).

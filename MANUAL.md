@@ -54,6 +54,7 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+B` | Mostrar/ocultar el explorador de archivos lateral |
 | `Ctrl+K J` | Salto rápido en el explorador (etiquetas de una tecla) |
 | `Ctrl+P` | Buscar archivo por nombre (difuso) |
+| `Ctrl+K .` o `Ctrl+Shift+O` | Ir a un símbolo del archivo (funciones, clases...; ver [Breadcrumbs](#breadcrumbs)) |
 | `Ctrl+Shift+P` o `F1` | Paleta de comandos (buscar cualquier acción por nombre) |
 | `Ctrl+F` / `Ctrl+H` | Buscar / Buscar y reemplazar en el archivo |
 | `Ctrl+,` o `Ctrl+K A` | Panel de administración |
@@ -201,10 +202,20 @@ encabezados en Markdown (`# Manual > ## Atajos`). En los demás archivos
 la ruta. Si no entra en el ancho del panel, se recorta de a poco: primero
 las carpetas del medio (`..`), después los símbolos de afuera, y por
 último el final del símbolo más interno — el nombre del archivo y el
-símbolo más interno siempre quedan a la vista. No es interactivo (no se
-puede hacer clic ni navegar por él). Se apaga en `Ctrl+,` → Interfaz →
-"Mostrar breadcrumbs" (viene prendido) y se oculta en modo zen. Muestra
-siempre la ubicación del documento de la pestaña activa.
+símbolo más interno siempre quedan a la vista. Se apaga en `Ctrl+,` →
+Interfaz → "Mostrar breadcrumbs" (viene prendido) y se oculta en modo
+zen. Muestra siempre la ubicación del documento de la pestaña activa.
+
+**Ir a un símbolo** (`Ctrl+K .`, o `Ctrl+Shift+O` en terminales con el
+protocolo de teclado de Kitty; en la paleta: "Ir: Símbolo del
+archivo"): abre una lista con todos los símbolos del archivo (los mismos
+que muestra el breadcrumb: funciones, métodos, clases, `impl`...), en el
+orden del archivo, indentados según su anidamiento y con su número de
+línea. Arranca posicionada en el símbolo donde está el cursor. Escribir
+filtra (difuso, como `Ctrl+P`, pero sin reordenar), `↑`/`↓` + `Enter`
+salta al símbolo — desplegando el bloque si estaba plegado — y `Esc`
+cierra sin moverse. En archivos sin símbolos la lista lo avisa. No hace
+nada en la vista de tabla CSV ni con el foco en el explorador.
 
 ## Pestañas de archivos abiertos
 

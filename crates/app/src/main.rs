@@ -39,7 +39,7 @@ use ratatui::Terminal;
 use tokio::time::MissedTickBehavior;
 use tokio_stream::StreamExt;
 
-use tcode_commands::EstadoPaleta;
+use tcode_commands::{EntradaSimbolo, EstadoPaleta, EstadoSelectorSimbolos};
 use tcode_config::{
     CampoEditor, CampoTemas, ComandoLsp, Config, ConfigEditor, ConfigProyecto, EstadoEditorTema, EstadoPanelAdmin,
     EstadoSelectorTema, FocoPanelAdmin, GuardadoAutomatico, ModoEdicion, ResultadoDuplicarTema, Seccion,
@@ -340,6 +340,9 @@ struct EstadoApp {
     estado_busqueda: EstadoBusqueda,
     guardar_como: EstadoGuardarComo,
     selector_tema: EstadoSelectorTema,
+    /// Selector de símbolos del archivo actual (`Ctrl+K .`, "Ir a
+    /// símbolo"): otro overlay de lista filtrable, como la paleta.
+    selector_simbolos: EstadoSelectorSimbolos,
     panel_admin: EstadoPanelAdmin,
     editor_tema: EstadoEditorTema,
     /// Keymap activo — fuente de verdad para la sección "Atajos" del
@@ -467,6 +470,7 @@ async fn ejecutar(
         estado_busqueda: EstadoBusqueda::nueva(),
         guardar_como: EstadoGuardarComo::nueva(),
         selector_tema: EstadoSelectorTema::nueva(),
+        selector_simbolos: EstadoSelectorSimbolos::nuevo(),
         panel_admin,
         editor_tema: EstadoEditorTema::nueva(),
         keymap,
@@ -587,6 +591,7 @@ async fn ejecutar(
                     &estado.logs_lsp,
                     &estado.prompt_explorador,
                     &estado.confirmar_borrado,
+                    &estado.selector_simbolos,
                     estado.modo_zen.is_some(),
                 )
             })?;
@@ -899,6 +904,28 @@ async fn ejecutar(
                     }
                 }
                 KeyCode::Char(c) if sin_modificadores(key) => estado.paleta_comandos.escribir(c),
+                _ => {}
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+            continue;
+        }
+
+        // Selector de símbolos (`Ctrl+K .`): misma forma que la paleta.
+        // `Enter` salta al símbolo elegido; `mover_cursor_a_byte`
+        // despliega el pliegue en el que caiga.
+        if estado.selector_simbolos.activo() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => estado.selector_simbolos.cerrar(),
+                KeyCode::Up => estado.selector_simbolos.mover_arriba(),
+                KeyCode::Down => estado.selector_simbolos.mover_abajo(),
+                KeyCode::Backspace => estado.selector_simbolos.borrar(),
+                KeyCode::Enter => {
+                    if let Some(byte) = estado.selector_simbolos.confirmar() {
+                        layout.editor_activo_mut().mover_cursor_a_byte(byte);
+                    }
+                }
+                KeyCode::Char(c) if sin_modificadores(key) => estado.selector_simbolos.escribir(c),
                 _ => {}
             }
             necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
@@ -1357,6 +1384,7 @@ fn guardar_panel(panel: &mut PanelEditor) -> Result<()> {
 fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, teclas: &mut VecDeque<KeyEvent>) {
     let prompt_de_texto = estado.paleta_comandos.activa()
         || estado.buscador_archivos.activo()
+        || estado.selector_simbolos.activo()
         || estado.estado_busqueda.activa()
         || estado.guardar_como.activa()
         || estado.logs_lsp.activo()
@@ -1452,6 +1480,17 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         }
         "buscar.archivos" => {
             estado.buscador_archivos.abrir();
+            Accion::Continuar
+        }
+        // Breadcrumbs navegables: el esquema del archivo entero sale del
+        // mismo árbol de tree-sitter que el resaltado (recorrerlo es
+        // O(archivo), pero solo al abrir el selector, no por frame). Sin
+        // sentido en el explorador o en la vista de tabla CSV.
+        "simbolos.ir_a" => {
+            if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
+                let (simbolos, byte_cursor) = esquema_del_activo(layout, &mut estado.resaltador);
+                estado.selector_simbolos.abrir(simbolos, byte_cursor);
+            }
             Accion::Continuar
         }
         "tema.seleccionar" => {
@@ -2612,6 +2651,31 @@ fn rangos_plegables_del_activo(layout: &PanelLayout, resaltador: &mut Resaltador
         .into_iter()
         .map(|r| Pliegue { inicio: r.inicio, fin: r.fin })
         .collect()
+}
+
+/// Símbolos del archivo activo para el selector de símbolos, y el byte
+/// del cursor principal (para arrancar posicionado en el símbolo que lo
+/// contiene). Un archivo sin lenguaje reconocido no tiene símbolos.
+fn esquema_del_activo(layout: &PanelLayout, resaltador: &mut Resaltador) -> (Vec<EntradaSimbolo>, usize) {
+    let panel = layout.panel_activo();
+    let buffer = panel.editor.buffer();
+    let cursor = panel.editor.cursor();
+    let byte_cursor = buffer.offset_byte(cursor.linea, cursor.columna);
+    let Some(lenguaje) = Lenguaje::detectar_por_extension(&panel.ruta_mostrada) else {
+        return (Vec::new(), byte_cursor);
+    };
+    let esquema = resaltador.esquema(&panel.ruta_mostrada, lenguaje, Some(buffer.revision()), || buffer.a_texto());
+    let simbolos = esquema
+        .into_iter()
+        .map(|s| EntradaSimbolo {
+            etiqueta: s.simbolo.etiqueta(),
+            profundidad: s.profundidad,
+            linea: buffer.linea_columna_desde_byte(s.inicio).0 + 1,
+            byte: s.inicio,
+            fin: s.fin,
+        })
+        .collect();
+    (simbolos, byte_cursor)
 }
 
 /// Mueve el cursor del editor activo a la coincidencia de búsqueda

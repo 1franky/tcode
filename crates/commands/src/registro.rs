@@ -69,6 +69,7 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "plegar.actual", descripcion: "Plegado: Plegar el bloque del cursor" },
         Comando { id: "plegar.desplegar", descripcion: "Plegado: Desplegar el bloque del cursor" },
         Comando { id: "plegar.todo", descripcion: "Plegado: Plegar todo" },
+        Comando { id: "simbolos.ir_a", descripcion: "Ir: Símbolo del archivo (funciones, clases...)" },
         Comando { id: "plegar.desplegar_todo", descripcion: "Plegado: Desplegar todo" },
     ]
 }
