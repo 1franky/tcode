@@ -298,42 +298,88 @@ VIM lo prende en el panel de administración (`Ctrl+K A`, sección
 (`[editor]` / `modo_vim = true`) — el cambio surte efecto de inmediato
 sobre el panel activo, sin reiniciar ni reabrir el archivo.
 
-Alcance de esta primera entrega (se puede ampliar más adelante): modos
-Normal/Insertar, movimientos básicos y los comandos de una/dos teclas más
-usados. Sin operadores combinables (`dw`, `d$`), sin conteos numéricos
-(`3dd`), sin modo Visual, sin `:`.
+Hay modo Normal, Insertar, Visual (`v`) y Visual por líneas (`V`) — la
+barra de estado muestra cuál. Los comandos siguen la gramática de VIM:
+`[conteo] operador [conteo] movimiento-u-objeto` (`d3w`, `2dd`, `ci(`,
+`y$`...), `[conteo] movimiento` (`5j`) o `[conteo] comando` (`3x`). Lo que
+se lleva escrito de un comando a medias (`d2`, `ci`) se ve en la barra de
+estado; `Esc` lo cancela.
 
-| Tecla (modo Normal) | Acción |
+| Movimiento | Qué hace |
 |---|---|
-| `h` / `j` / `k` / `l` | Mover el cursor izquierda/abajo/arriba/derecha |
-| `0` / `$` | Inicio / fin de la línea |
-| `gg` / `G` | Inicio / fin del archivo |
-| `i` | Entrar a Insertar en la posición actual |
-| `a` | Entrar a Insertar una posición a la derecha (al final de línea, después del último carácter) |
-| `o` | Abrir una línea nueva debajo y entrar a Insertar ahí |
-| `x` | Borrar el carácter bajo el cursor |
-| `dd` | Borrar la línea completa (queda en el registro) |
-| `yy` | Copiar la línea completa al registro, sin borrar nada |
-| `p` | Pegar el registro como una línea nueva debajo de la actual |
+| `h` / `j` / `k` / `l` | Izquierda / abajo / arriba / derecha (`h`/`l` no cambian de línea) |
+| `0` / `^` / `$` | Inicio de línea / primer carácter no blanco / fin de línea |
+| `w` / `b` / `e` | Próxima palabra / palabra anterior / fin de palabra |
+| `W` / `B` / `E` | Lo mismo con palabras separadas solo por blancos |
+| `gg` / `G` / `{n}G` | Inicio del archivo / fin del archivo / línea `n` |
+| `f{c}` / `t{c}` | Hasta el carácter `c` en la línea / justo antes de él |
+| `F{c}` / `T{c}` | Lo mismo hacia atrás |
+| `;` / `,` | Repetir el último `f`/`t`/`F`/`T` / al revés |
+| `%` | Al paréntesis, llave o corchete que corresponde |
+| `{` / `}` | Párrafo anterior / siguiente (líneas vacías) |
+
+| Operador (seguido de movimiento u objeto; repetido, línea entera) | Qué hace |
+|---|---|
+| `d` (`dd`) | Borrar (queda en el registro) |
+| `c` (`cc`) | Cambiar: borrar y entrar a Insertar |
+| `y` (`yy`) | Copiar al registro |
+| `>` / `<` (`>>` / `<<`) | Indentar / desindentar líneas (con los espacios o el tab de la config) |
+
+| Objeto de texto (tras un operador, o en Visual) | Qué cubre |
+|---|---|
+| `iw` / `aw` (`iW` / `aW`) | La palabra / la palabra con sus espacios |
+| `i"` / `a"` (también `'` y `` ` ``) | Lo de adentro de las comillas / con las comillas |
+| `i(` / `a(` (también `ib`, `i)`) | Lo de adentro de los paréntesis / con los paréntesis |
+| `i{` / `a{` (también `iB`), `i[` / `a[`, `i<` / `a<` | Igual con llaves, corchetes y `<>`; multilínea |
+
+| Comando | Qué hace |
+|---|---|
+| `i` / `a` | Insertar antes / después del cursor |
+| `I` / `A` | Insertar al principio (primer no blanco) / al final de la línea |
+| `o` / `O` | Abrir una línea debajo / arriba (con la misma indentación) e insertar |
+| `x` / `X` | Borrar el carácter bajo el cursor / el anterior |
+| `s` / `S` | Cambiar el carácter / la línea entera |
+| `D` / `C` / `Y` | `d$` / `c$` / `yy` |
+| `r{c}` | Reemplazar el carácter (con conteo, varios) por `c` |
+| `J` | Unir con la línea siguiente |
+| `~` | Alternar mayúscula/minúscula |
+| `p` / `P` | Pegar el registro después / antes (debajo / arriba si son líneas) |
 | `u` | Deshacer (comparte historial con `Ctrl+Z`) |
-| `Esc` (en Insertar) | Volver a Normal |
+| `.` | Repetir el último cambio, incluido el texto tipeado |
+| `v` / `V` | Modo Visual por caracteres / por líneas |
+| `Esc` | En Insertar, volver a Normal; en Visual, salir sin hacer nada |
 
-El registro sin nombre (lo que dejan `dd`/`yy`, lo que pega `p`) es uno
-solo para toda la app, no por panel — yanquear en un archivo y pegar en
-otro funciona, igual que en VIM real. El resto de atajos de tcode
-(flechas, `Ctrl+S`, `Ctrl+B`, splits, etc.) siguen andando igual estando
-en cualquiera de los dos modos: el modo VIM solo cambia qué significa un
-carácter suelto sin modificador.
+En Visual, los movimientos y objetos de texto extienden la selección; `o`
+cambia de extremo; `d`/`x`, `y`, `c`/`s`, `>`/`<`, `J` y `~` operan sobre
+ella.
 
-Una diferencia con Insertar (y con el resto de editores no-VIM): en modo
-Normal el cursor nunca queda "después" del último carácter de una línea
-no vacía — como en VIM real, `$`/`l` se detienen justo sobre el último
-carácter, no después. `a`/`A` siguen permitiendo escribir al final,
-como es de esperar.
+| Línea de comandos (`:`) | Qué hace |
+|---|---|
+| `:w` | Guardar (mismo camino que `Ctrl+S`, formatea si corresponde) |
+| `:q` / `:q!` | Cerrar la pestaña (con cambios, pide repetir `:q`) / sin preguntar; en la última pestaña sale de tcode |
+| `:wq` / `:x` | Guardar y cerrar (`:x` solo guarda si hay cambios) |
+| `:qa` / `:qa!` | Salir de tcode (avisa si hay cambios) / sin preguntar |
+| `:{n}` | Ir a la línea `n` |
+| `:e <ruta>` | Abrir un archivo en una pestaña nueva |
+| `:s/a/b/` / `:%s/a/b/g` | Reemplazar en la línea / en todo el archivo (`g`: todas por línea, `i`: sin distinguir mayúsculas; patrón regex de Rust) |
 
-Limitación conocida: un panel nuevo por `Ctrl+\` (split) siempre arranca
-en Insertar, incluso con el modo VIM prendido — abrir un archivo ahí (o
-en el explorador/buscador de archivos) sí respeta la config.
+La línea `:` aparece al pie de la pantalla; `↑`/`↓` recorren los
+comandos ya usados en la sesión, `Esc` la cierra.
+
+Cada cambio compuesto se deshace de una vez: `3dd`, `J`, `:%s`, y también
+`cw` + lo que se escribió hasta `Esc`. El registro sin nombre es uno solo
+para toda la app, no por panel — yanquear en un archivo y pegar en otro
+funciona, igual que en VIM real — y recuerda si guardó líneas enteras o
+caracteres sueltos. El resto de atajos de tcode (flechas, `Ctrl+S`,
+`Ctrl+B`, splits, etc.) siguen andando igual en cualquier modo.
+
+Como en VIM real, en modo Normal el cursor nunca queda "después" del
+último carácter de una línea no vacía (`$`/`l` se detienen sobre él), y
+al salir de Insertar vuelve un lugar a la izquierda.
+
+Sin registros con nombre, marcas, macros ni búsqueda con `/` (para buscar,
+`Ctrl+F` sigue funcionando); `.` no repite operaciones hechas en Visual.
+Ver PRUEBAS.md para la lista completa de limitaciones.
 
 ## Paleta de comandos y buscador de archivos
 

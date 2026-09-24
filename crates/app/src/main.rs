@@ -98,11 +98,9 @@ async fn main() -> Result<()> {
     // Modo VIM (M5, `config.editor.modo_vim`, apagado por defecto): el
     // `Editor` arranca siempre en `Modo::Insertar` sin saber nada de esta
     // config — acá es donde `app` decide si corresponde pasarlo a
-    // `Normal` antes de la primera tecla. Nota: esto solo cubre el
-    // arranque y abrir un archivo (`abrir_ruta_desde_explorador`, el
-    // buscador de archivos); un panel nuevo por `Ctrl+\` siempre arranca
-    // en Insertar (limitación conocida, ver PRUEBAS.md) porque
-    // `tcode_ui::Layout::dividir` no conoce la config.
+    // `Normal` antes de la primera tecla. Lo mismo al abrir un archivo
+    // (`abrir_ruta_desde_explorador`) y al dividir un panel
+    // (`panel.dividir_*` en `ejecutar_comando`).
     if config.editor.modo_vim {
         layout.editor_activo_mut().entrar_modo_normal();
     }
@@ -578,7 +576,8 @@ async fn ejecutar(
                     &estado.prompt_explorador,
                     &estado.confirmar_borrado,
                     estado.modo_zen.is_some(),
-                )
+                );
+                tcode_ui::panel_linea_vim::dibujar(frame, frame.area(), &estado.vim.linea_comando, &estado.paleta);
             })?;
             ultimo_dibujo = Instant::now();
         }
@@ -1141,27 +1140,47 @@ async fn ejecutar(
             && key.code == KeyCode::Esc
             && layout.editor_activo().modo() == Modo::Insertar
         {
-            let editor = layout.editor_activo_mut();
-            editor.colapsar_cursores();
-            editor.entrar_modo_normal();
+            vim::salir_de_insertar(layout, &mut estado.vim);
             estado.confirmar_salida = false;
             necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
-        // En modo Normal, un carácter sin modificadores es un comando VIM
-        // (movimiento, operador, cambio de modo), no texto a insertar —
-        // el resto de atajos de tcode (flechas, `Ctrl+S`, `Ctrl+B`,...)
-        // siguen andando igual, por debajo de este bloque (no se captura
-        // el teclado por completo como en los bloques anteriores).
-        if layout.editor_activo().modo() == Modo::Normal {
+        // Línea de comandos `:` del modo VIM: captura el teclado por
+        // completo mientras está abierta, como los demás prompts.
+        if estado.vim.linea_comando.activa() {
+            estado.confirmar_salida = false;
+            if let Accion::Salir = vim::tecla_linea_comando(key, layout, &mut estado).await {
+                break;
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+            continue;
+        }
+
+        // En modo Normal/Visual, un carácter sin modificadores es un
+        // comando VIM (movimiento, operador, cambio de modo), no texto a
+        // insertar — el resto de atajos de tcode (flechas, `Ctrl+S`,
+        // `Ctrl+B`,...) siguen andando igual, por debajo de este bloque (no
+        // se captura el teclado por completo como en los bloques
+        // anteriores). Solo con el foco en el editor y fuera de la vista
+        // de tabla CSV: ahí un carácter no tiene que editar a ciegas el
+        // buffer de atrás.
+        if layout.editor_activo().modo() != Modo::Insertar
+            && estado.foco == Foco::Editor
+            && layout.panel_activo().modo_csv != ModoCsv::Tabla
+        {
             let manejada = match key.code {
                 KeyCode::Esc => {
-                    vim::cancelar_pendiente(&mut estado.vim);
+                    vim::cancelar(layout, &mut estado.vim);
                     true
                 }
                 KeyCode::Char(c) if sin_modificadores(key) => {
-                    vim::ejecutar_tecla_normal(c, layout, &mut estado.vim);
+                    vim::ejecutar_tecla_normal(c, layout, &mut estado.vim, &estado.config);
+                    // `:` abre la línea de comandos: una confirmación de
+                    // `:q` armada sigue armada (ver `vim::tecla_linea_comando`).
+                    if estado.vim.linea_comando.activa() {
+                        estado.cierre_pedido = estado.cierre_armado.clone();
+                    }
                     true
                 }
                 _ => false,
@@ -1703,12 +1722,15 @@ fn ejecutar_comando(
             *foco = Foco::Editor;
             return Accion::Continuar;
         }
-        "panel.dividir_vertical" => {
-            layout.dividir(DireccionSplit::Vertical);
-            return Accion::Continuar;
-        }
-        "panel.dividir_horizontal" => {
-            layout.dividir(DireccionSplit::Horizontal);
+        // El panel nuevo arranca en Normal si el modo VIM está prendido
+        // (`Layout::dividir` no conoce la config).
+        "panel.dividir_vertical" | "panel.dividir_horizontal" => {
+            let direccion =
+                if comando == "panel.dividir_vertical" { DireccionSplit::Vertical } else { DireccionSplit::Horizontal };
+            layout.dividir(direccion);
+            if config.editor.modo_vim {
+                layout.editor_activo_mut().entrar_modo_normal();
+            }
             return Accion::Continuar;
         }
         "panel.ir_a_1" => {
