@@ -64,21 +64,27 @@ son gaps nuevos, anotadas para no redescubrirlas):
 
 - **Plegado (#7)**: Markdown no pliega (a propósito); una línea
   modificada que queda dentro de un bloque plegado no se marca con git en
-  la cabecera del pliegue; los pliegues no se guardan entre sesiones.
-- **Git en el gutter (#6)**: la base de `HEAD` se relee al abrir y al
-  guardar, no sola — un commit hecho desde otra terminal se ve recién en
-  el próximo `Ctrl+S`. Archivos sin trackear no se marcan.
+  la cabecera del pliegue. Los pliegues guardados entre sesiones (PR
+  #113) se descartan si el archivo cambió por fuera, y un buffer con
+  cambios sin guardar no guarda los suyos.
+- **Git en el gutter (#6)**: archivos sin trackear no se marcan. La base
+  de `HEAD` se refresca sola cada ~2 s (PR #113) vía `stat` de los
+  archivos de `.git` — no sigue `GIT_DIR`/`GIT_WORK_TREE`.
 - **Config por proyecto (#8)**: la carpeta de búsqueda se fija al
   arrancar (abrir después un archivo de otro repo no cambia la config);
   un proyecto no puede apagar un valor opcional que la global prende
   (TOML no tiene `null`); los errores del TOML del proyecto solo se ven
-  en la cabecera del panel `Ctrl+,`. Por seguridad no puede definir
-  comandos LSP; un mecanismo de "confiar en este proyecto" quedó fuera.
+  en la cabecera del panel `Ctrl+,` y al arrancar. Las claves que
+  ejecutan comandos solo se aplican si el proyecto es confiable (PR #114);
+  confiar no relanza una sesión LSP ya abierta con el comando anterior
+  hasta que se reabra un archivo de ese lenguaje.
 - **Guardado automático (#4)**: nunca formatea (solo `Ctrl+S`, mismo
   criterio que VSCode con autoguardado por demora); "al perder foco" en
   tmux requiere `set -g focus-events on`.
-- **Formatear al guardar (#5)**: solo vía LSP (`textDocument/formatting`);
-  no hay formateadores externos por lenguaje.
+- **Formatear al guardar (#5)**: los argumentos de un formateador
+  externo (PR #114) se separan por espacios, sin comillas (igual que el
+  comando LSP); en Windows un `.cmd` como `prettier` puede necesitar el
+  nombre completo.
 - **CSV (#9)**: insertar/eliminar columnas re-serializa con quoting mínimo
   (pierde líneas en blanco entre filas); ordenar texto pliega tildes y ñ
   sin collation completa.
@@ -101,13 +107,19 @@ como maximizar el panel activo.
 
 Limitaciones conocidas de estas piezas (no son gaps nuevos):
 
-- **Pestañas (#10)**: sigue habiendo un solo cliente LSP — pasar a una
-  pestaña de otro lenguaje (o sin lenguaje) lo relanza al volver. "Guardar
-  como" hacia un archivo ya abierto en otra pestaña deja dos pestañas del
-  mismo archivo. Un hilo de git inactivo por pestaña con repo.
-- **Breadcrumbs (#10)**: no son interactivos (no se navega desde ahí); en
-  Python, una línea en blanco al final de un `def` muestra solo el
-  contenedor de afuera (tree-sitter no la incluye en el bloque).
+- **Pestañas (#10)**: "Guardar como" hacia un archivo ya abierto en otra
+  pestaña deja dos pestañas del mismo archivo. Un hilo de git inactivo
+  por pestaña con repo. Con el LSP por lenguaje (PR #112), el mismo
+  archivo abierto en dos paneles con buffers distintos manda al servidor
+  el texto del panel activo.
+- **Breadcrumbs (#10)**: la navegación es vía "Ir a símbolo" (`Ctrl+K .`,
+  PR #113), no clickeando el breadcrumb; en Python, una línea en blanco
+  al final de un `def` muestra solo el contenedor de afuera (tree-sitter
+  no la incluye en el bloque).
+- **Modo VIM**: completo en lo esencial (PR #115); fuera de alcance:
+  registros con nombre, marcas, macros, búsqueda con `/`/`?`/`n`/`*`,
+  `Ctrl+R` como rehacer, `:s` con grupos (`\1`, `&`) o rangos `a,b`,
+  `:w <ruta>`, `.` sobre operaciones hechas en Visual.
 - **Zen / maximizar (#11/#12)**: en zen + maximizado no se ve `[MAX]` (no
   hay statusbar); si la terminal o el sistema se comen `F11`, queda
   `Ctrl+K G`.
@@ -120,6 +132,23 @@ Limitaciones conocidas de estas piezas (no son gaps nuevos):
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-24 — limitaciones conocidas convertidas en features** (4 agentes
+en paralelo, integrados de a uno con verificación independiente):
+- **Un cliente LSP por lenguaje** (PR #112): una sesión por lenguaje,
+  viva mientras haya documentos de ese lenguaje abiertos en cualquier
+  pestaña/panel; diagnósticos por URI (también en pestañas de fondo); un
+  servidor caído no afecta a los demás.
+- **Refresco automático de git + "Ir a símbolo" + pliegues entre
+  sesiones** (PR #113).
+- **Formateadores externos por lenguaje + "confiar en este proyecto"**
+  (PR #114): stdin→stdout con diff mínimo y timeout; confianza por ruta
+  canónica + SHA-256 del `.tcode/config.toml`, guardada solo en la config
+  global. Verificado que un proyecto no confiable no ejecuta su
+  formateador.
+- **Modo VIM completo** (PR #115): conteos, operadores + movimientos +
+  objetos de texto, Visual (`v`/`V`), línea `:` (`:w`, `:q`, `:wq`, `:e`,
+  `:s`, `:%s`...), deshacer agrupado.
 
 **2026-09-24 — todo P3 cerrado** (4 agentes en paralelo, integrados de a
 uno a `develop` con verificación independiente — tests, clippy, tmux):
