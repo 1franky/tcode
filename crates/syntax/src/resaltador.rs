@@ -10,7 +10,7 @@ use tree_sitter::{
 
 use crate::lenguaje::Lenguaje;
 use crate::plegado::{rangos_de_arbol, rangos_por_indentacion, RangoPlegable};
-use crate::simbolos::{simbolos_en, Simbolo};
+use crate::simbolos::{esquema, simbolos_en, Simbolo, SimboloEsquema};
 
 /// Nombres de token canónicos, en el mismo vocabulario que
 /// `tcode_config::TemaSintaxis` (PLAN.md §7: keyword, string, number,
@@ -478,6 +478,29 @@ impl Resaltador {
         let simbolos = simbolos_en(&documento.arbol, lenguaje, &documento.fuente, punto);
         documento.simbolos = Some((punto, simbolos.clone()));
         simbolos
+    }
+
+    /// Esquema (outline) del documento `clave` entero: todos sus
+    /// contenedores con nombre en orden de aparición, con su anidamiento
+    /// (ver `crate::simbolos::esquema`). Usa el mismo árbol incremental
+    /// que el resaltado y los breadcrumbs, con el mismo criterio de
+    /// `revision`; recorre el árbol completo, así que es para pedirlo a
+    /// demanda (al abrir el selector de símbolos), no en cada frame. Si
+    /// el parseo falla, vacío.
+    pub fn esquema(
+        &mut self,
+        clave: &str,
+        lenguaje: Lenguaje,
+        revision: Option<u64>,
+        obtener_fuente: impl FnOnce() -> String,
+    ) -> Vec<SimboloEsquema> {
+        if self.actualizar_documento(clave, lenguaje, revision, obtener_fuente).is_err() {
+            return Vec::new();
+        }
+        match self.documentos.get(clave) {
+            Some(documento) => esquema(&documento.arbol, lenguaje, &documento.fuente),
+            None => Vec::new(),
+        }
     }
 
     /// Deja en `self.documentos[clave]` el árbol del texto actual. Con

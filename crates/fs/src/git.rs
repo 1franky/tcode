@@ -22,12 +22,16 @@
 //!   vivo mientras se escribe, no solo al guardar. [`DiffGit`] solo lo
 //!   recalcula cuando el texto cambió desde el último cálculo, y en un
 //!   hilo propio: el frame nunca espera al diff (ver su documentación).
+//!
+//! Un commit o checkout hecho desde otra terminal se nota solo: cada
+//! pocos segundos se miran las fechas de `HEAD`, la rama y el índice
+//! (unos `stat`, ver [`VigiaHead`]) y, si cambiaron, se relee la base.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Marca de una línea del buffer respecto de `HEAD`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +93,96 @@ pub fn leer_base_head(ruta: &Path) -> Option<String> {
     }
     let texto = String::from_utf8_lossy(&salida.stdout);
     Some(if texto.contains("\r\n") { texto.replace("\r\n", "\n") } else { texto.into_owned() })
+}
+
+/// Cada cuánto se revisa, como mucho, si `HEAD` cambió por fuera de
+/// `tcode` (un commit, checkout o reset desde otra terminal) — ver
+/// [`VigiaHead`]. La revisión son unos pocos `stat`, sin procesos.
+pub const INTERVALO_REVISION_HEAD: Duration = Duration::from_secs(2);
+
+/// Archivos de la carpeta de git cuyo cambio significa que la base de
+/// `HEAD` pudo haber cambiado, y cómo estaban la última vez que se
+/// miraron (fecha de modificación + tamaño; `None` = no existe). Revisar
+/// es un `stat` por archivo, sin abrir nada ni lanzar `git`: se hace
+/// cada [`INTERVALO_REVISION_HEAD`] como mucho, nunca por frame.
+///
+/// Qué se mira (con `gitdir` = la carpeta `.git`, o a la que apunta un
+/// archivo `.git` de worktree/submódulo, y `común` = la de `commondir`
+/// en un worktree, o `gitdir` si no hay):
+/// - `gitdir/HEAD`: checkout de otra rama o de un commit suelto.
+/// - `común/<ref>` (la rama a la que apunta `HEAD`) y `común/packed-refs`:
+///   commit, `commit --amend`, `reset`, `pull`... en la rama actual.
+/// - `gitdir/index`: casi todo lo anterior también lo reescribe; de
+///   yapa atrapa casos raros (un `git add` suelto no cambia la base, así
+///   que ahí sobra un `cat-file`, que es barato).
+///
+/// No es infalible (variables `GIT_DIR`, sistemas de archivos con fecha
+/// de modificación gruesa y el mismo tamaño...), pero el `Ctrl+S` de
+/// siempre sigue refrescando la base igual.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VigiaHead {
+    rutas: Vec<PathBuf>,
+    firma: Vec<Option<(SystemTime, u64)>>,
+}
+
+impl VigiaHead {
+    /// Vigía para el repo que contiene a `archivo` (subiendo carpeta por
+    /// carpeta hasta encontrar un `.git`), con la firma de ahora; `None`
+    /// si no está en un repo. Lee `HEAD` para saber a qué rama apunta:
+    /// llamar desde un hilo aparte (lo hace la carga de la base).
+    pub fn para(archivo: &Path) -> Option<Self> {
+        let carpeta = archivo.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let carpeta = std::fs::canonicalize(carpeta).ok()?;
+        let gitdir = carpeta.ancestors().find_map(|c| gitdir_de(&c.join(".git")))?;
+        let comun = std::fs::read_to_string(gitdir.join("commondir"))
+            .ok()
+            .map(|texto| gitdir.join(texto.trim()))
+            .unwrap_or_else(|| gitdir.clone());
+        let mut rutas = vec![gitdir.join("HEAD"), gitdir.join("index"), comun.join("packed-refs")];
+        if let Ok(head) = std::fs::read_to_string(gitdir.join("HEAD")) {
+            if let Some(referencia) = head.trim().strip_prefix("ref:") {
+                rutas.push(comun.join(referencia.trim()));
+            }
+        }
+        let firma = firma_de(&rutas);
+        Some(Self { rutas, firma })
+    }
+
+    /// Vuelve a mirar los archivos; `true` (y guarda la firma nueva) si
+    /// alguno cambió desde la última vez.
+    pub fn cambio(&mut self) -> bool {
+        let firma = firma_de(&self.rutas);
+        if firma == self.firma {
+            return false;
+        }
+        self.firma = firma;
+        true
+    }
+}
+
+/// La carpeta de git a la que corresponde `punto_git` (un `.git`): él
+/// mismo si es una carpeta, o la ruta de su línea `gitdir: ...` si es un
+/// archivo (worktrees y submódulos; relativa a su carpeta si no es
+/// absoluta). `None` si no existe o no se entiende.
+fn gitdir_de(punto_git: &Path) -> Option<PathBuf> {
+    let meta = std::fs::metadata(punto_git).ok()?;
+    if meta.is_dir() {
+        return Some(punto_git.to_path_buf());
+    }
+    let texto = std::fs::read_to_string(punto_git).ok()?;
+    let destino = texto.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim();
+    Some(punto_git.parent()?.join(destino))
+}
+
+/// Fecha de modificación y tamaño de cada ruta (`None` si no existe).
+fn firma_de(rutas: &[PathBuf]) -> Vec<Option<(SystemTime, u64)>> {
+    rutas
+        .iter()
+        .map(|ruta| {
+            let meta = std::fs::metadata(ruta).ok()?;
+            Some((meta.modified().ok()?, meta.len()))
+        })
+        .collect()
 }
 
 /// Líneas de `texto` tal como las cuenta el buffer (`ropey`: una por cada
@@ -286,14 +380,20 @@ fn myers(a: &[&str], b: &[&str]) -> Option<(Vec<bool>, Vec<bool>)> {
 /// de la tecla que sigue o el sondeo de `app`, ver [`DiffGit::pendiente`]).
 ///
 /// Cuándo se vuelve a leer la base: al abrir otro archivo (cambia la
-/// ruta que recibe `actualizar`), y cuando quien lo usa llama
-/// [`DiffGit::refrescar_base`] (la app lo hace al guardar). Un commit
-/// hecho desde otra terminal no se detecta solo: la base queda vieja
-/// hasta el próximo guardado (`Ctrl+S` alcanza, aunque no haya cambios).
+/// ruta que recibe `actualizar`), cuando quien lo usa llama
+/// [`DiffGit::refrescar_base`] (la app lo hace al guardar), y cuando
+/// [`DiffGit::revisar_head`] nota que `HEAD` cambió por fuera (un commit
+/// o checkout desde otra terminal, ver [`VigiaHead`]): la app lo llama
+/// cada [`INTERVALO_REVISION_HEAD`] y al recuperar el foco, y
+/// `actualizar` también, espaciado, por si el documento estuvo oculto.
 pub struct DiffGit {
     ruta: Option<PathBuf>,
-    carga: Option<(Receiver<Option<String>>, Instant)>,
+    carga: Option<(Receiver<Carga>, Instant)>,
     base: Option<Arc<str>>,
+    /// Qué mirar para notar que `HEAD` cambió; `None` fuera de un repo
+    /// (y entonces nunca se revisa nada). Llega con cada carga.
+    vigia: Option<VigiaHead>,
+    ultima_revision: Instant,
     /// Texto que se mandó a calcular por última vez. Se compara trozo a
     /// trozo contra el buffer en cada `actualizar` (sin copiar nada si
     /// no cambió).
@@ -317,6 +417,10 @@ struct Calculador {
     emisor: Sender<Trabajo>,
     receptor: Receiver<(u64, Vec<Option<MarcaGit>>)>,
 }
+
+/// Resultado de una carga en segundo plano: la base (ver
+/// [`leer_base_head`]) y el vigía del repo (ver [`VigiaHead::para`]).
+type Carga = (Option<String>, Option<VigiaHead>);
 
 struct Trabajo {
     numero: u64,
@@ -355,6 +459,8 @@ impl DiffGit {
             ruta: None,
             carga: None,
             base: None,
+            vigia: None,
+            ultima_revision: Instant::now(),
             texto: String::new(),
             marcas: Vec::new(),
             vigente: false,
@@ -385,8 +491,10 @@ impl DiffGit {
 
         if let Some((receptor, inicio)) = &self.carga {
             match receptor.try_recv() {
-                Ok(base) => {
+                Ok((base, vigia)) => {
                     self.base = base.map(Arc::from);
+                    self.vigia = vigia;
+                    self.ultima_revision = Instant::now();
                     self.carga = None;
                     self.vigente = false;
                 }
@@ -398,6 +506,10 @@ impl DiffGit {
                 }
             }
         }
+
+        // Un documento que estuvo oculto (otra pestaña) no pasó por la
+        // revisión periódica de la app: se pone al día acá, espaciado.
+        self.revisar_head(false);
 
         let Some(base) = &self.base else {
             self.marcas.clear();
@@ -446,11 +558,38 @@ impl DiffGit {
         self.lanzar_carga();
     }
 
+    /// Si `HEAD` cambió desde la última carga (ver [`VigiaHead`]),
+    /// vuelve a leer la base y devuelve `true`. Sin `forzar`, no mira el
+    /// disco si revisó hace menos de [`INTERVALO_REVISION_HEAD`]. No hace
+    /// nada fuera de un repo ni con una carga en curso (que ya trae un
+    /// vigía nuevo).
+    pub fn revisar_head(&mut self, forzar: bool) -> bool {
+        if self.carga.is_some() || (!forzar && self.ultima_revision.elapsed() < INTERVALO_REVISION_HEAD) {
+            return false;
+        }
+        let Some(vigia) = &mut self.vigia else { return false };
+        self.ultima_revision = Instant::now();
+        if !vigia.cambio() {
+            return false;
+        }
+        self.lanzar_carga();
+        true
+    }
+
+    /// Si el documento está en un repo de git (hay algo que revisar con
+    /// [`DiffGit::revisar_head`]), trackeado o no.
+    pub fn en_repo(&self) -> bool {
+        self.vigia.is_some()
+    }
+
     /// Si hay una lectura de la base o un cálculo del diff en curso — la
     /// app lo usa para volver a dibujar cuando termine aunque no llegue
-    /// ninguna tecla.
+    /// ninguna tecla. Una lectura que ya pasó [`TIEMPO_MAXIMO_CARGA`] no
+    /// cuenta: si el documento no se está dibujando (una pestaña oculta),
+    /// nadie la descarta, y sin este tope la app sondearía para siempre.
     pub fn pendiente(&self) -> bool {
-        self.carga.is_some() || self.enviado != self.recibido
+        self.carga.as_ref().is_some_and(|(_, inicio)| inicio.elapsed() < TIEMPO_MAXIMO_CARGA)
+            || self.enviado != self.recibido
     }
 
     /// Si el documento tiene base (está trackeado en `HEAD`): recién ahí
@@ -472,7 +611,11 @@ impl DiffGit {
         };
         let (emisor, receptor) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = emisor.send(leer_base_head(&ruta));
+            // El vigía ANTES que la base: si `HEAD` cambia justo entre
+            // las dos lecturas, la firma queda vieja y la próxima
+            // revisión vuelve a cargar (al revés se perdería el cambio).
+            let vigia = VigiaHead::para(&ruta);
+            let _ = emisor.send((leer_base_head(&ruta), vigia));
         });
         self.carga = Some((receptor, Instant::now()));
     }
@@ -661,6 +804,107 @@ mod tests {
 
         assert_eq!(leer_base_head(&dir.path().join("sub/a.txt")).as_deref(), Some("uno\ndos\n"));
         assert_eq!(leer_base_head(&dir.path().join("sub/nuevo.txt")), None);
+    }
+
+    #[test]
+    fn vigia_head_fuera_de_un_repo_es_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(VigiaHead::para(&dir.path().join("suelto.txt")), None);
+    }
+
+    /// Sin `git`: un `.git` armado a mano alcanza para ver qué mira el
+    /// vigía y que note un cambio de rama (la ref), un checkout (`HEAD`)
+    /// y nada cuando no pasó nada.
+    #[test]
+    fn vigia_head_nota_cambios_de_la_rama_y_de_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let punto_git = dir.path().join(".git");
+        std::fs::create_dir_all(punto_git.join("refs/heads")).unwrap();
+        std::fs::write(punto_git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(punto_git.join("refs/heads/main"), "a".repeat(40)).unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+
+        let mut vigia = VigiaHead::para(&dir.path().join("sub/a.rs")).unwrap();
+        assert!(vigia.rutas.iter().any(|r| r.ends_with("refs/heads/main")));
+        assert!(!vigia.cambio());
+
+        // Un commit reescribe la ref (acá con otro tamaño, para no
+        // depender de la resolución de la fecha de modificación).
+        std::fs::write(punto_git.join("refs/heads/main"), "b".repeat(41)).unwrap();
+        assert!(vigia.cambio());
+        assert!(!vigia.cambio());
+
+        std::fs::write(punto_git.join("HEAD"), "c".repeat(40)).unwrap();
+        assert!(vigia.cambio());
+    }
+
+    /// Worktree: `.git` es un archivo `gitdir: ...` y las ramas viven en
+    /// la carpeta de `commondir`.
+    #[test]
+    fn vigia_head_sigue_el_archivo_punto_git_de_un_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let principal = dir.path().join("principal/.git");
+        let del_worktree = principal.join("worktrees/wt");
+        std::fs::create_dir_all(principal.join("refs/heads")).unwrap();
+        std::fs::create_dir_all(&del_worktree).unwrap();
+        std::fs::write(del_worktree.join("HEAD"), "ref: refs/heads/rama\n").unwrap();
+        std::fs::write(del_worktree.join("commondir"), "../..\n").unwrap();
+        std::fs::write(principal.join("refs/heads/rama"), "a".repeat(40)).unwrap();
+        let wt = dir.path().join("wt");
+        std::fs::create_dir(&wt).unwrap();
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", del_worktree.display())).unwrap();
+
+        let mut vigia = VigiaHead::para(&wt.join("a.rs")).unwrap();
+        assert!(!vigia.cambio());
+        std::fs::write(principal.join("refs/heads/rama"), "b".repeat(41)).unwrap();
+        assert!(vigia.cambio());
+    }
+
+    /// Repo real (se saltea sin `git`): un commit hecho "desde otra
+    /// terminal" cambia la base sin guardar nada en `tcode`.
+    #[test]
+    fn diff_git_relee_la_base_cuando_head_cambia_por_fuera() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(["-c", "user.name=tcode", "-c", "user.email=tcode@example.com"])
+                .args(args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
+        if !git(&["init", "-q"]) {
+            return;
+        }
+        let ruta = dir.path().join("a.txt");
+        std::fs::write(&ruta, "uno\n").unwrap();
+        assert!(git(&["add", "."]));
+        assert!(git(&["commit", "-q", "-m", "inicial"]));
+
+        let mut diff = DiffGit::nuevo();
+        let poner_al_dia = |diff: &mut DiffGit, texto: &str| {
+            let inicio = Instant::now();
+            diff.actualizar(Some(&ruta), std::iter::once(texto));
+            while diff.pendiente() && inicio.elapsed() < Duration::from_secs(5) {
+                std::thread::sleep(Duration::from_millis(2));
+                diff.actualizar(Some(&ruta), std::iter::once(texto));
+            }
+        };
+        poner_al_dia(&mut diff, "uno\ndos\n");
+        assert!(diff.en_repo());
+        assert_eq!(diff.marcas(), &[None, Some(Agregada)]);
+        // Nada cambió en `.git`: no se relanza nada.
+        assert!(!diff.revisar_head(true));
+
+        std::fs::write(&ruta, "uno\ndos\n").unwrap();
+        assert!(git(&["commit", "-q", "-am", "segundo"]));
+        assert!(diff.revisar_head(true));
+        poner_al_dia(&mut diff, "uno\ndos\n");
+        assert_eq!(diff.marcas(), &[None, None]);
     }
 
     /// Llama `actualizar` hasta que el calculador devuelva su resultado

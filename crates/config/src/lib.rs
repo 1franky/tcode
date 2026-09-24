@@ -10,6 +10,7 @@ mod config;
 mod editor_tema;
 mod helix;
 mod panel_admin;
+mod pliegues_guardados;
 mod proyecto;
 mod selector;
 mod tema;
@@ -27,6 +28,7 @@ pub use panel_admin::{
     indice_de, CampoEditor, CampoInterfaz, CampoTemas, EstadoPanelAdmin, FocoPanelAdmin,
     OpcionExterna, ResultadoBusquedaAdmin, Seccion,
 };
+pub use pliegues_guardados::{directorio_estado, huella, ruta_pliegues, PlieguesGuardados, MAX_ARCHIVOS};
 pub use proyecto::{
     buscar_config_proyecto, cargar_config_proyecto, directorio_inicio_proyecto, mezclar_toml, ConfigProyecto,
 };

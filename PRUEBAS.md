@@ -849,6 +849,57 @@ comando de Rust configurado (`Ctrl+,` → Lenguajes / LSP → Rust → `c` →
 
 ---
 
+## Refresco solo de la base de git (commit/checkout desde otra terminal)
+
+Los indicadores de git vuelven a leer `HEAD` solos cuando cambia: cada
+2 segundos se miran las fechas de `.git/HEAD`, de la rama actual, de
+`packed-refs` y del índice (unos `stat`, sin procesos), y también al
+recuperar el foco de la terminal. Repo de prueba como el de la sección
+anterior.
+
+- [ ] Agregar una línea (aparece `+`), guardar y, SIN volver a tcode, `git commit -am x` desde otra terminal: en 2-3 segundos el `+` desaparece solo.
+- [ ] `git commit --amend`, `git reset --hard HEAD~1` y `git checkout` a otra rama con el archivo distinto: las marcas se ponen al día solas cada vez.
+- [ ] En un worktree (`git worktree add ...`) abrir un archivo y commitear desde ese worktree: también se refresca.
+- [ ] Con tmux (`set -g focus-events on`) o una terminal con eventos de foco: commitear en otra ventana y volver: se refresca al instante.
+- [ ] Un archivo sin trackear del repo, `git add` + `git commit` desde afuera: aparece la columna de git (sin marcas).
+- [ ] Con un archivo fuera de cualquier repo abierto y nada más, en reposo: tcode no consume CPU (el bucle no se despierta; p. ej. `top` muestra 0%).
+- [ ] Dos pestañas del mismo repo; commitear con la pestaña oculta y después cambiar a ella: sus marcas se ponen al día al mostrarse.
+- [ ] Tipear de corrido en un archivo grande de un repo: se siente igual que antes (la revisión es a lo sumo cada 2 segundos).
+
+## Ir a un símbolo (`Ctrl+K .`, breadcrumbs navegables)
+
+Selector con el esquema (outline) del archivo actual, sobre el mismo
+árbol de tree-sitter que el resaltado y los breadcrumbs.
+
+- [ ] En un `.rs` con `struct`, `impl` con dos métodos y una `fn` suelta, con el cursor adentro del segundo método: `Ctrl+K .` abre "Ir a símbolo" con todos en orden, los métodos indentados bajo el `impl`, cada uno con `:línea`, y la selección en el segundo método.
+- [ ] Escribir `ins`: quedan solo los que coinciden (con las letras en negrita), en el orden del archivo; `Backspace` vuelve a mostrar más.
+- [ ] `Enter`: el cursor salta a la línea del símbolo y el breadcrumb lo muestra. `Esc` en otro intento: cierra sin mover el cursor.
+- [ ] Plegar todo (`Ctrl+K 0`) y saltar a un método de adentro del `impl` plegado: el `impl` se despliega y el cursor queda en el método.
+- [ ] Un `.py` con `class` + `def`s y una función suelta: mismo comportamiento; con el cursor fuera de todo, la selección arranca en el primero.
+- [ ] Un filtro que no coincide con nada: lista vacía, `Enter` no hace nada (cierra).
+- [ ] Un `.txt` o `.css`: la lista dice que el archivo no tiene símbolos.
+- [ ] Con el protocolo de Kitty, `Ctrl+Shift+O` hace lo mismo. En la paleta (`F1`), "Ir: Símbolo del archivo" también.
+- [ ] Con el foco en el explorador o en la vista de tabla de un CSV: no abre nada.
+- [ ] Pegar texto (bracketed paste) con el selector abierto: se escribe en el filtro, no en el archivo.
+
+## Pliegues recordados entre sesiones
+
+Los pliegues de cada archivo se guardan al cerrar la pestaña, el panel o
+tcode, y se restauran al reabrirlo si el archivo no cambió (huella del
+contenido). Archivo de estado: `pliegues.toml` en `~/.local/state/tcode/estado/`
+(Linux) o `~/Library/Application Support/tcode/estado/` (macOS). Probar
+con `HOME` apuntando a una carpeta temporal para no tocar el estado real.
+
+- [ ] Plegar dos funciones de un `.rs`, `Ctrl+Q`, volver a abrir el archivo: las dos siguen plegadas; el archivo de estado tiene una entrada `[[archivo]]` con su ruta absoluta, una `huella` y los rangos.
+- [ ] Plegar todo (`Ctrl+K 0`), cerrar la pestaña con `Ctrl+W` y reabrir con `Ctrl+P`: sale plegado igual. Lo mismo cerrando un panel dividido con `Ctrl+K F`.
+- [ ] Con pliegues guardados, agregar una línea al archivo desde otra terminal (`echo >> archivo` o `sed`) y reabrirlo: arranca todo desplegado.
+- [ ] Hacer `touch` al archivo (sin cambiar el contenido) y reabrir: los pliegues se restauran igual.
+- [ ] Desplegar todo (`Ctrl+K Ctrl+J`) y salir: al reabrir arranca desplegado y el archivo ya no figura en el estado.
+- [ ] Plegar, guardar, salir; reabrir, editar sin guardar, desplegar y salir descartando (`Ctrl+Q` dos veces): al reabrir vuelven los pliegues de la primera vez.
+- [ ] Abrir el mismo archivo con otra ruta (relativa vs. absoluta, o por un symlink): se reconoce como el mismo (ruta canónica).
+- [ ] Un `pliegues.toml` corrupto (texto cualquiera) o sin permiso de escritura: tcode abre y cierra normal, sin errores visibles (solo no recuerda nada).
+- [ ] Abrir un archivo sin nada guardado: abre igual de rápido que antes (no se calcula la huella si no hay entrada).
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).
