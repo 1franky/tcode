@@ -58,7 +58,7 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+Shift+P` o `F1` | Paleta de comandos (buscar cualquier acción por nombre) |
 | `Ctrl+F` / `Ctrl+H` | Buscar / Buscar y reemplazar en el archivo |
 | `Ctrl+,` o `Ctrl+K A` | Panel de administración |
-| `Ctrl+K R` | Ver logs de la sesión LSP activa |
+| `Ctrl+K R` | Ver logs del LSP del lenguaje del archivo activo |
 | `Ctrl+K Ctrl+T` | Selector de temas (con preview en vivo) |
 | `Ctrl+K Ctrl+L` | Recargar `config.toml`/`keymap.toml` sin reiniciar |
 
@@ -268,10 +268,11 @@ atajos siguen andando igual sin la barra. El modo zen también la oculta.
   no, "Pestañas: Ir a la pestaña N" está en la paleta (`F1`).
 - Guardado automático "al perder foco": cambiar de pestaña cuenta como
   perder el foco, y se guardan también las pestañas que no se ven.
-- LSP: la sesión sigue a la pestaña activa. Cambiar a otro archivo del
-  mismo lenguaje no reinicia el servidor; a uno de otro lenguaje (o sin
-  lenguaje, como un `.txt`) sí, igual que al cambiar de panel — al volver,
-  los diagnósticos tardan lo que tarde el servidor en arrancar.
+- LSP: hay un servidor por lenguaje, compartido por todas las pestañas y
+  paneles. Alternar entre un `.py` y un `.rs` (o un `.txt`) no reinicia
+  ninguno, y una pestaña de fondo sigue recibiendo sus diagnósticos. El
+  servidor de un lenguaje se cierra al cerrar la última pestaña de ese
+  lenguaje.
 
 ## Explorador de archivos
 
@@ -463,7 +464,7 @@ opción por nombre):
 |---|---|
 | **Atajos de teclado** | Ver/rebindear cualquier atajo (`Enter` sobre un comando y presionar la nueva combinación), con detección de conflictos resaltada en rojo. `Backspace` restablece uno solo al valor por defecto; hay una fila para restablecer todos. También exportar/importar el `keymap.toml` activo a/desde un archivo fijo (ver [Personalizar atajos](#personalizar-atajos)). |
 | **Temas** | Elegir tema (abre el selector con preview) y duplicar el activo para editarlo. |
-| **Lenguajes / LSP** | Habilitar/deshabilitar el servidor LSP de cada lenguaje, ver si el binario está en el `PATH` y el estado de la sesión activa (Conectado/Iniciando/Inactivo). `c` sobre una fila edita el comando+argumentos a mano (ver [LSP](#lsp-autocompletado-y-diagnósticos)); `Backspace` quita ese override. |
+| **Lenguajes / LSP** | Habilitar/deshabilitar el servidor LSP de cada lenguaje, ver si el binario está en el `PATH` y el estado de la sesión de cada lenguaje (Conectado/Iniciando/Error/Inactivo). `c` sobre una fila edita el comando+argumentos a mano (ver [LSP](#lsp-autocompletado-y-diagnósticos)); `Backspace` quita ese override. |
 | **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, indicadores de git, modo VIM, regla vertical, guardado automático. |
 | **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo), la barra de pestañas y los [breadcrumbs](#breadcrumbs) de arriba del código. |
 
@@ -548,6 +549,18 @@ está en el `PATH`, se lanza solo al abrir un archivo de ese lenguaje y los
 diagnósticos (errores/avisos) aparecen subrayados en el código y resumidos
 en la barra de estado.
 
+Hay un servidor por lenguaje, corriendo en paralelo: con un `.py` y un
+`.rs` abiertos (en pestañas del mismo panel o en paneles distintos) corren
+los dos a la vez, cada uno con todos los archivos de su lenguaje abiertos
+— no solo el visible —, así que cambiar de pestaña no los reinicia y los
+errores de una pestaña de fondo ya están al volver a ella. El servidor de
+un lenguaje se lanza con el primer archivo de ese lenguaje y se cierra al
+cerrar el último. Si uno no arranca o se cae, los demás siguen
+funcionando; su fila en "Lenguajes / LSP" dice "Error" y `Ctrl+K R`
+muestra por qué. No se reintenta solo: se vuelve a lanzar al cambiar su
+comando, al deshabilitarlo y volver a habilitarlo, o al cerrar todos sus
+archivos y abrir uno de nuevo.
+
 Comando por defecto conocido para estos lenguajes (instalá el paquete
 correspondiente para que funcione):
 
@@ -571,8 +584,8 @@ todavía. Para cualquiera de estos (o para apuntar a un comando distinto
 del que trae por defecto, como una versión instalada en otra ruta):
 sección "Lenguajes / LSP" del panel de administración, `c` sobre la fila
 del lenguaje, escribí el comando completo con sus argumentos y `Enter`.
-Si ya hay una sesión activa para ese lenguaje, se relanza sola con el
-comando nuevo.
+Si ya hay una sesión para ese lenguaje, se relanza sola con el comando
+nuevo (solo esa: los servidores de otros lenguajes siguen como estaban).
 
 Ese mismo campo acepta variables de entorno propias del servidor: antes
 del comando, escribí `VAR=valor` (una o más, separadas por espacio) y
@@ -588,7 +601,8 @@ lo que cambió en cada edición en vez del archivo entero — con archivos
 de miles de líneas, tipear no se frena por el LSP.
 
 **`Ctrl+K R`** ("LSP: Ver logs de la sesión activa" en la paleta):
-muestra lo que el servidor escribió en su stderr — útil para entender
+muestra lo que el servidor del lenguaje del archivo activo escribió en su
+stderr — útil para entender
 por qué no conecta o se comporta raro, más allá del estado "Conectado"/
 "Iniciando…"/"Inactivo". Se actualiza en vivo mientras está abierto (lo
 más nuevo arriba); escribir en el campo de arriba filtra las líneas por

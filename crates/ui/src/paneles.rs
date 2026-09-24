@@ -307,6 +307,15 @@ impl Layout {
         self.hojas_mut().into_iter().flat_map(|p| p.documentos.iter_mut()).collect()
     }
 
+    /// Todos los documentos abiertos, solo lectura, en el mismo orden que
+    /// [`Layout::paneles_mut`]. Lo usa el LSP (`app/lsp.rs`) una vez por
+    /// frame para saber qué archivos tiene que tener abiertos cada sesión
+    /// (una por lenguaje): recorre pestañas, nunca el texto de los
+    /// buffers.
+    pub fn documentos(&self) -> Vec<&PanelEditor> {
+        self.hojas().into_iter().flat_map(|p| p.documentos.iter()).collect()
+    }
+
     fn hojas_mut(&mut self) -> Vec<&mut Pestanas> {
         fn recorrer<'a>(panel: &'a mut Panel, salida: &mut Vec<&'a mut Pestanas>) {
             match panel {

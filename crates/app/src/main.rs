@@ -559,10 +559,11 @@ async fn ejecutar(
         let hay_mas_eventos = !teclas_sinteticas.is_empty() || crossterm::event::poll(Duration::ZERO).unwrap_or(false);
         let dibujar = !std::mem::take(&mut omitir_dibujo);
         if dibujar && (!hay_mas_eventos || ultimo_dibujo.elapsed() >= INTERVALO_MAXIMO_SIN_DIBUJAR) {
-            // Una vez por frame, no por tecla: avisa al LSP del archivo
-            // activo (relanzándolo si cambió de lenguaje) y le manda lo
-            // que cambió, si algo cambió. Por tecla significaba copiar y
-            // serializar el archivo entero en cada carácter tipeado.
+            // Una vez por frame, no por tecla: pone a las sesiones LSP
+            // (una por lenguaje) al día con las pestañas abiertas y les
+            // manda lo que cambió, si algo cambió. Por tecla significaba
+            // copiar y serializar el archivo entero en cada carácter
+            // tipeado.
             sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
 
             if necesita_redibujado {
@@ -616,10 +617,11 @@ async fn ejecutar(
                         _ => continue,
                     }
                 }
-                mensaje = estado.lsp.siguiente_mensaje() => {
-                    if let Some(mensaje) = mensaje {
-                        estado.lsp.procesar_mensaje(mensaje, layout).await;
-                    }
+                // Un mensaje de cualquiera de las sesiones LSP (una por
+                // lenguaje, `lsp.rs`), etiquetado con el lenguaje de la
+                // que lo mandó; `None` si ese servidor se murió.
+                (lenguaje, mensaje) = estado.lsp.siguiente_mensaje() => {
+                    estado.lsp.procesar_mensaje(lenguaje, mensaje, layout).await;
                     continue;
                 }
                 // Indicadores de git (BACKLOG.md P2 #6): mientras algún
@@ -1421,21 +1423,19 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
     layout.editor_activo_mut().insertar_texto(texto);
 }
 
-/// Le avisa al `EstadoLsp` cuál es el archivo/contenido activos ahora
-/// mismo: relanza el cliente si cambió el lenguaje (o si se
-/// habilitó/deshabilitó desde el panel de administración, sección
-/// "Lenguajes / LSP", PLAN.md §5.3 — `config` es lo que decide eso), y
-/// notifica `didChange` si el texto cambió desde el último envío.
+/// Le avisa al `EstadoLsp` qué documentos hay abiertos ahora mismo en
+/// todas las pestañas de todos los paneles (`EstadoLsp::sincronizar`):
+/// lanza o cierra la sesión de cada lenguaje según haga falta (o si se
+/// habilitó/deshabilitó o se cambió su comando desde el panel de
+/// administración, sección "Lenguajes / LSP", PLAN.md §5.3 — `config` es
+/// lo que decide eso), manda `didOpen`/`didClose` al abrir y cerrar
+/// pestañas, y `didChange` de lo que cambió desde el último envío.
 ///
-/// El texto se pide solo si hace falta (sesión nueva, o revisión del
-/// buffer distinta de la del último envío): esto corre en cada frame, y
-/// antes copiaba el archivo entero en todos, incluso sin LSP activo
-/// (BACKLOG.md P1 #14).
+/// El texto de un documento se pide solo si hace falta (se abre en el
+/// servidor, o la revisión del buffer es distinta de la del último
+/// envío): esto corre en cada frame (BACKLOG.md P1 #14).
 async fn sincronizar_lsp(layout: &PanelLayout, lsp: &mut lsp::EstadoLsp, config: &Config) {
-    let panel = layout.panel_activo();
-    let buffer = panel.editor.buffer();
-    lsp.actualizar_para_archivo(&panel.ruta_mostrada, || buffer.a_texto(), config).await;
-    lsp.sincronizar_contenido(buffer.revision(), || buffer.a_texto()).await;
+    lsp.sincronizar(layout, config).await;
 }
 
 /// Punto de entrada único para ejecutar un id de comando, venga de un
@@ -2113,9 +2113,10 @@ async fn guardar_como_confirmar(layout: &mut PanelLayout, estado: &mut EstadoApp
 /// Cualquier otro disparador de guardado del archivo activo (p. ej. el
 /// guardado automático, BACKLOG.md P2 #4) debería pasar por acá en vez
 /// de llamar a `Editor::guardar` directo, para respetar la misma
-/// configuración. Un panel que NO es el activo no puede formatearse (la
-/// única sesión LSP es la del panel activo, ver `lsp.rs`): para esos,
-/// `Editor::guardar` directo es lo correcto. Falla igual que
+/// configuración. Un documento que NO es el activo no se formatea (el
+/// formateo aplica sus ediciones sobre el editor activo, y el aviso va a
+/// su barra de estado): para esos, `Editor::guardar` directo es lo
+/// correcto. Falla igual que
 /// `Editor::guardar` (buffer sin ruta, error de disco); formatear nunca
 /// hace fallar el guardado.
 async fn guardar_archivo_activo(layout: &mut PanelLayout, estado: &mut EstadoApp) -> Result<()> {
@@ -2376,9 +2377,9 @@ fn ejecutar_accion_temas_admin(estado: &mut EstadoApp) {
 /// administración (PLAN.md §5.3), una por cada lenguaje de `tcode_syntax::
 /// Lenguaje::TODOS`: qué LSP tiene configurado (si alguno), si ese
 /// binario está en el `PATH`, si está habilitado, y el estado en vivo de
-/// la sesión activa si es justo el lenguaje del archivo abierto ahora.
+/// la sesión de ese lenguaje (hay una por cada lenguaje con documentos
+/// abiertos, `lsp.rs`).
 fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
-    let lenguaje_activo = estado.lsp.lenguaje_activo();
     Lenguaje::TODOS
         .iter()
         .map(|&lenguaje| {
@@ -2397,11 +2398,7 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
                 }
                 None => (String::new(), false),
             };
-            let estado_texto = if lenguaje_activo == Some(lenguaje) {
-                estado.lsp.estado_texto().unwrap_or("Inactivo").to_string()
-            } else {
-                "Inactivo".to_string()
-            };
+            let estado_texto = estado.lsp.estado_texto(lenguaje).unwrap_or("Inactivo").to_string();
             FilaLenguajeLsp {
                 nombre: lenguaje.nombre_mostrado().to_string(),
                 comando,

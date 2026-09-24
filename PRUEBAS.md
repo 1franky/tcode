@@ -827,6 +827,26 @@ CSS, SQL, texto plano) muestra solo la ruta.
 - [ ] Apagar "Mostrar pestañas" y dejar los breadcrumbs: los breadcrumbs quedan en la primera fila del panel.
 - [ ] Modo zen (`Ctrl+K Z`): los breadcrumbs se ocultan junto con la statusbar y las pestañas; al salir del zen vuelven (sin tocar la config).
 
+## Un servidor LSP por lenguaje
+
+Con `pyright-langserver` y `rust-analyzer` instalados, un proyecto Cargo
+temporal (`cargo new /tmp/prueba_ra`) con un `.py` suelto adentro, y el
+comando de Rust configurado (`Ctrl+,` → Lenguajes / LSP → Rust → `c` →
+`rust-analyzer`). Contar procesos con
+`ps -ax -o pid,ppid,command | grep -E "pyright|rust-analyzer" | grep -v grep`.
+
+- [ ] Abrir `src/main.rs` y después el `.py` en otra pestaña (`Ctrl+P`): quedan corriendo los dos servidores a la vez (un `rust-analyzer` y un `pyright-langserver`/node).
+- [ ] Alternar pestañas varias veces (`Ctrl+PageDown`/`Ctrl+PageUp`): los PID no cambian (ningún servidor se reinicia) y "Lenguajes / LSP" muestra Python y Rust "Conectado" a la vez.
+- [ ] Un error en cada archivo (`x: int = "a"` en el `.py`, `let x: i32 = "a";` en el `.rs`): cada pestaña muestra el suyo en el gutter y en la statusbar, nunca el del otro.
+- [ ] Con el `.rs` visible, romper algo en el `.py` desde otro panel (`Ctrl+\`, abrir el `.py` ahí, editar) y volver: los diagnósticos de cada archivo siguen correctos; una pestaña de fondo ya tiene sus errores al volver a ella, sin esperar a que el servidor arranque.
+- [ ] Split con el `.py` en un panel y el `.rs` en el otro: alternar `Ctrl+1`/`Ctrl+2` no reinicia nada.
+- [ ] `Ctrl+K R` con el `.rs` activo muestra los logs de rust-analyzer; con el `.py` activo, los de pyright.
+- [ ] Formatear al guardar prendido para Rust (`f` en su fila): desordenar la indentación del `.rs` y `Ctrl+S` → "Formateado al guardar", aunque el servidor de Python también esté corriendo.
+- [ ] Cerrar (`Ctrl+W`) la única pestaña `.py`: su servidor termina (desaparece de `ps`) y el de Rust sigue igual. Volver a abrir el `.py`: arranca uno nuevo.
+- [ ] Cambiar el comando de Python (`c`, p. ej. agregarle una variable `A=1 -- pyright-langserver --stdio`): se relanza solo pyright; el PID de rust-analyzer no cambia.
+- [ ] Un comando inexistente para un lenguaje: su fila dice "Error", `Ctrl+K R` con ese archivo activo dice por qué, y los demás servidores siguen funcionando. `kill` a mano de un servidor: su fila pasa a "Error" y `tcode` no consume CPU ni lo relanza en bucle.
+- [ ] `Ctrl+Q` con los dos servidores corriendo: sale en menos de un segundo y `ps` no muestra ningún proceso huérfano.
+
 ---
 
 ## Refresco solo de la base de git (commit/checkout desde otra terminal)
