@@ -3,6 +3,7 @@
 //! activo y el resaltado de sintaxis de `tcode-syntax`; no modifica el
 //! `core` (ver PLAN.md §3).
 
+mod barra_pestanas;
 mod editor_tema;
 mod overlay;
 mod paleta;
@@ -91,8 +92,9 @@ pub struct EstadoUi {
 /// sesión (vive en `app`, no en la config): en zen se apaga todo lo que no
 /// es código SIN tocar los toggles de config — al salir, cada barra vuelve
 /// a lo que diga su config de siempre. Hoy cubre el explorador
-/// (`explorador_visible`) y la statusbar (`interfaz.mostrar_statusbar`);
-/// cualquier barra nueva alrededor del código (pestañas, breadcrumbs...)
+/// (`explorador_visible`), la statusbar (`interfaz.mostrar_statusbar`) y
+/// la barra de pestañas (`interfaz.mostrar_pestanas`, BACKLOG.md P3 #10);
+/// cualquier barra nueva alrededor del código (breadcrumbs...)
 /// tiene que preguntar acá — agregar su `mostrar_*` a `interfaz` o su
 /// propio booleano a este struct — en vez de leer `config` directo.
 struct Cromo<'a> {
@@ -105,7 +107,7 @@ impl<'a> Cromo<'a> {
         if !modo_zen {
             return Self { explorador_visible, interfaz: std::borrow::Cow::Borrowed(interfaz) };
         }
-        let interfaz = ConfigInterfaz { mostrar_statusbar: false, ..interfaz.clone() };
+        let interfaz = ConfigInterfaz { mostrar_statusbar: false, mostrar_pestanas: false, ..interfaz.clone() };
         Self { explorador_visible: false, interfaz: std::borrow::Cow::Owned(interfaz) }
     }
 }
@@ -232,6 +234,7 @@ mod tests {
         let cromo = Cromo::nuevo(true, true, &interfaz);
         assert!(!cromo.explorador_visible);
         assert!(!cromo.interfaz.mostrar_statusbar);
+        assert!(!cromo.interfaz.mostrar_pestanas);
         // El resto se copia igual — y la config original no se toca.
         assert!(!cromo.interfaz.statusbar_eol);
         assert!(interfaz.mostrar_statusbar);
