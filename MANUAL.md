@@ -54,10 +54,11 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+B` | Mostrar/ocultar el explorador de archivos lateral |
 | `Ctrl+K J` | Salto rápido en el explorador (etiquetas de una tecla) |
 | `Ctrl+P` | Buscar archivo por nombre (difuso) |
+| `Ctrl+K .` o `Ctrl+Shift+O` | Ir a un símbolo del archivo (funciones, clases...; ver [Breadcrumbs](#breadcrumbs)) |
 | `Ctrl+Shift+P` o `F1` | Paleta de comandos (buscar cualquier acción por nombre) |
 | `Ctrl+F` / `Ctrl+H` | Buscar / Buscar y reemplazar en el archivo |
 | `Ctrl+,` o `Ctrl+K A` | Panel de administración |
-| `Ctrl+K R` | Ver logs de la sesión LSP activa |
+| `Ctrl+K R` | Ver logs del LSP del lenguaje del archivo activo |
 | `Ctrl+K Ctrl+T` | Selector de temas (con preview en vivo) |
 | `Ctrl+K Ctrl+L` | Recargar `config.toml`/`keymap.toml` sin reiniciar |
 
@@ -139,8 +140,18 @@ suelto. Los cuatro comandos también están en la paleta (`Ctrl+Shift+P`,
   los lenguajes con resaltado, salvo Markdown, que no tiene plegado. En
   archivos sin lenguaje reconocido (texto plano, YAML, TOML...) se pliega
   por indentación: una línea seguida de otras más indentadas.
-- El plegado es de cada panel y no se guarda: al volver a abrir el
-  archivo arranca todo desplegado.
+- El plegado es de cada documento abierto y **se recuerda entre
+  sesiones**: al cerrar la pestaña (`Ctrl+W`), el panel (`Ctrl+K F`) o
+  tcode (`Ctrl+Q`), los bloques plegados de cada archivo se guardan, y
+  al volver a abrirlo aparecen plegados igual. Si el archivo cambió por
+  fuera mientras tanto (otro editor, `git checkout`...), arranca todo
+  desplegado en vez de plegar líneas equivocadas; lo mismo si se cerró
+  descartando cambios sin guardar (se conserva lo que había guardado de
+  antes). Se guarda en un archivo de estado aparte de la configuración
+  — `~/.local/state/tcode/estado/pliegues.toml` en Linux,
+  `~/Library/Application Support/tcode/estado/pliegues.toml` en macOS,
+  `%LOCALAPPDATA%\tcode\estado\pliegues.toml` en Windows —, con los
+  últimos 200 archivos; se puede borrar sin problema.
 
 ## Paneles divididos (splits)
 
@@ -201,10 +212,20 @@ encabezados en Markdown (`# Manual > ## Atajos`). En los demás archivos
 la ruta. Si no entra en el ancho del panel, se recorta de a poco: primero
 las carpetas del medio (`..`), después los símbolos de afuera, y por
 último el final del símbolo más interno — el nombre del archivo y el
-símbolo más interno siempre quedan a la vista. No es interactivo (no se
-puede hacer clic ni navegar por él). Se apaga en `Ctrl+,` → Interfaz →
-"Mostrar breadcrumbs" (viene prendido) y se oculta en modo zen. Muestra
-siempre la ubicación del documento de la pestaña activa.
+símbolo más interno siempre quedan a la vista. Se apaga en `Ctrl+,` →
+Interfaz → "Mostrar breadcrumbs" (viene prendido) y se oculta en modo
+zen. Muestra siempre la ubicación del documento de la pestaña activa.
+
+**Ir a un símbolo** (`Ctrl+K .`, o `Ctrl+Shift+O` en terminales con el
+protocolo de teclado de Kitty; en la paleta: "Ir: Símbolo del
+archivo"): abre una lista con todos los símbolos del archivo (los mismos
+que muestra el breadcrumb: funciones, métodos, clases, `impl`...), en el
+orden del archivo, indentados según su anidamiento y con su número de
+línea. Arranca posicionada en el símbolo donde está el cursor. Escribir
+filtra (difuso, como `Ctrl+P`, pero sin reordenar), `↑`/`↓` + `Enter`
+salta al símbolo — desplegando el bloque si estaba plegado — y `Esc`
+cierra sin moverse. En archivos sin símbolos la lista lo avisa. No hace
+nada en la vista de tabla CSV ni con el foco en el explorador.
 
 ## Pestañas de archivos abiertos
 
@@ -247,10 +268,11 @@ atajos siguen andando igual sin la barra. El modo zen también la oculta.
   no, "Pestañas: Ir a la pestaña N" está en la paleta (`F1`).
 - Guardado automático "al perder foco": cambiar de pestaña cuenta como
   perder el foco, y se guardan también las pestañas que no se ven.
-- LSP: la sesión sigue a la pestaña activa. Cambiar a otro archivo del
-  mismo lenguaje no reinicia el servidor; a uno de otro lenguaje (o sin
-  lenguaje, como un `.txt`) sí, igual que al cambiar de panel — al volver,
-  los diagnósticos tardan lo que tarde el servidor en arrancar.
+- LSP: hay un servidor por lenguaje, compartido por todas las pestañas y
+  paneles. Alternar entre un `.py` y un `.rs` (o un `.txt`) no reinicia
+  ninguno, y una pestaña de fondo sigue recibiendo sus diagnósticos. El
+  servidor de un lenguaje se cierra al cerrar la última pestaña de ese
+  lenguaje.
 
 ## Explorador de archivos
 
@@ -298,42 +320,88 @@ VIM lo prende en el panel de administración (`Ctrl+K A`, sección
 (`[editor]` / `modo_vim = true`) — el cambio surte efecto de inmediato
 sobre el panel activo, sin reiniciar ni reabrir el archivo.
 
-Alcance de esta primera entrega (se puede ampliar más adelante): modos
-Normal/Insertar, movimientos básicos y los comandos de una/dos teclas más
-usados. Sin operadores combinables (`dw`, `d$`), sin conteos numéricos
-(`3dd`), sin modo Visual, sin `:`.
+Hay modo Normal, Insertar, Visual (`v`) y Visual por líneas (`V`) — la
+barra de estado muestra cuál. Los comandos siguen la gramática de VIM:
+`[conteo] operador [conteo] movimiento-u-objeto` (`d3w`, `2dd`, `ci(`,
+`y$`...), `[conteo] movimiento` (`5j`) o `[conteo] comando` (`3x`). Lo que
+se lleva escrito de un comando a medias (`d2`, `ci`) se ve en la barra de
+estado; `Esc` lo cancela.
 
-| Tecla (modo Normal) | Acción |
+| Movimiento | Qué hace |
 |---|---|
-| `h` / `j` / `k` / `l` | Mover el cursor izquierda/abajo/arriba/derecha |
-| `0` / `$` | Inicio / fin de la línea |
-| `gg` / `G` | Inicio / fin del archivo |
-| `i` | Entrar a Insertar en la posición actual |
-| `a` | Entrar a Insertar una posición a la derecha (al final de línea, después del último carácter) |
-| `o` | Abrir una línea nueva debajo y entrar a Insertar ahí |
-| `x` | Borrar el carácter bajo el cursor |
-| `dd` | Borrar la línea completa (queda en el registro) |
-| `yy` | Copiar la línea completa al registro, sin borrar nada |
-| `p` | Pegar el registro como una línea nueva debajo de la actual |
+| `h` / `j` / `k` / `l` | Izquierda / abajo / arriba / derecha (`h`/`l` no cambian de línea) |
+| `0` / `^` / `$` | Inicio de línea / primer carácter no blanco / fin de línea |
+| `w` / `b` / `e` | Próxima palabra / palabra anterior / fin de palabra |
+| `W` / `B` / `E` | Lo mismo con palabras separadas solo por blancos |
+| `gg` / `G` / `{n}G` | Inicio del archivo / fin del archivo / línea `n` |
+| `f{c}` / `t{c}` | Hasta el carácter `c` en la línea / justo antes de él |
+| `F{c}` / `T{c}` | Lo mismo hacia atrás |
+| `;` / `,` | Repetir el último `f`/`t`/`F`/`T` / al revés |
+| `%` | Al paréntesis, llave o corchete que corresponde |
+| `{` / `}` | Párrafo anterior / siguiente (líneas vacías) |
+
+| Operador (seguido de movimiento u objeto; repetido, línea entera) | Qué hace |
+|---|---|
+| `d` (`dd`) | Borrar (queda en el registro) |
+| `c` (`cc`) | Cambiar: borrar y entrar a Insertar |
+| `y` (`yy`) | Copiar al registro |
+| `>` / `<` (`>>` / `<<`) | Indentar / desindentar líneas (con los espacios o el tab de la config) |
+
+| Objeto de texto (tras un operador, o en Visual) | Qué cubre |
+|---|---|
+| `iw` / `aw` (`iW` / `aW`) | La palabra / la palabra con sus espacios |
+| `i"` / `a"` (también `'` y `` ` ``) | Lo de adentro de las comillas / con las comillas |
+| `i(` / `a(` (también `ib`, `i)`) | Lo de adentro de los paréntesis / con los paréntesis |
+| `i{` / `a{` (también `iB`), `i[` / `a[`, `i<` / `a<` | Igual con llaves, corchetes y `<>`; multilínea |
+
+| Comando | Qué hace |
+|---|---|
+| `i` / `a` | Insertar antes / después del cursor |
+| `I` / `A` | Insertar al principio (primer no blanco) / al final de la línea |
+| `o` / `O` | Abrir una línea debajo / arriba (con la misma indentación) e insertar |
+| `x` / `X` | Borrar el carácter bajo el cursor / el anterior |
+| `s` / `S` | Cambiar el carácter / la línea entera |
+| `D` / `C` / `Y` | `d$` / `c$` / `yy` |
+| `r{c}` | Reemplazar el carácter (con conteo, varios) por `c` |
+| `J` | Unir con la línea siguiente |
+| `~` | Alternar mayúscula/minúscula |
+| `p` / `P` | Pegar el registro después / antes (debajo / arriba si son líneas) |
 | `u` | Deshacer (comparte historial con `Ctrl+Z`) |
-| `Esc` (en Insertar) | Volver a Normal |
+| `.` | Repetir el último cambio, incluido el texto tipeado |
+| `v` / `V` | Modo Visual por caracteres / por líneas |
+| `Esc` | En Insertar, volver a Normal; en Visual, salir sin hacer nada |
 
-El registro sin nombre (lo que dejan `dd`/`yy`, lo que pega `p`) es uno
-solo para toda la app, no por panel — yanquear en un archivo y pegar en
-otro funciona, igual que en VIM real. El resto de atajos de tcode
-(flechas, `Ctrl+S`, `Ctrl+B`, splits, etc.) siguen andando igual estando
-en cualquiera de los dos modos: el modo VIM solo cambia qué significa un
-carácter suelto sin modificador.
+En Visual, los movimientos y objetos de texto extienden la selección; `o`
+cambia de extremo; `d`/`x`, `y`, `c`/`s`, `>`/`<`, `J` y `~` operan sobre
+ella.
 
-Una diferencia con Insertar (y con el resto de editores no-VIM): en modo
-Normal el cursor nunca queda "después" del último carácter de una línea
-no vacía — como en VIM real, `$`/`l` se detienen justo sobre el último
-carácter, no después. `a`/`A` siguen permitiendo escribir al final,
-como es de esperar.
+| Línea de comandos (`:`) | Qué hace |
+|---|---|
+| `:w` | Guardar (mismo camino que `Ctrl+S`, formatea si corresponde) |
+| `:q` / `:q!` | Cerrar la pestaña (con cambios, pide repetir `:q`) / sin preguntar; en la última pestaña sale de tcode |
+| `:wq` / `:x` | Guardar y cerrar (`:x` solo guarda si hay cambios) |
+| `:qa` / `:qa!` | Salir de tcode (avisa si hay cambios) / sin preguntar |
+| `:{n}` | Ir a la línea `n` |
+| `:e <ruta>` | Abrir un archivo en una pestaña nueva |
+| `:s/a/b/` / `:%s/a/b/g` | Reemplazar en la línea / en todo el archivo (`g`: todas por línea, `i`: sin distinguir mayúsculas; patrón regex de Rust) |
 
-Limitación conocida: un panel nuevo por `Ctrl+\` (split) siempre arranca
-en Insertar, incluso con el modo VIM prendido — abrir un archivo ahí (o
-en el explorador/buscador de archivos) sí respeta la config.
+La línea `:` aparece al pie de la pantalla; `↑`/`↓` recorren los
+comandos ya usados en la sesión, `Esc` la cierra.
+
+Cada cambio compuesto se deshace de una vez: `3dd`, `J`, `:%s`, y también
+`cw` + lo que se escribió hasta `Esc`. El registro sin nombre es uno solo
+para toda la app, no por panel — yanquear en un archivo y pegar en otro
+funciona, igual que en VIM real — y recuerda si guardó líneas enteras o
+caracteres sueltos. El resto de atajos de tcode (flechas, `Ctrl+S`,
+`Ctrl+B`, splits, etc.) siguen andando igual en cualquier modo.
+
+Como en VIM real, en modo Normal el cursor nunca queda "después" del
+último carácter de una línea no vacía (`$`/`l` se detienen sobre él), y
+al salir de Insertar vuelve un lugar a la izquierda.
+
+Sin registros con nombre, marcas, macros ni búsqueda con `/` (para buscar,
+`Ctrl+F` sigue funcionando); `.` no repite operaciones hechas en Visual.
+Ver PRUEBAS.md para la lista completa de limitaciones.
 
 ## Paleta de comandos y buscador de archivos
 
@@ -442,7 +510,7 @@ opción por nombre):
 |---|---|
 | **Atajos de teclado** | Ver/rebindear cualquier atajo (`Enter` sobre un comando y presionar la nueva combinación), con detección de conflictos resaltada en rojo. `Backspace` restablece uno solo al valor por defecto; hay una fila para restablecer todos. También exportar/importar el `keymap.toml` activo a/desde un archivo fijo (ver [Personalizar atajos](#personalizar-atajos)). |
 | **Temas** | Elegir tema (abre el selector con preview) y duplicar el activo para editarlo. |
-| **Lenguajes / LSP** | Habilitar/deshabilitar el servidor LSP de cada lenguaje, ver si el binario está en el `PATH` y el estado de la sesión activa (Conectado/Iniciando/Inactivo). `c` sobre una fila edita el comando+argumentos a mano (ver [LSP](#lsp-autocompletado-y-diagnósticos)); `Backspace` quita ese override. |
+| **Lenguajes / LSP** | Habilitar/deshabilitar el servidor LSP de cada lenguaje, ver si el binario está en el `PATH` y el estado de la sesión de cada lenguaje (Conectado/Iniciando/Error/Inactivo). `c` sobre una fila edita el comando+argumentos a mano (ver [LSP](#lsp-autocompletado-y-diagnósticos)); `Backspace` quita ese override. |
 | **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, indicadores de git, modo VIM, regla vertical, guardado automático. |
 | **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo), la barra de pestañas y los [breadcrumbs](#breadcrumbs) de arriba del código. |
 
@@ -494,9 +562,14 @@ Detalles:
   segundo plano, sin frenar nada). Sin `git`, o con un archivo fuera de
   un repo o todavía sin trackear (nunca commiteado), simplemente no hay
   columna ni marcas.
-- La versión de referencia se vuelve a leer al abrir el archivo y al
-  guardar (`Ctrl+S`). Tras un commit hecho desde otra terminal, las marcas
-  se ponen al día con el próximo `Ctrl+S` (aunque no haya cambios).
+- La versión de referencia se vuelve a leer al abrir el archivo, al
+  guardar (`Ctrl+S`) y sola cuando cambia `HEAD`: tras un commit,
+  checkout o reset hecho desde otra terminal, las marcas se ponen al día
+  en un par de segundos sin tocar nada (tcode mira cada 2 segundos las
+  fechas de `.git/HEAD`, de la rama y del índice — sin lanzar procesos —,
+  y también al volver a la terminal si esta avisa del foco; en tmux hace
+  falta `set -g focus-events on`). Con archivos fuera de un repo no se
+  revisa nada.
 - Con los números de línea apagados, la columna de git se sigue viendo
   sola (si el archivo está en un repo); para ocultarla está este mismo
   toggle.
@@ -522,6 +595,18 @@ está en el `PATH`, se lanza solo al abrir un archivo de ese lenguaje y los
 diagnósticos (errores/avisos) aparecen subrayados en el código y resumidos
 en la barra de estado.
 
+Hay un servidor por lenguaje, corriendo en paralelo: con un `.py` y un
+`.rs` abiertos (en pestañas del mismo panel o en paneles distintos) corren
+los dos a la vez, cada uno con todos los archivos de su lenguaje abiertos
+— no solo el visible —, así que cambiar de pestaña no los reinicia y los
+errores de una pestaña de fondo ya están al volver a ella. El servidor de
+un lenguaje se lanza con el primer archivo de ese lenguaje y se cierra al
+cerrar el último. Si uno no arranca o se cae, los demás siguen
+funcionando; su fila en "Lenguajes / LSP" dice "Error" y `Ctrl+K R`
+muestra por qué. No se reintenta solo: se vuelve a lanzar al cambiar su
+comando, al deshabilitarlo y volver a habilitarlo, o al cerrar todos sus
+archivos y abrir uno de nuevo.
+
 Comando por defecto conocido para estos lenguajes (instalá el paquete
 correspondiente para que funcione):
 
@@ -545,8 +630,8 @@ todavía. Para cualquiera de estos (o para apuntar a un comando distinto
 del que trae por defecto, como una versión instalada en otra ruta):
 sección "Lenguajes / LSP" del panel de administración, `c` sobre la fila
 del lenguaje, escribí el comando completo con sus argumentos y `Enter`.
-Si ya hay una sesión activa para ese lenguaje, se relanza sola con el
-comando nuevo.
+Si ya hay una sesión para ese lenguaje, se relanza sola con el comando
+nuevo (solo esa: los servidores de otros lenguajes siguen como estaban).
 
 Ese mismo campo acepta variables de entorno propias del servidor: antes
 del comando, escribí `VAR=valor` (una o más, separadas por espacio) y
@@ -561,8 +646,58 @@ Si el servidor lo soporta (pyright, por ejemplo), `tcode` le manda solo
 lo que cambió en cada edición en vez del archivo entero — con archivos
 de miles de líneas, tipear no se frena por el LSP.
 
+### Formatear al guardar
+
+Apagado por defecto para todos los lenguajes. En "Lenguajes / LSP" del
+panel de administración, `f` sobre la fila de un lenguaje lo prende: cada
+`Ctrl+S` (y "Guardar como") formatea el archivo antes de escribirlo. Hay
+dos formas de formatear, con esta prioridad:
+
+1. **Formateador externo** (si el lenguaje tiene uno configurado): un
+   programa que recibe el texto por stdin y devuelve el formateado por
+   stdout. `e` sobre la fila lo edita, con la misma sintaxis que el
+   comando LSP (`VAR=valor -- comando args...`); una línea vacía lo
+   quita. En los argumentos, `{archivo}` se reemplaza por la ruta
+   absoluta del archivo. Se lanza con la carpeta del archivo como
+   directorio de trabajo, así encuentra su propia config
+   (`rustfmt.toml`, `pyproject.toml`...). Ejemplos:
+
+   | Lenguaje | Formateador |
+   |---|---|
+   | Rust | `rustfmt --emit stdout --edition 2021` |
+   | Python | `black -q -` o `ruff format -` |
+   | JS/TS/CSS/HTML | `prettier --stdin-filepath {archivo}` |
+   | Go | `gofmt` |
+
+2. **El LSP** del lenguaje (`textDocument/formatting`), si no hay
+   formateador externo y el servidor lo soporta.
+
+En los dos casos el resultado se aplica como **un solo paso de
+deshacer** (`Ctrl+Z` vuelve al texto sin formatear) y solo se tocan las
+partes que cambian: el cursor y los bloques plegados se quedan sobre el
+mismo código. Formatear **nunca impide guardar**: si el formateador no
+está instalado, termina con error, no devuelve nada o tarda más de 3
+segundos (se lo corta), el archivo se guarda tal cual y la barra de
+estado dice por qué (`Sin formatear: 'black' falló (código 123): ...`,
+con la primera línea de su stderr). El guardado automático no formatea.
+
+En `config.toml`:
+
+```toml
+[lenguajes]
+formatear_al_guardar = ["rust", "python"]
+
+[lenguajes.formateador.rust]
+comando = "rustfmt"
+argumentos = ["--emit", "stdout", "--edition", "2021"]
+```
+
+Límite: los argumentos se separan por espacios, sin comillas (igual que
+el comando LSP); para algo más complejo, apuntá a un script propio.
+
 **`Ctrl+K R`** ("LSP: Ver logs de la sesión activa" en la paleta):
-muestra lo que el servidor escribió en su stderr — útil para entender
+muestra lo que el servidor del lenguaje del archivo activo escribió en su
+stderr — útil para entender
 por qué no conecta o se comporta raro, más allá del estado "Conectado"/
 "Iniciando…"/"Inactivo". Se actualiza en vivo mientras está abierto (lo
 más nuevo arriba); escribir en el campo de arriba filtra las líneas por
@@ -635,11 +770,26 @@ numeros_de_linea = false
   de proyecto activa, el panel lo avisa arriba (con su ruta y qué
   claves pisa), y las filas pisadas muestran el valor en uso como
   `[proyecto: ...]` al lado del valor de tu global.
-- **Seguridad**: una config de proyecto **no puede** definir comandos de
-  LSP (`[lenguajes.lsp_comando.*]`, con sus variables de entorno) — se
-  ignoran, para que abrir un repo ajeno nunca ejecute un programa que
-  eligió otra persona. Tampoco puede volver a habilitar un LSP que
-  tengas deshabilitado en tu global (sí puede deshabilitar otros).
+- **Seguridad**: las claves que ejecutan programas — comandos de LSP
+  (`[lenguajes.lsp_comando.*]`, con sus variables de entorno) y
+  formateadores externos (`[lenguajes.formateador.*]`) — **se ignoran**
+  mientras no marques el proyecto como confiable, para que abrir un repo
+  ajeno nunca ejecute un programa que eligió otra persona. Al arrancar,
+  la barra de estado avisa si se ignoró alguna, y la cabecera del panel
+  de administración dice cuáles. Un proyecto tampoco puede volver a
+  habilitar un LSP que tengas deshabilitado en tu global (sí puede
+  deshabilitar otros).
+- **Confiar en un proyecto**: paleta (`Ctrl+Shift+P`/`F1`) → "Proyecto:
+  Confiar en este proyecto". Desde ese momento se aplican sus comandos;
+  la cabecera del panel lo muestra como "Proyecto CONFIABLE". La
+  confianza se guarda en **tu** config global (sección `[confianza]`,
+  nunca en el proyecto) con la ruta de la carpeta del proyecto y un
+  hash (SHA-256) del contenido de su `.tcode/config.toml`: **si ese
+  archivo cambia** (por ejemplo, un `git pull` que trae otro comando),
+  el proyecto vuelve a ser no confiable al reabrirlo o con
+  `config.recargar`, hasta que confíes de nuevo. "Proyecto: Revocar
+  confianza" la quita. Un `.tcode/config.toml` no puede escribir la
+  sección `[confianza]` (se ignora siempre).
 - **Errores**: si el archivo tiene un error (TOML mal formado o un valor
   del tipo equivocado), se ignora entero y se sigue con tu config
   global; el motivo aparece en la cabecera del panel de administración.

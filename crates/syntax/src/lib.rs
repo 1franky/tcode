@@ -12,4 +12,4 @@ mod simbolos;
 pub use lenguaje::Lenguaje;
 pub use plegado::{rangos_por_indentacion, RangoPlegable};
 pub use resaltador::{Resaltador, Token, NOMBRES_RESALTADO};
-pub use simbolos::Simbolo;
+pub use simbolos::{Simbolo, SimboloEsquema};

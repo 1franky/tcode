@@ -15,7 +15,9 @@
 //! escuchar en paralelo los mensajes que llegan del servidor LSP activo
 //! (`lsp.rs`) sin bloquear ninguno de los dos.
 
+mod formateador;
 mod lsp;
+mod pliegues;
 mod vim;
 
 use std::collections::VecDeque;
@@ -39,7 +41,7 @@ use ratatui::Terminal;
 use tokio::time::MissedTickBehavior;
 use tokio_stream::StreamExt;
 
-use tcode_commands::EstadoPaleta;
+use tcode_commands::{EntradaSimbolo, EstadoPaleta, EstadoSelectorSimbolos};
 use tcode_config::{
     CampoEditor, CampoTemas, ComandoLsp, Config, ConfigEditor, ConfigProyecto, EstadoEditorTema, EstadoPanelAdmin,
     EstadoSelectorTema, FocoPanelAdmin, GuardadoAutomatico, ModoEdicion, ResultadoDuplicarTema, Seccion,
@@ -78,10 +80,11 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let editor = match &ruta_arg {
+    let mut editor = match &ruta_arg {
         Some(ruta) => Editor::abrir(ruta)?,
         None => Editor::nuevo(),
     };
+    pliegues::restaurar(&mut editor);
     let mut layout = PanelLayout::nuevo(editor, ruta_arg.clone().unwrap_or_else(|| "[Sin nombre]".to_string()));
 
     // La config y el keymap nunca hacen fallar el arranque: si el archivo
@@ -98,11 +101,9 @@ async fn main() -> Result<()> {
     // Modo VIM (M5, `config.editor.modo_vim`, apagado por defecto): el
     // `Editor` arranca siempre en `Modo::Insertar` sin saber nada de esta
     // config — acá es donde `app` decide si corresponde pasarlo a
-    // `Normal` antes de la primera tecla. Nota: esto solo cubre el
-    // arranque y abrir un archivo (`abrir_ruta_desde_explorador`, el
-    // buscador de archivos); un panel nuevo por `Ctrl+\` siempre arranca
-    // en Insertar (limitación conocida, ver PRUEBAS.md) porque
-    // `tcode_ui::Layout::dividir` no conoce la config.
+    // `Normal` antes de la primera tecla. Lo mismo al abrir un archivo
+    // (`abrir_ruta_desde_explorador`) y al dividir un panel
+    // (`panel.dividir_*` en `ejecutar_comando`).
     if config.editor.modo_vim {
         layout.editor_activo_mut().entrar_modo_normal();
     }
@@ -110,6 +111,11 @@ async fn main() -> Result<()> {
     let (mut terminal, protocolo_kitty) = iniciar_terminal()?;
     let resultado = ejecutar(&mut terminal, &mut layout, capas_config, keymap, explorador, ruta_arg.as_deref()).await;
     finalizar_terminal(&mut terminal, protocolo_kitty)?;
+    // Al salir, los pliegues de todo lo que quedó abierto (ver `pliegues`).
+    pliegues::recordar(layout.paneles_mut().into_iter().map(|p| {
+        let p: &PanelEditor = p;
+        &p.editor
+    }));
 
     resultado
 }
@@ -340,6 +346,9 @@ struct EstadoApp {
     estado_busqueda: EstadoBusqueda,
     guardar_como: EstadoGuardarComo,
     selector_tema: EstadoSelectorTema,
+    /// Selector de símbolos del archivo actual (`Ctrl+K .`, "Ir a
+    /// símbolo"): otro overlay de lista filtrable, como la paleta.
+    selector_simbolos: EstadoSelectorSimbolos,
     panel_admin: EstadoPanelAdmin,
     editor_tema: EstadoEditorTema,
     /// Keymap activo — fuente de verdad para la sección "Atajos" del
@@ -467,6 +476,7 @@ async fn ejecutar(
         estado_busqueda: EstadoBusqueda::nueva(),
         guardar_como: EstadoGuardarComo::nueva(),
         selector_tema: EstadoSelectorTema::nueva(),
+        selector_simbolos: EstadoSelectorSimbolos::nuevo(),
         panel_admin,
         editor_tema: EstadoEditorTema::nueva(),
         keymap,
@@ -480,6 +490,9 @@ async fn ejecutar(
         resaltador: Resaltador::nuevo(),
         modo_zen: None,
     };
+    if let Some(aviso) = aviso_proyecto_no_confiable(&estado.capas_config) {
+        layout.panel_activo_mut().mensaje_estado = Some(aviso);
+    }
 
     // Ver `forzar_redibujado_completo`: en Windows, si la "forma" de la
     // pantalla cambió (otro archivo activo, otro número de paneles, el
@@ -508,6 +521,16 @@ async fn ejecutar(
     // la pantalla entera 4 veces por segundo aunque el LSP estuviera
     // callado.
     let mut omitir_dibujo = false;
+
+    // Revisión periódica de `HEAD` (indicadores de git, ver
+    // `tcode_fs::VigiaHead`): un commit o checkout hecho desde otra
+    // terminal se ve solo, sin esperar al próximo `Ctrl+S`. Mismo esquema
+    // que `tick`, pero con su propio período (más lento: son unos `stat`
+    // por documento visible) y solo mientras algún documento visible
+    // está en un repo con los indicadores prendidos — sin eso el bucle
+    // sigue sin despertarse en reposo.
+    let mut tick_git = tokio::time::interval(tcode_fs::INTERVALO_REVISION_HEAD);
+    tick_git.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     // "Al perder foco" (BACKLOG.md P2 #4): qué panel/archivo/zona tenía
     // el foco en la vuelta anterior del bucle — si cambió (`Ctrl+1/2/3`,
@@ -538,10 +561,11 @@ async fn ejecutar(
         let hay_mas_eventos = !teclas_sinteticas.is_empty() || crossterm::event::poll(Duration::ZERO).unwrap_or(false);
         let dibujar = !std::mem::take(&mut omitir_dibujo);
         if dibujar && (!hay_mas_eventos || ultimo_dibujo.elapsed() >= INTERVALO_MAXIMO_SIN_DIBUJAR) {
-            // Una vez por frame, no por tecla: avisa al LSP del archivo
-            // activo (relanzándolo si cambió de lenguaje) y le manda lo
-            // que cambió, si algo cambió. Por tecla significaba copiar y
-            // serializar el archivo entero en cada carácter tipeado.
+            // Una vez por frame, no por tecla: pone a las sesiones LSP
+            // (una por lenguaje) al día con las pestañas abiertas y les
+            // manda lo que cambió, si algo cambió. Por tecla significaba
+            // copiar y serializar el archivo entero en cada carácter
+            // tipeado.
             sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
 
             if necesita_redibujado {
@@ -577,8 +601,10 @@ async fn ejecutar(
                     &estado.logs_lsp,
                     &estado.prompt_explorador,
                     &estado.confirmar_borrado,
+                    &estado.selector_simbolos,
                     estado.modo_zen.is_some(),
-                )
+                );
+                tcode_ui::panel_linea_vim::dibujar(frame, frame.area(), &estado.vim.linea_comando, &estado.paleta);
             })?;
             ultimo_dibujo = Instant::now();
         }
@@ -594,10 +620,11 @@ async fn ejecutar(
                         _ => continue,
                     }
                 }
-                mensaje = estado.lsp.siguiente_mensaje() => {
-                    if let Some(mensaje) = mensaje {
-                        estado.lsp.procesar_mensaje(mensaje, layout).await;
-                    }
+                // Un mensaje de cualquiera de las sesiones LSP (una por
+                // lenguaje, `lsp.rs`), etiquetado con el lenguaje de la
+                // que lo mandó; `None` si ese servidor se murió.
+                (lenguaje, mensaje) = estado.lsp.siguiente_mensaje() => {
+                    estado.lsp.procesar_mensaje(lenguaje, mensaje, layout).await;
                     continue;
                 }
                 // Indicadores de git (BACKLOG.md P2 #6): mientras algún
@@ -610,6 +637,13 @@ async fn ejecutar(
                 _ = tokio::time::sleep(INTERVALO_SONDEO_GIT), if layout.cargas_git_pendientes() => continue,
                 _ = tick.tick(), if necesita_tick(&estado) => {
                     omitir_dibujo = !procesar_tick(layout, &mut estado);
+                    continue;
+                }
+                // Si relanzó alguna carga, la rama de `INTERVALO_SONDEO_GIT`
+                // dibuja cuando llegue; si no, no hay nada que redibujar.
+                _ = tick_git.tick(), if estado.config.editor.indicadores_git && layout.vigila_heads_git() => {
+                    layout.revisar_heads_git();
+                    omitir_dibujo = true;
                     continue;
                 }
             },
@@ -629,6 +663,15 @@ async fn ejecutar(
             Event::FocusLost => {
                 if estado.config.editor.guardado_automatico == GuardadoAutomatico::AlPerderFoco {
                     autoguardar(layout);
+                }
+                continue;
+            }
+            // Al volver a la terminal (típicamente después de commitear o
+            // cambiar de rama en otra), se revisa `HEAD` en el acto en vez
+            // de esperar al próximo `tick_git`.
+            Event::FocusGained => {
+                if estado.config.editor.indicadores_git {
+                    layout.revisar_heads_git();
                 }
                 continue;
             }
@@ -731,6 +774,9 @@ async fn ejecutar(
                 // buffer de texto.
                 match key.code {
                     KeyCode::Esc => estado.panel_admin.cancelar_edicion_comando_lsp(),
+                    KeyCode::Enter if estado.panel_admin.editando_formateador() => {
+                        confirmar_edicion_formateador(&mut estado)
+                    }
                     KeyCode::Enter => confirmar_edicion_comando_lsp(&mut estado),
                     KeyCode::Backspace => estado.panel_admin.borrar_comando_lsp(),
                     KeyCode::Char(c) if sin_modificadores(key) => estado.panel_admin.escribir_comando_lsp(c),
@@ -789,6 +835,11 @@ async fn ejecutar(
                             if sin_modificadores(key) && estado.panel_admin.seccion_actual() == Seccion::Lenguajes =>
                         {
                             iniciar_edicion_comando_lsp_seleccionado(&mut estado);
+                        }
+                        KeyCode::Char('e')
+                            if sin_modificadores(key) && estado.panel_admin.seccion_actual() == Seccion::Lenguajes =>
+                        {
+                            iniciar_edicion_formateador_seleccionado(&mut estado);
                         }
                         KeyCode::Backspace if estado.panel_admin.seccion_actual() == Seccion::Lenguajes => {
                             quitar_comando_lsp_seleccionado(&mut estado);
@@ -873,6 +924,28 @@ async fn ejecutar(
                     }
                 }
                 KeyCode::Char(c) if sin_modificadores(key) => estado.paleta_comandos.escribir(c),
+                _ => {}
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+            continue;
+        }
+
+        // Selector de símbolos (`Ctrl+K .`): misma forma que la paleta.
+        // `Enter` salta al símbolo elegido; `mover_cursor_a_byte`
+        // despliega el pliegue en el que caiga.
+        if estado.selector_simbolos.activo() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => estado.selector_simbolos.cerrar(),
+                KeyCode::Up => estado.selector_simbolos.mover_arriba(),
+                KeyCode::Down => estado.selector_simbolos.mover_abajo(),
+                KeyCode::Backspace => estado.selector_simbolos.borrar(),
+                KeyCode::Enter => {
+                    if let Some(byte) = estado.selector_simbolos.confirmar() {
+                        layout.editor_activo_mut().mover_cursor_a_byte(byte);
+                    }
+                }
+                KeyCode::Char(c) if sin_modificadores(key) => estado.selector_simbolos.escribir(c),
                 _ => {}
             }
             necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
@@ -1141,27 +1214,47 @@ async fn ejecutar(
             && key.code == KeyCode::Esc
             && layout.editor_activo().modo() == Modo::Insertar
         {
-            let editor = layout.editor_activo_mut();
-            editor.colapsar_cursores();
-            editor.entrar_modo_normal();
+            vim::salir_de_insertar(layout, &mut estado.vim);
             estado.confirmar_salida = false;
             necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
-        // En modo Normal, un carácter sin modificadores es un comando VIM
-        // (movimiento, operador, cambio de modo), no texto a insertar —
-        // el resto de atajos de tcode (flechas, `Ctrl+S`, `Ctrl+B`,...)
-        // siguen andando igual, por debajo de este bloque (no se captura
-        // el teclado por completo como en los bloques anteriores).
-        if layout.editor_activo().modo() == Modo::Normal {
+        // Línea de comandos `:` del modo VIM: captura el teclado por
+        // completo mientras está abierta, como los demás prompts.
+        if estado.vim.linea_comando.activa() {
+            estado.confirmar_salida = false;
+            if let Accion::Salir = vim::tecla_linea_comando(key, layout, &mut estado).await {
+                break;
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+            continue;
+        }
+
+        // En modo Normal/Visual, un carácter sin modificadores es un
+        // comando VIM (movimiento, operador, cambio de modo), no texto a
+        // insertar — el resto de atajos de tcode (flechas, `Ctrl+S`,
+        // `Ctrl+B`,...) siguen andando igual, por debajo de este bloque (no
+        // se captura el teclado por completo como en los bloques
+        // anteriores). Solo con el foco en el editor y fuera de la vista
+        // de tabla CSV: ahí un carácter no tiene que editar a ciegas el
+        // buffer de atrás.
+        if layout.editor_activo().modo() != Modo::Insertar
+            && estado.foco == Foco::Editor
+            && layout.panel_activo().modo_csv != ModoCsv::Tabla
+        {
             let manejada = match key.code {
                 KeyCode::Esc => {
-                    vim::cancelar_pendiente(&mut estado.vim);
+                    vim::cancelar(layout, &mut estado.vim);
                     true
                 }
                 KeyCode::Char(c) if sin_modificadores(key) => {
-                    vim::ejecutar_tecla_normal(c, layout, &mut estado.vim);
+                    vim::ejecutar_tecla_normal(c, layout, &mut estado.vim, &estado.config);
+                    // `:` abre la línea de comandos: una confirmación de
+                    // `:q` armada sigue armada (ver `vim::tecla_linea_comando`).
+                    if estado.vim.linea_comando.activa() {
+                        estado.cierre_pedido = estado.cierre_armado.clone();
+                    }
                     true
                 }
                 _ => false,
@@ -1331,6 +1424,7 @@ fn guardar_panel(panel: &mut PanelEditor) -> Result<()> {
 fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, teclas: &mut VecDeque<KeyEvent>) {
     let prompt_de_texto = estado.paleta_comandos.activa()
         || estado.buscador_archivos.activo()
+        || estado.selector_simbolos.activo()
         || estado.estado_busqueda.activa()
         || estado.guardar_como.activa()
         || estado.logs_lsp.activo()
@@ -1360,21 +1454,19 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
     layout.editor_activo_mut().insertar_texto(texto);
 }
 
-/// Le avisa al `EstadoLsp` cuál es el archivo/contenido activos ahora
-/// mismo: relanza el cliente si cambió el lenguaje (o si se
-/// habilitó/deshabilitó desde el panel de administración, sección
-/// "Lenguajes / LSP", PLAN.md §5.3 — `config` es lo que decide eso), y
-/// notifica `didChange` si el texto cambió desde el último envío.
+/// Le avisa al `EstadoLsp` qué documentos hay abiertos ahora mismo en
+/// todas las pestañas de todos los paneles (`EstadoLsp::sincronizar`):
+/// lanza o cierra la sesión de cada lenguaje según haga falta (o si se
+/// habilitó/deshabilitó o se cambió su comando desde el panel de
+/// administración, sección "Lenguajes / LSP", PLAN.md §5.3 — `config` es
+/// lo que decide eso), manda `didOpen`/`didClose` al abrir y cerrar
+/// pestañas, y `didChange` de lo que cambió desde el último envío.
 ///
-/// El texto se pide solo si hace falta (sesión nueva, o revisión del
-/// buffer distinta de la del último envío): esto corre en cada frame, y
-/// antes copiaba el archivo entero en todos, incluso sin LSP activo
-/// (BACKLOG.md P1 #14).
+/// El texto de un documento se pide solo si hace falta (se abre en el
+/// servidor, o la revisión del buffer es distinta de la del último
+/// envío): esto corre en cada frame (BACKLOG.md P1 #14).
 async fn sincronizar_lsp(layout: &PanelLayout, lsp: &mut lsp::EstadoLsp, config: &Config) {
-    let panel = layout.panel_activo();
-    let buffer = panel.editor.buffer();
-    lsp.actualizar_para_archivo(&panel.ruta_mostrada, || buffer.a_texto(), config).await;
-    lsp.sincronizar_contenido(buffer.revision(), || buffer.a_texto()).await;
+    lsp.sincronizar(layout, config).await;
 }
 
 /// Punto de entrada único para ejecutar un id de comando, venga de un
@@ -1420,12 +1512,28 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             recargar_config_tema_y_keymap(estado, resolvedor);
             Accion::Continuar
         }
+        "proyecto.confiar" | "proyecto.dejar_de_confiar" => {
+            let mensaje = alternar_confianza_proyecto(estado, id == "proyecto.confiar");
+            layout.panel_activo_mut().mensaje_estado = Some(mensaje);
+            Accion::Continuar
+        }
         "paleta.comandos" => {
             estado.paleta_comandos.abrir();
             Accion::Continuar
         }
         "buscar.archivos" => {
             estado.buscador_archivos.abrir();
+            Accion::Continuar
+        }
+        // Breadcrumbs navegables: el esquema del archivo entero sale del
+        // mismo árbol de tree-sitter que el resaltado (recorrerlo es
+        // O(archivo), pero solo al abrir el selector, no por frame). Sin
+        // sentido en el explorador o en la vista de tabla CSV.
+        "simbolos.ir_a" => {
+            if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
+                let (simbolos, byte_cursor) = esquema_del_activo(layout, &mut estado.resaltador);
+                estado.selector_simbolos.abrir(simbolos, byte_cursor);
+            }
             Accion::Continuar
         }
         "tema.seleccionar" => {
@@ -1588,6 +1696,7 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         "pestana.cerrar" => {
             let modificado = layout.editor_activo().buffer().modificado();
             if cierre_confirmado(layout, estado, id, modificado, "Ctrl+W") {
+                pliegues::recordar([layout.editor_activo()]);
                 layout.cerrar_pestana_activa();
             }
             Accion::Continuar
@@ -1598,6 +1707,9 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         "panel.cerrar" => {
             let modificado = layout.num_paneles() > 1 && layout.panel_activo_modificado();
             if cierre_confirmado(layout, estado, id, modificado, "Ctrl+K F") {
+                if layout.num_paneles() > 1 {
+                    pliegues::recordar(layout.documentos_panel_activo().map(|d| &d.editor));
+                }
                 layout.cerrar_activo();
             }
             Accion::Continuar
@@ -1703,12 +1815,15 @@ fn ejecutar_comando(
             *foco = Foco::Editor;
             return Accion::Continuar;
         }
-        "panel.dividir_vertical" => {
-            layout.dividir(DireccionSplit::Vertical);
-            return Accion::Continuar;
-        }
-        "panel.dividir_horizontal" => {
-            layout.dividir(DireccionSplit::Horizontal);
+        // El panel nuevo arranca en Normal si el modo VIM está prendido
+        // (`Layout::dividir` no conoce la config).
+        "panel.dividir_vertical" | "panel.dividir_horizontal" => {
+            let direccion =
+                if comando == "panel.dividir_vertical" { DireccionSplit::Vertical } else { DireccionSplit::Horizontal };
+            layout.dividir(direccion);
+            if config.editor.modo_vim {
+                layout.editor_activo_mut().entrar_modo_normal();
+            }
             return Accion::Continuar;
         }
         "panel.ir_a_1" => {
@@ -1838,6 +1953,7 @@ fn abrir_ruta_desde_explorador(layout: &mut PanelLayout, foco: &mut Foco, ruta: 
         return;
     }
     if let Ok(mut nuevo_editor) = Editor::abrir(&ruta) {
+        pliegues::restaurar(&mut nuevo_editor);
         if config.modo_vim {
             nuevo_editor.entrar_modo_normal();
         }
@@ -2036,9 +2152,10 @@ async fn guardar_como_confirmar(layout: &mut PanelLayout, estado: &mut EstadoApp
 /// Cualquier otro disparador de guardado del archivo activo (p. ej. el
 /// guardado automático, BACKLOG.md P2 #4) debería pasar por acá en vez
 /// de llamar a `Editor::guardar` directo, para respetar la misma
-/// configuración. Un panel que NO es el activo no puede formatearse (la
-/// única sesión LSP es la del panel activo, ver `lsp.rs`): para esos,
-/// `Editor::guardar` directo es lo correcto. Falla igual que
+/// configuración. Un documento que NO es el activo no se formatea (el
+/// formateo aplica sus ediciones sobre el editor activo, y el aviso va a
+/// su barra de estado): para esos, `Editor::guardar` directo es lo
+/// correcto. Falla igual que
 /// `Editor::guardar` (buffer sin ruta, error de disco); formatear nunca
 /// hace fallar el guardado.
 async fn guardar_archivo_activo(layout: &mut PanelLayout, estado: &mut EstadoApp) -> Result<()> {
@@ -2060,6 +2177,11 @@ async fn guardar_archivo_activo(layout: &mut PanelLayout, estado: &mut EstadoApp
 /// absolutamente nada — ni siquiera sincroniza con el LSP —, así que
 /// guardar se comporta exactamente igual que antes de esta pieza.
 ///
+/// Prioridad: si el lenguaje tiene un formateador EXTERNO configurado
+/// (`lenguajes.formateador`, `e` en el panel) se usa ese y el LSP no se
+/// consulta (ver `formateador`); si no, el LSP. Ambos caminos terminan
+/// igual: ediciones mínimas en un solo paso de deshacer, o un aviso.
+///
 /// Nunca bloquea el guardado: si no hay LSP, todavía está iniciando, no
 /// soporta formatear, devuelve error o no responde a tiempo
 /// (`EstadoLsp::pedir_formateo`, ~2 s como mucho), simplemente no se
@@ -2067,6 +2189,16 @@ async fn guardar_archivo_activo(layout: &mut PanelLayout, estado: &mut EstadoApp
 async fn formatear_antes_de_guardar(layout: &mut PanelLayout, estado: &mut EstadoApp) {
     let Some(lenguaje) = Lenguaje::detectar_por_extension(&layout.panel_activo().ruta_mostrada) else { return };
     if !estado.config.lenguajes.formatear_al_guardar(lenguaje.id()) {
+        return;
+    }
+    // Un formateador externo configurado para el lenguaje tiene
+    // prioridad sobre el LSP (ver `formateador`): se usa ese y el
+    // servidor ni se consulta.
+    if let Some(comando) = estado.config.lenguajes.formateador_configurado(lenguaje.id()).cloned() {
+        let archivo = PathBuf::from(&layout.panel_activo().ruta_mostrada);
+        if let Some(mensaje) = formateador::formatear_editor(layout.editor_activo_mut(), &archivo, &comando).await {
+            layout.panel_activo_mut().mensaje_estado = Some(mensaje);
+        }
         return;
     }
 
@@ -2194,6 +2326,54 @@ fn recargar_config_tema_y_keymap(estado: &mut EstadoApp, resolvedor: &mut Resolv
     }
 }
 
+/// "Proyecto: Confiar en este proyecto" / "Proyecto: Revocar confianza"
+/// (paleta de comandos): agrega o quita la `.tcode/config.toml` activa
+/// de la lista de confianza de la GLOBAL (`tcode_config::
+/// ConfigConfianza`), identificada por la raíz del proyecto y el hash del
+/// contenido TAL COMO SE LEYÓ — no se relee el archivo acá, así se
+/// confía exactamente en lo que ya está cargado (y mostrado en el panel);
+/// si cambió en disco desde entonces, el próximo `config.recargar` no lo
+/// va a encontrar confiable. Lo único que se escribe a la global es la
+/// lista de confianza (`guardar_config_global`). Devuelve el aviso para
+/// la barra de estado.
+fn alternar_confianza_proyecto(estado: &mut EstadoApp, confiar: bool) -> String {
+    let Some(proyecto) = estado.capas_config.proyecto.as_ref() else {
+        return "No hay una .tcode/config.toml de proyecto activa".to_string();
+    };
+    if proyecto.error().is_some() {
+        return "La config de proyecto tiene errores: se ignora entera, no hay nada que confiar".to_string();
+    }
+    let (raiz, sha256) = (proyecto.raiz().to_string(), proyecto.sha256().to_string());
+    let comandos = proyecto.claves_comandos().join(", ");
+    if confiar {
+        estado.capas_config.global.confianza.confiar(&raiz, &sha256);
+    } else {
+        estado.capas_config.global.confianza.dejar_de_confiar(&raiz);
+    }
+    guardar_config_global(estado);
+    match (confiar, comandos.is_empty()) {
+        (true, true) => format!("Proyecto confiable: {raiz} (no define comandos)"),
+        (true, false) => format!("Proyecto confiable: {raiz} — se aplican {comandos}"),
+        (false, true) => format!("Proyecto ya no es confiable: {raiz}"),
+        (false, false) => format!("Proyecto ya no es confiable: {raiz} — se ignoran {comandos}"),
+    }
+}
+
+/// Aviso de arranque si la config de proyecto define claves que ejecutan
+/// comandos pero NO es confiable (así no se pierde en silencio que su
+/// `lsp_comando`/`formateador` no hace nada) — `None` si no hay nada que
+/// avisar.
+fn aviso_proyecto_no_confiable(capas: &CapasConfig) -> Option<String> {
+    let proyecto = capas.proyecto.as_ref()?;
+    if proyecto.claves_comandos().is_empty() || proyecto.es_confiable(&capas.global) {
+        return None;
+    }
+    Some(format!(
+        "Proyecto no confiable: se ignoran {} (paleta: \"Proyecto: Confiar en este proyecto\")",
+        proyecto.claves_comandos().join(", ")
+    ))
+}
+
 /// Aplica a `estado.paleta` el tema bajo la fila seleccionada del selector
 /// (`Ctrl+K Ctrl+T`) — el preview en vivo que se ve mientras se navega la
 /// lista con `↑`/`↓`, sin persistir nada todavía en `config.toml`. Si el
@@ -2299,9 +2479,9 @@ fn ejecutar_accion_temas_admin(estado: &mut EstadoApp) {
 /// administración (PLAN.md §5.3), una por cada lenguaje de `tcode_syntax::
 /// Lenguaje::TODOS`: qué LSP tiene configurado (si alguno), si ese
 /// binario está en el `PATH`, si está habilitado, y el estado en vivo de
-/// la sesión activa si es justo el lenguaje del archivo abierto ahora.
+/// la sesión de ese lenguaje (hay una por cada lenguaje con documentos
+/// abiertos, `lsp.rs`).
 fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
-    let lenguaje_activo = estado.lsp.lenguaje_activo();
     Lenguaje::TODOS
         .iter()
         .map(|&lenguaje| {
@@ -2320,11 +2500,7 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
                 }
                 None => (String::new(), false),
             };
-            let estado_texto = if lenguaje_activo == Some(lenguaje) {
-                estado.lsp.estado_texto().unwrap_or("Inactivo").to_string()
-            } else {
-                "Inactivo".to_string()
-            };
+            let estado_texto = estado.lsp.estado_texto(lenguaje).unwrap_or("Inactivo").to_string();
             FilaLenguajeLsp {
                 nombre: lenguaje.nombre_mostrado().to_string(),
                 comando,
@@ -2336,10 +2512,27 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
                     && !estado.config.lenguajes.lsp_habilitado(lenguaje.id()),
                 personalizado: estado.capas_config.global.lenguajes.comando_configurado(lenguaje.id()).is_some(),
                 formatear_al_guardar: estado.capas_config.global.lenguajes.formatear_al_guardar(lenguaje.id()),
+                formateador: texto_formateador(estado, lenguaje),
                 estado: estado_texto,
             }
         })
         .collect()
+}
+
+/// Texto de la columna "formateador externo" de "Lenguajes / LSP": el
+/// de la GLOBAL (lo que `e` edita), y si el efectivo es otro porque lo
+/// define un proyecto confiable, marcado como `[proyecto: ...]` — mismo
+/// criterio que `CapasPanel::valor_con_marca` en el resto del panel.
+fn texto_formateador(estado: &EstadoApp, lenguaje: Lenguaje) -> String {
+    let global = estado.capas_config.global.lenguajes.formateador_configurado(lenguaje.id());
+    let efectivo = estado.config.lenguajes.formateador_configurado(lenguaje.id());
+    let texto = global.map(ComandoLsp::como_linea).unwrap_or_default();
+    match efectivo {
+        Some(efectivo) if Some(efectivo) != global => {
+            format!("{texto}{}[proyecto: {}]", if texto.is_empty() { "" } else { " " }, efectivo.como_linea())
+        }
+        _ => texto,
+    }
 }
 
 /// Búsqueda simple del ejecutable `comando` en el `PATH` — suficiente
@@ -2425,10 +2618,44 @@ fn alternar_formatear_al_guardar_seleccionado(estado: &mut EstadoApp) {
 /// sin volver a escribir todo desde cero.
 fn iniciar_edicion_comando_lsp_seleccionado(estado: &mut EstadoApp) {
     let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
-    let valor_inicial = lsp::comando_efectivo(lenguaje, &estado.config)
+    // Desde la GLOBAL, no la efectiva: con un proyecto confiable que
+    // define su propio `lsp_comando`, precargar el efectivo haría que
+    // `Enter` lo copie a la config global de todos los proyectos.
+    let valor_inicial = lsp::comando_efectivo(lenguaje, &estado.capas_config.global)
         .map(|(comando, argumentos, env)| ComandoLsp { comando, argumentos, env }.como_linea())
         .unwrap_or_default();
     estado.panel_admin.iniciar_edicion_comando_lsp(valor_inicial);
+}
+
+/// `e` sobre una fila de "Lenguajes / LSP": empieza a editar el
+/// formateador externo de ese lenguaje (`lenguajes.formateador`, ver
+/// `formateador`), con la misma línea que el comando LSP (`VAR=valor --
+/// comando args...`) precargada con el de la GLOBAL si hay uno — el
+/// panel edita solo la global, igual que con `c`.
+fn iniciar_edicion_formateador_seleccionado(estado: &mut EstadoApp) {
+    let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
+    let valor_inicial = estado
+        .capas_config
+        .global
+        .lenguajes
+        .formateador_configurado(lenguaje.id())
+        .map(ComandoLsp::como_linea)
+        .unwrap_or_default();
+    estado.panel_admin.iniciar_edicion_formateador(valor_inicial);
+}
+
+/// `Enter` mientras se edita el formateador externo: lo guarda en la
+/// global — o lo QUITA si la línea quedó vacía (ver
+/// `ConfigLenguajes::fijar_formateador_desde_linea`).
+fn confirmar_edicion_formateador(estado: &mut EstadoApp) {
+    let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else {
+        estado.panel_admin.cancelar_edicion_comando_lsp();
+        return;
+    };
+    if let Some(linea) = estado.panel_admin.confirmar_edicion_comando_lsp() {
+        estado.capas_config.global.lenguajes.fijar_formateador_desde_linea(lenguaje.id(), &linea);
+        guardar_config_global(estado);
+    }
 }
 
 /// `Enter` mientras se edita el comando LSP de un lenguaje: guarda la
@@ -2586,6 +2813,31 @@ fn rangos_plegables_del_activo(layout: &PanelLayout, resaltador: &mut Resaltador
         .into_iter()
         .map(|r| Pliegue { inicio: r.inicio, fin: r.fin })
         .collect()
+}
+
+/// Símbolos del archivo activo para el selector de símbolos, y el byte
+/// del cursor principal (para arrancar posicionado en el símbolo que lo
+/// contiene). Un archivo sin lenguaje reconocido no tiene símbolos.
+fn esquema_del_activo(layout: &PanelLayout, resaltador: &mut Resaltador) -> (Vec<EntradaSimbolo>, usize) {
+    let panel = layout.panel_activo();
+    let buffer = panel.editor.buffer();
+    let cursor = panel.editor.cursor();
+    let byte_cursor = buffer.offset_byte(cursor.linea, cursor.columna);
+    let Some(lenguaje) = Lenguaje::detectar_por_extension(&panel.ruta_mostrada) else {
+        return (Vec::new(), byte_cursor);
+    };
+    let esquema = resaltador.esquema(&panel.ruta_mostrada, lenguaje, Some(buffer.revision()), || buffer.a_texto());
+    let simbolos = esquema
+        .into_iter()
+        .map(|s| EntradaSimbolo {
+            etiqueta: s.simbolo.etiqueta(),
+            profundidad: s.profundidad,
+            linea: buffer.linea_columna_desde_byte(s.inicio).0 + 1,
+            byte: s.inicio,
+            fin: s.fin,
+        })
+        .collect();
+    (simbolos, byte_cursor)
 }
 
 /// Mueve el cursor del editor activo a la coincidencia de búsqueda

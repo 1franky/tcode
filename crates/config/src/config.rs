@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::confianza::ConfigConfianza;
 use crate::tema::TEMA_POR_DEFECTO;
 
 /// Ajustes generales del editor, persistidos en `config.toml`. Corresponde
@@ -16,6 +17,11 @@ pub struct Config {
     pub editor: ConfigEditor,
     pub interfaz: ConfigInterfaz,
     pub lenguajes: ConfigLenguajes,
+    /// Proyectos cuya `.tcode/config.toml` puede fijar claves que
+    /// ejecutan comandos (ver `crate::confianza`). Solo tiene sentido en
+    /// la config GLOBAL: `proyecto` la descarta de cualquier config de
+    /// proyecto, así que un repo no puede declararse confiable solo.
+    pub confianza: ConfigConfianza,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -179,6 +185,26 @@ impl ComandoLsp {
     /// exactamente lo mismo que antes de esta pieza (comando + args,
     /// sin ningún `--` de más) — no cambia el comportamiento de nadie
     /// que no las use.
+    /// Parsea una línea con la sintaxis de [`ComandoLsp::como_linea`]
+    /// (ver `ConfigLenguajes::fijar_comando_desde_linea`, que la usa).
+    /// `None` si no queda ningún comando (línea vacía, o solo variables
+    /// de entorno sin comando después del `--`). La comparten el comando
+    /// LSP y el formateador externo de cada lenguaje.
+    pub fn desde_linea(linea: &str) -> Option<Self> {
+        let tokens: Vec<&str> = linea.split_whitespace().collect();
+        let separador = tokens.iter().position(|t| *t == "--");
+        let (tokens_env, tokens_comando): (&[&str], &[&str]) = match separador {
+            Some(idx) => (&tokens[..idx], &tokens[idx + 1..]),
+            None => (&[], &tokens[..]),
+        };
+
+        let mut resto = tokens_comando.iter();
+        let comando = resto.next()?.to_string();
+        let argumentos = resto.map(|s| s.to_string()).collect();
+        let env = tokens_env.iter().filter_map(|t| t.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        Some(Self { comando, argumentos, env })
+    }
+
     pub fn como_linea(&self) -> String {
         let mut partes: Vec<String> = self.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
         if !partes.is_empty() {
@@ -210,6 +236,16 @@ pub struct ConfigLenguajes {
     /// default es apagado para todos — reformatear el archivo de alguien
     /// sin que lo haya pedido sería un cambio de comportamiento sorpresa.
     pub formatear_al_guardar: Vec<String>,
+    /// Formateador EXTERNO por lenguaje (`rustfmt --emit stdout`,
+    /// `black -q -`, `prettier --stdin-filepath {archivo}`...): recibe el
+    /// texto por stdin y devuelve el formateado por stdout. Solo se usa
+    /// con "formatear al guardar" prendido para ese lenguaje, y en ese
+    /// caso TIENE PRIORIDAD sobre el LSP: si hay uno configurado se usa
+    /// ese y no se le pide nada al servidor (ver `formateador` en `app`).
+    /// En los argumentos, `{archivo}` se reemplaza por la ruta absoluta
+    /// del archivo. Mismo tipo que `lsp_comando` (comando + argumentos +
+    /// env): es exactamente lo mismo, un proceso a lanzar.
+    pub formateador: HashMap<String, ComandoLsp>,
 }
 
 impl ConfigLenguajes {
@@ -259,20 +295,35 @@ impl ConfigLenguajes {
     /// de entorno. `None` si no queda ningún comando para guardar (línea
     /// vacía, o solo variables de entorno sin comando después del `--`).
     pub fn fijar_comando_desde_linea(&mut self, id_lenguaje: &str, linea: &str) -> Option<()> {
-        let tokens: Vec<&str> = linea.split_whitespace().collect();
-        let separador = tokens.iter().position(|t| *t == "--");
-        let (tokens_env, tokens_comando): (&[&str], &[&str]) = match separador {
-            Some(idx) => (&tokens[..idx], &tokens[idx + 1..]),
-            None => (&[], &tokens[..]),
-        };
-
-        let mut resto = tokens_comando.iter();
-        let comando = resto.next()?.to_string();
-        let argumentos = resto.map(|s| s.to_string()).collect();
-        let env = tokens_env.iter().filter_map(|t| t.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect();
-
-        self.lsp_comando.insert(id_lenguaje.to_string(), ComandoLsp { comando, argumentos, env });
+        let comando = ComandoLsp::desde_linea(linea)?;
+        self.lsp_comando.insert(id_lenguaje.to_string(), comando);
         Some(())
+    }
+
+    /// Formateador externo configurado para `id_lenguaje`, si alguno (ver
+    /// doc del campo `formateador`).
+    pub fn formateador_configurado(&self, id_lenguaje: &str) -> Option<&ComandoLsp> {
+        self.formateador.get(id_lenguaje)
+    }
+
+    /// Guarda (o reemplaza) el formateador externo de `id_lenguaje` desde
+    /// una línea con la misma sintaxis que el comando LSP (`VAR=valor --
+    /// comando args...`, ver [`ComandoLsp::desde_linea`]). Una línea sin
+    /// comando QUITA el formateador (a diferencia del comando LSP, que no
+    /// tiene un "por defecto" al que volver con una línea vacía, acá
+    /// vaciar la línea es la forma natural de decir "ninguno"). Devuelve
+    /// si quedó alguno configurado.
+    pub fn fijar_formateador_desde_linea(&mut self, id_lenguaje: &str, linea: &str) -> bool {
+        match ComandoLsp::desde_linea(linea) {
+            Some(comando) => {
+                self.formateador.insert(id_lenguaje.to_string(), comando);
+                true
+            }
+            None => {
+                self.formateador.remove(id_lenguaje);
+                false
+            }
+        }
     }
 
     /// Quita el comando personalizado de `id_lenguaje` — vuelve a usar
@@ -395,6 +446,13 @@ mod tests {
                     },
                 )]),
                 formatear_al_guardar: vec!["rust".to_string()],
+                formateador: HashMap::from([(
+                    "python".to_string(),
+                    ComandoLsp { comando: "black".to_string(), argumentos: vec!["-q".to_string(), "-".to_string()], ..Default::default() },
+                )]),
+            },
+            confianza: ConfigConfianza {
+                proyectos: vec![crate::confianza::ProyectoConfiable { ruta: "/p".to_string(), sha256: "abc".to_string() }],
             },
         };
         let texto = toml::to_string_pretty(&original).unwrap();
@@ -556,6 +614,27 @@ mod tests {
         let mut lenguajes = ConfigLenguajes::default();
         assert!(lenguajes.fijar_comando_desde_linea("rust", "   ").is_none());
         assert!(lenguajes.comando_configurado("rust").is_none());
+    }
+
+    #[test]
+    fn fijar_formateador_desde_linea_guarda_y_una_linea_vacia_lo_quita() {
+        let mut lenguajes = ConfigLenguajes::default();
+        assert!(lenguajes.fijar_formateador_desde_linea("python", "PYTHONUTF8=1 -- black -q -"));
+        let formateador = lenguajes.formateador_configurado("python").unwrap();
+        assert_eq!(formateador.comando, "black");
+        assert_eq!(formateador.argumentos, vec!["-q", "-"]);
+        assert_eq!(formateador.env.get("PYTHONUTF8"), Some(&"1".to_string()));
+        assert!(lenguajes.formateador_configurado("rust").is_none());
+
+        assert!(!lenguajes.fijar_formateador_desde_linea("python", "  "));
+        assert!(lenguajes.formateador_configurado("python").is_none());
+    }
+
+    #[test]
+    fn config_vieja_sin_formateador_ni_confianza_sigue_parseando() {
+        let config: Config = toml::from_str("[lenguajes]\nformatear_al_guardar = [\"rust\"]\n").unwrap();
+        assert!(config.lenguajes.formateador.is_empty());
+        assert!(config.confianza.proyectos.is_empty());
     }
 
     #[test]

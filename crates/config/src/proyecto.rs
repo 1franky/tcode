@@ -15,6 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::confianza::sha256_hex;
 use crate::config::{ruta_config, Config};
 
 /// Nombre de la carpeta de proyecto (PLAN.md §12 decisión abierta #4:
@@ -22,18 +23,22 @@ use crate::config::{ruta_config, Config};
 const CARPETA_PROYECTO: &str = ".tcode";
 const ARCHIVO_PROYECTO: &str = "config.toml";
 
-/// Claves (`sección.clave`) que una config de PROYECTO no puede fijar:
-/// las que terminan ejecutando un comando arbitrario. Abrir un repo
-/// clonado de un tercero no debería lanzar un binario que ese tercero
-/// eligió (un `lsp_comando` apuntando a `./instalar.sh`, o sus `env`
-/// con un `LD_PRELOAD`/`PATH` propio) — la opción conservadora es
-/// ignorarlas acá, sin ningún mecanismo de "confiar en este proyecto"
-/// (que habría que persistir, mostrar y poder revocar: bastante más
-/// alcance del que justifica esta pieza). Se avisa en la cabecera del
-/// panel de administración cuáles se ignoraron. Si en el futuro se
-/// agrega otra clave que lance procesos (un formateador externo por
-/// lenguaje, por ejemplo), va en esta lista.
-const CLAVES_SOLO_GLOBALES: &[(&str, &str)] = &[("lenguajes", "lsp_comando")];
+/// Claves (`sección.clave`) que terminan ejecutando un comando
+/// arbitrario: abrir un repo clonado de un tercero no debería lanzar un
+/// binario que ese tercero eligió (un `lsp_comando` apuntando a
+/// `./instalar.sh`, sus `env` con un `LD_PRELOAD`/`PATH` propio, o un
+/// `formateador` que corre al guardar). Una config de proyecto solo las
+/// aplica si el usuario marcó el proyecto como CONFIABLE (paleta:
+/// "Proyecto: Confiar en este proyecto", ver `crate::confianza`) y el
+/// archivo no cambió desde entonces; si no, se ignoran y la cabecera del
+/// panel de administración lo avisa. Cualquier clave nueva que lance
+/// procesos va en esta lista.
+const CLAVES_QUE_EJECUTAN_COMANDOS: &[(&str, &str)] = &[("lenguajes", "lsp_comando"), ("lenguajes", "formateador")];
+
+/// Secciones que una config de proyecto NUNCA puede fijar, ni siquiera
+/// siendo confiable: la propia lista de confianza (si un repo pudiera
+/// escribirla, se declararía confiable solo).
+const SECCIONES_SOLO_GLOBALES: &[&str] = &["confianza"];
 
 /// Una `.tcode/config.toml` encontrada al arrancar (o en
 /// `config.recargar`), ya parseada y saneada. Nunca hace fallar el
@@ -43,9 +48,22 @@ const CLAVES_SOLO_GLOBALES: &[(&str, &str)] = &[("lenguajes", "lsp_comando")];
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigProyecto {
     ruta: PathBuf,
+    /// Raíz del proyecto (la carpeta que contiene `.tcode/`), canónica si
+    /// se pudo — con `sha256` es lo que identifica al proyecto en la
+    /// lista de confianza de la global.
+    raiz: String,
+    /// SHA-256 del contenido del archivo tal como se leyó (ver
+    /// `crate::confianza`).
+    sha256: String,
+    /// Todo lo aplicable SIN confianza (sin las claves de comando ni las
+    /// secciones solo globales).
     tabla: toml::Table,
+    /// Solo las claves de comando, con la misma forma anidada que en el
+    /// archivo — se mezclan encima de `tabla` si el proyecto es confiable.
+    tabla_comandos: toml::Table,
     error: Option<String>,
-    claves_ignoradas: Vec<String>,
+    claves_comandos: Vec<String>,
+    claves_solo_globales: Vec<String>,
     claves_pisadas: Vec<String>,
     claves_desconocidas: Vec<String>,
 }
@@ -56,44 +74,66 @@ impl ConfigProyecto {
     pub fn cargar(ruta: &Path) -> Self {
         match std::fs::read_to_string(ruta) {
             Ok(texto) => Self::desde_texto(ruta, &texto),
-            Err(e) => Self::con_error(ruta, format!("no se pudo leer: {e}")),
+            Err(e) => Self::con_error(ruta, &[], format!("no se pudo leer: {e}")),
         }
     }
 
     /// Igual que [`ConfigProyecto::cargar`] pero con el contenido ya en
-    /// memoria (lo usan los tests; `ruta` solo se guarda para mostrarla).
+    /// memoria (lo usan los tests; `ruta` solo se guarda para mostrarla y
+    /// para identificar al proyecto en la lista de confianza).
     pub fn desde_texto(ruta: &Path, texto: &str) -> Self {
         let mut tabla: toml::Table = match toml::from_str(texto) {
             Ok(tabla) => tabla,
             // `message()` de toml puede traer varias líneas ("invalid table
             // header\nexpected ..."): se aplana para la cabecera del panel.
-            Err(e) => return Self::con_error(ruta, format!("TOML inválido: {}", e.message().replace('\n', " — "))),
+            Err(e) => {
+                let motivo = format!("TOML inválido: {}", e.message().replace('\n', " — "));
+                return Self::con_error(ruta, texto.as_bytes(), motivo);
+            }
         };
 
-        let mut claves_ignoradas = Vec::new();
-        for (seccion, clave) in CLAVES_SOLO_GLOBALES {
-            if let Some(toml::Value::Table(t)) = tabla.get_mut(*seccion) {
-                if t.remove(*clave).is_some() {
-                    claves_ignoradas.push(format!("{seccion}.{clave}"));
-                }
+        let mut claves_solo_globales = Vec::new();
+        for seccion in SECCIONES_SOLO_GLOBALES {
+            if tabla.remove(*seccion).is_some() {
+                claves_solo_globales.push(seccion.to_string());
             }
         }
 
         // Validar los TIPOS ya al cargar (no solo la sintaxis), mezclando
-        // sobre los valores por defecto: si esto falla, fallaría igual
-        // sobre cualquier global (la mezcla deja en cada clave el valor
-        // del proyecto, con su tipo), así que es el momento de avisar y
-        // descartar el proyecto entero en vez de fallar más adelante.
+        // sobre los valores por defecto — CON las claves de comando, así
+        // un proyecto no confiable con un `lsp_comando` mal escrito no
+        // "se vuelve inválido" recién al confiar en él: si esto falla,
+        // fallaría igual sobre cualquier global (la mezcla deja en cada
+        // clave el valor del proyecto, con su tipo), así que es el
+        // momento de avisar y descartar el proyecto entero.
         let efectiva_por_defecto = match mezclar_sobre(&Config::default(), &tabla) {
             Ok(config) => config,
-            Err(e) => return Self::con_error(ruta, format!("valor inválido: {}", e.message())),
+            Err(e) => return Self::con_error(ruta, texto.as_bytes(), format!("valor inválido: {}", e.message())),
         };
+
+        let mut tabla_comandos = toml::Table::new();
+        let mut claves_comandos = Vec::new();
+        for (seccion, clave) in CLAVES_QUE_EJECUTAN_COMANDOS {
+            if let Some(toml::Value::Table(t)) = tabla.get_mut(*seccion) {
+                if let Some(valor) = t.remove(*clave) {
+                    claves_comandos.push(format!("{seccion}.{clave}"));
+                    let destino = tabla_comandos
+                        .entry(seccion.to_string())
+                        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+                    if let toml::Value::Table(destino) = destino {
+                        destino.insert(clave.to_string(), valor);
+                    }
+                }
+            }
+        }
 
         // Claves "pisadas" = hojas del TOML del proyecto que sobreviven a
         // un ida y vuelta por `Config`; las que no sobreviven son claves
         // que `Config` no conoce (un typo, o algo de otra versión de
         // tcode) — serde las ignora sin error, pero vale la pena
         // avisarlas en el panel en vez de que no hagan nada en silencio.
+        // Las de comando no cuentan acá: se listan aparte, porque que se
+        // apliquen depende de la confianza.
         let conocidas = toml::Table::try_from(&efectiva_por_defecto).unwrap_or_default();
         let mut claves_pisadas = Vec::new();
         let mut claves_desconocidas = Vec::new();
@@ -105,15 +145,30 @@ impl ConfigProyecto {
             }
         }
 
-        Self { ruta: ruta.to_path_buf(), tabla, error: None, claves_ignoradas, claves_pisadas, claves_desconocidas }
-    }
-
-    fn con_error(ruta: &Path, error: String) -> Self {
         Self {
             ruta: ruta.to_path_buf(),
+            raiz: raiz_canonica(ruta),
+            sha256: sha256_hex(texto.as_bytes()),
+            tabla,
+            tabla_comandos,
+            error: None,
+            claves_comandos,
+            claves_solo_globales,
+            claves_pisadas,
+            claves_desconocidas,
+        }
+    }
+
+    fn con_error(ruta: &Path, contenido: &[u8], error: String) -> Self {
+        Self {
+            ruta: ruta.to_path_buf(),
+            raiz: raiz_canonica(ruta),
+            sha256: sha256_hex(contenido),
             tabla: toml::Table::new(),
+            tabla_comandos: toml::Table::new(),
             error: Some(error),
-            claves_ignoradas: Vec::new(),
+            claves_comandos: Vec::new(),
+            claves_solo_globales: Vec::new(),
             claves_pisadas: Vec::new(),
             claves_desconocidas: Vec::new(),
         }
@@ -123,19 +178,43 @@ impl ConfigProyecto {
         &self.ruta
     }
 
+    /// Ruta canónica de la raíz del proyecto (ver doc del campo).
+    pub fn raiz(&self) -> &str {
+        &self.raiz
+    }
+
+    /// SHA-256 del contenido leído (ver `crate::confianza`).
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
     /// Motivo por el que la config de proyecto se descartó entera (TOML
     /// inválido, tipo equivocado, no se pudo leer), si alguno.
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
 
-    /// Claves que el proyecto intentó fijar pero se ignoraron por
-    /// seguridad (ver `CLAVES_SOLO_GLOBALES`), como `"sección.clave"`.
-    pub fn claves_ignoradas(&self) -> &[String] {
-        &self.claves_ignoradas
+    /// Si `global` confía en ESTE proyecto con ESTE contenido (ver
+    /// `crate::confianza`).
+    pub fn es_confiable(&self, global: &Config) -> bool {
+        global.confianza.confia_en(&self.raiz, &self.sha256)
     }
 
-    /// Claves (`"sección.clave"`) que el proyecto efectivamente pisa.
+    /// Claves que ejecutan comandos (`"sección.clave"`, ver
+    /// `CLAVES_QUE_EJECUTAN_COMANDOS`) que el proyecto define — se aplican
+    /// solo si es confiable ([`ConfigProyecto::es_confiable`]).
+    pub fn claves_comandos(&self) -> &[String] {
+        &self.claves_comandos
+    }
+
+    /// Claves que el proyecto define pero se ignoran SIEMPRE, confiable o
+    /// no (ver `SECCIONES_SOLO_GLOBALES`).
+    pub fn claves_solo_globales(&self) -> &[String] {
+        &self.claves_solo_globales
+    }
+
+    /// Claves (`"sección.clave"`) que el proyecto efectivamente pisa, sin
+    /// contar las de comando (ver [`ConfigProyecto::claves_comandos`]).
     pub fn claves_pisadas(&self) -> &[String] {
         &self.claves_pisadas
     }
@@ -154,16 +233,25 @@ impl ConfigProyecto {
     /// Config efectiva: `global` con este proyecto mezclado encima. Nunca
     /// modifica `global` (que es lo único que se guarda a disco). Si la
     /// mezcla fallara igual (no debería: los tipos ya se validaron al
-    /// cargar), se queda con la global tal cual.
+    /// cargar), se queda con la global tal cual. Las claves que ejecutan
+    /// comandos se mezclan solo si `global` confía en este proyecto; la
+    /// lista de confianza (`confianza`) es siempre la de `global`.
     ///
     /// Excepción a "el proyecto reemplaza los arrays": `lenguajes.
     /// lsp_deshabilitado` se UNE con el de la global — un proyecto puede
     /// apagar el LSP de un lenguaje, pero no volver a prender uno que el
     /// usuario apagó a propósito en su config global (misma idea que
-    /// `CLAVES_SOLO_GLOBALES`: un repo ajeno no debería poder hacer que
-    /// se lance un proceso que el usuario decidió no lanzar).
+    /// `CLAVES_QUE_EJECUTAN_COMANDOS`: un repo ajeno no debería poder
+    /// hacer que se lance un proceso que el usuario decidió no lanzar).
     pub fn aplicar_sobre(&self, global: &Config) -> Config {
-        let mut efectiva = mezclar_sobre(global, &self.tabla).unwrap_or_else(|_| global.clone());
+        let mezcla = if self.es_confiable(global) && !self.tabla_comandos.is_empty() {
+            let mut tabla = self.tabla.clone();
+            mezclar_toml(&mut tabla, &self.tabla_comandos);
+            mezclar_sobre(global, &tabla)
+        } else {
+            mezclar_sobre(global, &self.tabla)
+        };
+        let mut efectiva = mezcla.unwrap_or_else(|_| global.clone());
         for id in &global.lenguajes.lsp_deshabilitado {
             if !efectiva.lenguajes.lsp_deshabilitado.contains(id) {
                 efectiva.lenguajes.lsp_deshabilitado.push(id.clone());
@@ -171,6 +259,14 @@ impl ConfigProyecto {
         }
         efectiva
     }
+}
+
+/// Raíz del proyecto de una `.../<raiz>/.tcode/config.toml`: dos niveles
+/// arriba del archivo, canonicalizada si existe (así un symlink o un
+/// `..` en el camino no generan dos identidades para el mismo proyecto).
+fn raiz_canonica(ruta_archivo: &Path) -> String {
+    let raiz = ruta_archivo.parent().and_then(Path::parent).unwrap_or(ruta_archivo);
+    std::fs::canonicalize(raiz).unwrap_or_else(|_| raiz.to_path_buf()).to_string_lossy().into_owned()
 }
 
 /// Mezcla `encima` sobre `base`, clave por clave: si ambos lados tienen
@@ -211,7 +307,7 @@ fn hojas(tabla: &toml::Table, prefijo: &str) -> Vec<String> {
         let ruta = if prefijo.is_empty() { clave.clone() } else { format!("{prefijo}.{clave}") };
         match valor {
             // Una tabla vacía (p. ej. `[lenguajes]` después de quitarle
-            // `lsp_comando` por seguridad) no pisa nada.
+            // `lsp_comando`, que se lista aparte) no pisa nada.
             toml::Value::Table(sub) => resultado.extend(hojas(sub, &ruta)),
             _ => resultado.push(ruta),
         }
@@ -379,7 +475,8 @@ mod tests {
              [lenguajes.lsp_comando.rust]\ncomando = \"otro\"\nenv = { LD_PRELOAD = \"x.so\" }\n",
         );
         assert!(p.error().is_none());
-        assert_eq!(p.claves_ignoradas(), ["lenguajes.lsp_comando"]);
+        assert!(!p.es_confiable(&global));
+        assert_eq!(p.claves_comandos(), ["lenguajes.lsp_comando"]);
         assert!(p.claves_pisadas().is_empty(), "la tabla vacía que queda no cuenta como pisada");
         let efectiva = p.aplicar_sobre(&global);
         assert!(efectiva.lenguajes.comando_configurado("python").is_none());
@@ -387,6 +484,87 @@ mod tests {
             efectiva.lenguajes.comando_configurado("rust"),
             Some(&ComandoLsp { comando: "rust-analyzer".to_string(), ..Default::default() })
         );
+    }
+
+    const PROYECTO_CON_COMANDOS: &str = "[editor]\nnumeros_de_linea = false\n\
+         [lenguajes.lsp_comando.python]\ncomando = \"pylsp\"\nenv = { PYTHONPATH = \"src\" }\n\
+         [lenguajes.formateador.python]\ncomando = \"black\"\nargumentos = [\"-q\", \"-\"]\n";
+
+    #[test]
+    fn proyecto_no_confiable_ignora_lsp_comando_y_formateador_pero_aplica_lo_demas() {
+        let p = proyecto(PROYECTO_CON_COMANDOS);
+        assert_eq!(p.claves_comandos(), ["lenguajes.lsp_comando", "lenguajes.formateador"]);
+        let efectiva = p.aplicar_sobre(&Config::default());
+        assert!(!efectiva.editor.numeros_de_linea);
+        assert!(efectiva.lenguajes.comando_configurado("python").is_none());
+        assert!(efectiva.lenguajes.formateador_configurado("python").is_none());
+    }
+
+    #[test]
+    fn proyecto_confiable_aplica_los_comandos_y_sus_env() {
+        let p = proyecto(PROYECTO_CON_COMANDOS);
+        let mut global = Config::default();
+        global.confianza.confiar(p.raiz(), p.sha256());
+        assert!(p.es_confiable(&global));
+
+        let efectiva = p.aplicar_sobre(&global);
+        assert!(!efectiva.editor.numeros_de_linea);
+        let lsp = efectiva.lenguajes.comando_configurado("python").unwrap();
+        assert_eq!(lsp.comando, "pylsp");
+        assert_eq!(lsp.env.get("PYTHONPATH"), Some(&"src".to_string()));
+        assert_eq!(efectiva.lenguajes.formateador_configurado("python").unwrap().argumentos, ["-q", "-"]);
+        // La global sigue sin tener nada de esto.
+        assert!(global.lenguajes.comando_configurado("python").is_none());
+    }
+
+    #[test]
+    fn si_el_archivo_cambia_se_pierde_la_confianza() {
+        let original = proyecto(PROYECTO_CON_COMANDOS);
+        let mut global = Config::default();
+        global.confianza.confiar(original.raiz(), original.sha256());
+
+        // Mismo proyecto (misma ruta), un byte distinto: por ejemplo un
+        // `git pull` que cambió el comando.
+        let cambiado = proyecto(&PROYECTO_CON_COMANDOS.replace("pylsp", "./malicioso.sh"));
+        assert_eq!(cambiado.raiz(), original.raiz());
+        assert_ne!(cambiado.sha256(), original.sha256());
+        assert!(!cambiado.es_confiable(&global));
+        assert!(cambiado.aplicar_sobre(&global).lenguajes.comando_configurado("python").is_none());
+    }
+
+    #[test]
+    fn la_confianza_es_por_ruta_de_proyecto() {
+        let p = proyecto(PROYECTO_CON_COMANDOS);
+        let mut global = Config::default();
+        global.confianza.confiar(p.raiz(), p.sha256());
+        // Mismo contenido exacto en OTRO proyecto: no hereda la confianza.
+        let otro = ConfigProyecto::desde_texto(Path::new("/otro/.tcode/config.toml"), PROYECTO_CON_COMANDOS);
+        assert_eq!(otro.sha256(), p.sha256());
+        assert!(!otro.es_confiable(&global));
+    }
+
+    #[test]
+    fn un_proyecto_no_puede_declararse_confiable_a_si_mismo() {
+        // Intenta escribir la lista de confianza con su propia ruta y hash
+        // (que podría calcular de antemano): la sección se descarta siempre.
+        let texto = "[[confianza.proyectos]]\nruta = \"/p\"\nsha256 = \"x\"\n\
+                     [lenguajes.lsp_comando.python]\ncomando = \"./malicioso.sh\"\n";
+        let p = proyecto(texto);
+        assert_eq!(p.claves_solo_globales(), ["confianza"]);
+        let efectiva = p.aplicar_sobre(&Config::default());
+        assert!(efectiva.confianza.proyectos.is_empty());
+        assert!(efectiva.lenguajes.comando_configurado("python").is_none());
+    }
+
+    #[test]
+    fn la_raiz_del_proyecto_es_la_carpeta_que_contiene_tcode() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".tcode")).unwrap();
+        let ruta = dir.path().join(".tcode/config.toml");
+        std::fs::write(&ruta, "").unwrap();
+        let p = ConfigProyecto::cargar(&ruta);
+        let esperada = std::fs::canonicalize(dir.path()).unwrap();
+        assert_eq!(p.raiz(), esperada.to_string_lossy());
     }
 
     #[test]

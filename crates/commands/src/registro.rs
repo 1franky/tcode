@@ -42,6 +42,14 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "explorador.nueva_carpeta", descripcion: "Explorador: Nueva carpeta" },
         Comando { id: "explorador.renombrar", descripcion: "Explorador: Renombrar selección" },
         Comando { id: "config.recargar", descripcion: "Configuración: Recargar" },
+        Comando {
+            id: "proyecto.confiar",
+            descripcion: "Proyecto: Confiar en este proyecto (aplicar sus comandos LSP y formateadores)",
+        },
+        Comando {
+            id: "proyecto.dejar_de_confiar",
+            descripcion: "Proyecto: Revocar confianza (volver a ignorar sus comandos)",
+        },
         Comando { id: "tema.seleccionar", descripcion: "Tema: Seleccionar (con preview en vivo)" },
         Comando { id: "tema.editor_visual", descripcion: "Tema: Editor visual (colores por código hex)" },
         Comando { id: "admin.abrir_panel", descripcion: "Panel de administración: Abrir" },
@@ -69,6 +77,7 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "plegar.actual", descripcion: "Plegado: Plegar el bloque del cursor" },
         Comando { id: "plegar.desplegar", descripcion: "Plegado: Desplegar el bloque del cursor" },
         Comando { id: "plegar.todo", descripcion: "Plegado: Plegar todo" },
+        Comando { id: "simbolos.ir_a", descripcion: "Ir: Símbolo del archivo (funciones, clases...)" },
         Comando { id: "plegar.desplegar_todo", descripcion: "Plegado: Desplegar todo" },
     ]
 }

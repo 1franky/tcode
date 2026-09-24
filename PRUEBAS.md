@@ -496,28 +496,46 @@ que se guardó.
 
 Apagado por defecto — no cambia el comportamiento de nadie que no lo
 prenda a propósito (panel de administración, sección "Editor", o a mano
-en `config.toml`). Alcance deliberadamente acotado para esta primera
-entrega (decisión explícita del usuario, ver PR): sin operadores
-combinables con movimientos (`dw`, `d$`), sin conteos numéricos (`3dd`),
-sin `:`. El resto de atajos de tcode (flechas, `Ctrl+S`, `Ctrl+B`, splits,
-etc.) siguen funcionando igual estando en cualquiera de los dos modos —
-el modo VIM solo cambia qué significa un carácter suelto sin modificador.
+en `config.toml`). Desde esta entrega tiene gramática completa de
+operador + conteo + movimiento/objeto de texto, modo Visual y línea de
+comandos `:` (ver la tabla en MANUAL.md). El resto de atajos de tcode
+(flechas, `Ctrl+S`, `Ctrl+B`, splits, etc.) siguen funcionando igual en
+cualquier modo — el modo VIM solo cambia qué significa un carácter suelto
+sin modificador, y solo con el foco en el editor (no en el explorador ni
+en la vista de tabla CSV).
 
 - [ ] Con el modo apagado (por defecto): abrir cualquier archivo, escribir texto normal con `hjkl` incluidos — se insertan como letras comunes, nada cambió.
 - [ ] Prender "Modo VIM" en el panel de administración (sección Editor): la barra de estado del panel activo pasa a `NORMAL` de inmediato, sin tener que reabrir el archivo.
-- [ ] En modo Normal: `h`/`j`/`k`/`l` mueven el cursor como las flechas; `0`/`$` van al inicio/fin de línea; `gg`/`G` van al inicio/fin del archivo.
-- [ ] `i` entra a Insertar en la posición actual; `a` entra a Insertar una posición a la derecha (al final de una línea, escribe justo después del último carácter); `o` abre una línea nueva debajo y entra a Insertar ahí.
-- [ ] Escribir texto en Insertar funciona exactamente igual que siempre; `Esc` vuelve a Normal (no a "explorador.enfocar_editor" como con el modo apagado).
-- [ ] `x` borra el carácter bajo el cursor; en el ÚLTIMO carácter de una línea no vacía sigue borrando ESE carácter (no fusiona con la línea siguiente) — el cursor en modo Normal nunca queda "después" del último carácter, a diferencia de Insertar.
-- [ ] `dd` borra la línea completa bajo el cursor (con su salto de línea); `yy` la copia sin borrar nada; `p` la pega como una línea nueva justo debajo de la actual. Yanquear/borrar en un archivo y pegar en otro panel funciona (el registro es uno solo para toda la app).
-- [ ] `u` deshace el último cambio (comparte historial con `Ctrl+Z`, no es un mecanismo aparte).
-- [ ] Un comando de dos teclas a medias (`d`, `y` o `g` sueltos) seguido de una tecla que no coincide: no hace nada raro, simplemente cancela y esa segunda tecla no dispara ningún movimiento.
+- [ ] En modo Normal: `h`/`j`/`k`/`l` mueven el cursor (sin pasar de línea con `h`/`l`); `0`/`^`/`$` van al inicio / primer no blanco / fin de línea; `gg`/`G` al inicio/fin del archivo y `5G` a la línea 5.
+- [ ] Conteos: `3j`, `5x`, `3dd`, `2yy`, `4p` hacen lo mismo que repetir el comando esa cantidad de veces (y `3dd` se deshace con un solo `u`).
+- [ ] `w`/`b`/`e` saltan por palabras (la puntuación es su propia palabra; una línea vacía también cuenta); `W`/`B`/`E` por palabras separadas solo por blancos.
+- [ ] `f,`/`t,`/`F,`/`T,` buscan en la línea; `;` repite la búsqueda y `,` la repite hacia el otro lado. `%` salta al paréntesis/llave/corchete que corresponde; `{`/`}` saltan entre párrafos (líneas vacías).
+- [ ] Operadores combinables: `dw`, `d$`, `d3w`, `2dw`, `dt,`, `df,`, `dG`, `dgg`, `d}`, `cw`, `c$`, `y3j`, `>j`. `dw` en la última palabra de una línea no se come el salto de línea; `cw` sobre una palabra no se come el espacio de después (como `ce`).
+- [ ] Objetos de texto: `diw`/`daw`, `ci"`/`da"`, `di(`/`da(` (y `dib`), `di{`/`da{` — dentro de un bloque `{ ... }` multilínea, `di{` borra las líneas de adentro y deja las llaves en líneas propias.
+- [ ] `D`, `C`, `Y`, `cc`, `S`, `s`, `x`, `X`, `r{c}` (con conteo: `3rx`), `J` (con conteo: `3J`), `~`, `>>`/`<<` (con la indentación de la config: espacios o tab).
+- [ ] Inserción: `i`, `a`, `I`, `A`, `o`, `O` (estos dos copian la indentación de la línea actual). `Esc` vuelve a Normal con el cursor sobre el último carácter escrito.
+- [ ] Un cambio con inserción (`cw` + texto + `Esc`, `o` + texto + `Esc`, `ihola` + `Esc`) se deshace con un solo `u`.
+- [ ] `.` repite el último cambio (con su texto tipeado: `cwfoo<Esc>` y después `w.` cambia la siguiente palabra por `foo`); `3.` lo repite con otro conteo. Sin ningún cambio previo avisa "Nada para repetir".
+- [ ] Registro: `dd`/`yy`/`Vd` guardan líneas enteras (`p` pega debajo, `P` arriba); `dw`/`x`/`y$`/`vd` guardan caracteres (`p` pega después del cursor, `P` antes). Yanquear/borrar en un archivo y pegar en otra pestaña o panel funciona (el registro es uno solo para toda la app).
+- [ ] `v`: la barra de estado dice `VISUAL` y la selección se ve resaltada mientras se mueve el cursor (`hjkl`, `w`, `e`, `$`...); `iw`/`i(`/`a"` extienden la selección al objeto; `o` cambia de extremo; `d`/`x`, `y`, `c`/`s`, `>`/`<`, `J`, `~` operan sobre la selección; `Esc` sale sin hacer nada.
+- [ ] `V`: la barra dice `VISUAL LÍNEA`; `d`/`y`/`c`/`>`/`<` operan sobre las líneas enteras. `v` y `V` alternan entre sí; repetir la misma tecla sale de Visual.
+- [ ] `:` abre una línea al pie de la pantalla; `Esc` (o `Backspace` con la línea vacía) la cierra sin hacer nada; `↑`/`↓` recorren los comandos ya usados en la sesión.
+- [ ] `:w` guarda por el mismo camino que `Ctrl+S` (formatea al guardar si está prendido; sobre un "[Sin nombre]" abre "Guardar como").
+- [ ] `:q` sin cambios cierra la pestaña; si es la última pestaña del único panel, sale de tcode. Con cambios avisa "Cambios sin guardar: :q de nuevo para cerrar sin guardar" y no cierra; un segundo `:q` seguido cierra igual; `:q!` cierra sin preguntar. `:wq`/`:x` guardan y cierran. `:qa` sale (avisa si hay archivos modificados), `:qa!` sale igual.
+- [ ] `:42` va a la línea 42; `:e otro.txt` abre ese archivo (relativo al directorio donde se lanzó tcode) en una pestaña nueva, o activa la que ya lo tenía; con una ruta que no existe avisa y no abre nada.
+- [ ] `:s/a/b/` reemplaza la primera coincidencia en la línea del cursor, `:s/a/b/g` todas las de la línea, `:%s/a/b/g` en todo el archivo (con `i` sin distinguir mayúsculas); la barra de estado dice cuántos reemplazos hizo, y un `u` los deshace todos juntos. El patrón es un regex (sintaxis de Rust, la misma de `Ctrl+F` con regex).
+- [ ] Un comando a medio escribir (`d`, `2d`, `ci`...) se ve en la barra de estado; una tecla que no lo completa lo cancela sin hacer nada; `Esc` también.
+- [ ] Un panel nuevo por `Ctrl+\` arranca en Normal si el modo VIM está prendido.
+- [ ] Con el foco en el explorador, las letras no ejecutan comandos VIM sobre el editor de atrás.
 - [ ] Apagar "Modo VIM" desde el panel de administración: `i`/`Esc` siguen funcionando en el panel que ya estaba en Normal (queda ahí hasta salir de Insertar), pero un archivo nuevo que se abra después ya no entra en modo VIM.
 
-### Limitaciones conocidas de este alcance inicial
+### Limitaciones conocidas
 
-- Un panel nuevo por `Ctrl+\` (split) siempre arranca en Insertar aunque el modo VIM esté prendido — reabrir el archivo en ese panel (o el buscador de archivos/explorador) sí respeta la config.
-- Sin operadores combinables (`dw`, `d$`, `ciw`, etc.), sin conteos numéricos (`3dd`, `5j`), sin modo Visual, sin `:` (comandos de línea de comandos de VIM) — quedan para una próxima pieza si hace falta.
+- Sin registros con nombre (`"a`), marcas (`m`/`'`), macros (`q`), búsqueda con `/`/`?`/`n`/`*`, `Ctrl+R` como rehacer (sigue siendo el rehacer de tcode), `gJ`/`gu`/`gU`, ni `p` sobre una selección Visual.
+- `.` no repite operaciones hechas en modo Visual; un conteo delante de `i`/`a`/`o` (`3ihola`) no repite la inserción.
+- En `V` la selección resaltada va desde el borde de la línea del ancla hasta el cursor (no hasta el final de la línea del cursor), aunque la operación sí toma las líneas enteras.
+- Moverse con las flechas (no con `hjkl`) en Visual colapsa la selección resaltada hasta la próxima tecla VIM.
+- `:s` usa regex de Rust y reemplazo literal (sin `\1`/`&`); sin rangos `:{a},{b}s`. `:e` no crea archivos nuevos; `:w <ruta>` no está soportado (usar "Guardar como").
 
 ## ⚠️ Bug conocido en Windows — 5º intento (CRLF sin normalizar)
 
@@ -827,7 +845,103 @@ CSS, SQL, texto plano) muestra solo la ruta.
 - [ ] Apagar "Mostrar pestañas" y dejar los breadcrumbs: los breadcrumbs quedan en la primera fila del panel.
 - [ ] Modo zen (`Ctrl+K Z`): los breadcrumbs se ocultan junto con la statusbar y las pestañas; al salir del zen vuelven (sin tocar la config).
 
+## Un servidor LSP por lenguaje
+
+Con `pyright-langserver` y `rust-analyzer` instalados, un proyecto Cargo
+temporal (`cargo new /tmp/prueba_ra`) con un `.py` suelto adentro, y el
+comando de Rust configurado (`Ctrl+,` → Lenguajes / LSP → Rust → `c` →
+`rust-analyzer`). Contar procesos con
+`ps -ax -o pid,ppid,command | grep -E "pyright|rust-analyzer" | grep -v grep`.
+
+- [ ] Abrir `src/main.rs` y después el `.py` en otra pestaña (`Ctrl+P`): quedan corriendo los dos servidores a la vez (un `rust-analyzer` y un `pyright-langserver`/node).
+- [ ] Alternar pestañas varias veces (`Ctrl+PageDown`/`Ctrl+PageUp`): los PID no cambian (ningún servidor se reinicia) y "Lenguajes / LSP" muestra Python y Rust "Conectado" a la vez.
+- [ ] Un error en cada archivo (`x: int = "a"` en el `.py`, `let x: i32 = "a";` en el `.rs`): cada pestaña muestra el suyo en el gutter y en la statusbar, nunca el del otro.
+- [ ] Con el `.rs` visible, romper algo en el `.py` desde otro panel (`Ctrl+\`, abrir el `.py` ahí, editar) y volver: los diagnósticos de cada archivo siguen correctos; una pestaña de fondo ya tiene sus errores al volver a ella, sin esperar a que el servidor arranque.
+- [ ] Split con el `.py` en un panel y el `.rs` en el otro: alternar `Ctrl+1`/`Ctrl+2` no reinicia nada.
+- [ ] `Ctrl+K R` con el `.rs` activo muestra los logs de rust-analyzer; con el `.py` activo, los de pyright.
+- [ ] Formatear al guardar prendido para Rust (`f` en su fila): desordenar la indentación del `.rs` y `Ctrl+S` → "Formateado al guardar", aunque el servidor de Python también esté corriendo.
+- [ ] Cerrar (`Ctrl+W`) la única pestaña `.py`: su servidor termina (desaparece de `ps`) y el de Rust sigue igual. Volver a abrir el `.py`: arranca uno nuevo.
+- [ ] Cambiar el comando de Python (`c`, p. ej. agregarle una variable `A=1 -- pyright-langserver --stdio`): se relanza solo pyright; el PID de rust-analyzer no cambia.
+- [ ] Un comando inexistente para un lenguaje: su fila dice "Error", `Ctrl+K R` con ese archivo activo dice por qué, y los demás servidores siguen funcionando. `kill` a mano de un servidor: su fila pasa a "Error" y `tcode` no consume CPU ni lo relanza en bucle.
+- [ ] `Ctrl+Q` con los dos servidores corriendo: sale en menos de un segundo y `ps` no muestra ningún proceso huérfano.
+
+## Formateadores externos y "confiar en este proyecto"
+
+Formateador externo por lenguaje (stdin → stdout) con prioridad sobre el
+LSP en "formatear al guardar", y confianza por proyecto para las claves
+de `.tcode/config.toml` que ejecutan comandos. Probar con un `HOME`
+temporal (la config global vive en `$HOME/Library/Application Support/
+tcode/config.toml` en macOS, `~/.config/tcode/` en Linux).
+
+- [ ] `Ctrl+,` → Lenguajes / LSP → fila Rust: `f` (Formato: Sí), `e`, escribir `rustfmt --emit stdout --edition 2021`, `Enter`: la fila muestra `formateador: rustfmt ...` y `config.toml` queda con `[lenguajes.formateador.rust]`. El pie dice `e formateador externo`; mientras se edita, explica `{archivo}` y que una línea vacía lo quita.
+- [ ] Un `.rs` desprolijo (`fn main(){` / `let x=1;` / sin `\n` final), cursor sobre `let`, `Ctrl+S`: el archivo queda formateado en disco, la barra dice `Formateado al guardar (rustfmt)` y el cursor sigue sobre `let`. Un bloque plegado sigue plegado sobre el mismo código.
+- [ ] `Ctrl+Z` después de ese guardado: vuelve al texto sin formatear en UN paso.
+- [ ] Guardar un archivo ya formateado: no aparece ningún aviso ni un paso de deshacer vacío.
+- [ ] Formateador que falla (un script que escribe `error: ...` en stderr y sale con 3): el archivo se guarda sin formatear y la barra dice `Sin formatear: 'falla.sh' falló (código 3): error: ...`.
+- [ ] Formateador que tarda (`sleep 10`): a los ~3 s se guarda sin formatear con `Sin formatear: '...' no respondió en 3 s`; el proceso no queda colgado (`ps`).
+- [ ] Formateador inexistente (`e` → `no-existe`): `Sin formatear: no se pudo lanzar 'no-existe': ...`; se guarda igual.
+- [ ] Con "Formato: No" el formateador no corre (guardar no cambia nada). Sin formateador externo y con LSP que formatea, se sigue usando el LSP como antes.
+- [ ] `e` y `Enter` con la línea vacía: se quita el formateador (desaparece de la fila y de `config.toml`).
+- [ ] Proyecto con `.tcode/config.toml` que define `[lenguajes.formateador.rust]` (o `[lenguajes.lsp_comando.*]`), sin confiar: al arrancar la barra dice `Proyecto no confiable: se ignoran lenguajes.formateador (paleta: ...)`; la cabecera de `Ctrl+,` dice `IGNORADO por falta de confianza: ...`; `Ctrl+S` NO corre el formateador del proyecto (usa el de la global o el LSP).
+- [ ] Paleta → "Proyecto: Confiar en este proyecto": la barra dice `Proyecto confiable: <ruta> — se aplican ...`; la cabecera del panel dice `Proyecto CONFIABLE`; `Ctrl+S` corre el formateador del proyecto. La fila de Lenguajes muestra `[proyecto: ...]` junto al formateador.
+- [ ] La config global solo ganó `[[confianza.proyectos]]` con `ruta` y `sha256`: ningún comando del proyecto se copió a la global.
+- [ ] Editar el `.tcode/config.toml` del proyecto (agregar un comentario) y `Ctrl+K Ctrl+L` (o reabrir `tcode`): vuelve a `IGNORADO por falta de confianza` y `Ctrl+S` ya no corre el formateador del proyecto.
+- [ ] Paleta → "Proyecto: Revocar confianza": la entrada desaparece de `[confianza]` y los comandos del proyecto vuelven a ignorarse. Escribir "Proyecto: Confiar" en la paleta no elige por error el de revocar.
+- [ ] Un `.tcode/config.toml` con su propia sección `[[confianza.proyectos]]`: se ignora (cabecera: `Ignorado siempre (solo global): confianza`) y el proyecto sigue sin ser confiable.
+- [ ] Con un proyecto confiable que define `lsp_comando`, `c` en esa fila precarga el comando de la GLOBAL (no el del proyecto): `Enter` no copia el comando del proyecto a la global.
+
 ---
+
+## Refresco solo de la base de git (commit/checkout desde otra terminal)
+
+Los indicadores de git vuelven a leer `HEAD` solos cuando cambia: cada
+2 segundos se miran las fechas de `.git/HEAD`, de la rama actual, de
+`packed-refs` y del índice (unos `stat`, sin procesos), y también al
+recuperar el foco de la terminal. Repo de prueba como el de la sección
+anterior.
+
+- [ ] Agregar una línea (aparece `+`), guardar y, SIN volver a tcode, `git commit -am x` desde otra terminal: en 2-3 segundos el `+` desaparece solo.
+- [ ] `git commit --amend`, `git reset --hard HEAD~1` y `git checkout` a otra rama con el archivo distinto: las marcas se ponen al día solas cada vez.
+- [ ] En un worktree (`git worktree add ...`) abrir un archivo y commitear desde ese worktree: también se refresca.
+- [ ] Con tmux (`set -g focus-events on`) o una terminal con eventos de foco: commitear en otra ventana y volver: se refresca al instante.
+- [ ] Un archivo sin trackear del repo, `git add` + `git commit` desde afuera: aparece la columna de git (sin marcas).
+- [ ] Con un archivo fuera de cualquier repo abierto y nada más, en reposo: tcode no consume CPU (el bucle no se despierta; p. ej. `top` muestra 0%).
+- [ ] Dos pestañas del mismo repo; commitear con la pestaña oculta y después cambiar a ella: sus marcas se ponen al día al mostrarse.
+- [ ] Tipear de corrido en un archivo grande de un repo: se siente igual que antes (la revisión es a lo sumo cada 2 segundos).
+
+## Ir a un símbolo (`Ctrl+K .`, breadcrumbs navegables)
+
+Selector con el esquema (outline) del archivo actual, sobre el mismo
+árbol de tree-sitter que el resaltado y los breadcrumbs.
+
+- [ ] En un `.rs` con `struct`, `impl` con dos métodos y una `fn` suelta, con el cursor adentro del segundo método: `Ctrl+K .` abre "Ir a símbolo" con todos en orden, los métodos indentados bajo el `impl`, cada uno con `:línea`, y la selección en el segundo método.
+- [ ] Escribir `ins`: quedan solo los que coinciden (con las letras en negrita), en el orden del archivo; `Backspace` vuelve a mostrar más.
+- [ ] `Enter`: el cursor salta a la línea del símbolo y el breadcrumb lo muestra. `Esc` en otro intento: cierra sin mover el cursor.
+- [ ] Plegar todo (`Ctrl+K 0`) y saltar a un método de adentro del `impl` plegado: el `impl` se despliega y el cursor queda en el método.
+- [ ] Un `.py` con `class` + `def`s y una función suelta: mismo comportamiento; con el cursor fuera de todo, la selección arranca en el primero.
+- [ ] Un filtro que no coincide con nada: lista vacía, `Enter` no hace nada (cierra).
+- [ ] Un `.txt` o `.css`: la lista dice que el archivo no tiene símbolos.
+- [ ] Con el protocolo de Kitty, `Ctrl+Shift+O` hace lo mismo. En la paleta (`F1`), "Ir: Símbolo del archivo" también.
+- [ ] Con el foco en el explorador o en la vista de tabla de un CSV: no abre nada.
+- [ ] Pegar texto (bracketed paste) con el selector abierto: se escribe en el filtro, no en el archivo.
+
+## Pliegues recordados entre sesiones
+
+Los pliegues de cada archivo se guardan al cerrar la pestaña, el panel o
+tcode, y se restauran al reabrirlo si el archivo no cambió (huella del
+contenido). Archivo de estado: `pliegues.toml` en `~/.local/state/tcode/estado/`
+(Linux) o `~/Library/Application Support/tcode/estado/` (macOS). Probar
+con `HOME` apuntando a una carpeta temporal para no tocar el estado real.
+
+- [ ] Plegar dos funciones de un `.rs`, `Ctrl+Q`, volver a abrir el archivo: las dos siguen plegadas; el archivo de estado tiene una entrada `[[archivo]]` con su ruta absoluta, una `huella` y los rangos.
+- [ ] Plegar todo (`Ctrl+K 0`), cerrar la pestaña con `Ctrl+W` y reabrir con `Ctrl+P`: sale plegado igual. Lo mismo cerrando un panel dividido con `Ctrl+K F`.
+- [ ] Con pliegues guardados, agregar una línea al archivo desde otra terminal (`echo >> archivo` o `sed`) y reabrirlo: arranca todo desplegado.
+- [ ] Hacer `touch` al archivo (sin cambiar el contenido) y reabrir: los pliegues se restauran igual.
+- [ ] Desplegar todo (`Ctrl+K Ctrl+J`) y salir: al reabrir arranca desplegado y el archivo ya no figura en el estado.
+- [ ] Plegar, guardar, salir; reabrir, editar sin guardar, desplegar y salir descartando (`Ctrl+Q` dos veces): al reabrir vuelven los pliegues de la primera vez.
+- [ ] Abrir el mismo archivo con otra ruta (relativa vs. absoluta, o por un symlink): se reconoce como el mismo (ruta canónica).
+- [ ] Un `pliegues.toml` corrupto (texto cualquiera) o sin permiso de escritura: tcode abre y cierra normal, sin errores visibles (solo no recuerda nada).
+- [ ] Abrir un archivo sin nada guardado: abre igual de rápido que antes (no se calcula la huella si no hay entrada).
 
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
