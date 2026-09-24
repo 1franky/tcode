@@ -11,6 +11,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Búsqueda y reemplazo](#búsqueda-y-reemplazo)
 - [Plegado de bloques](#plegado-de-bloques)
 - [Paneles divididos (splits)](#paneles-divididos-splits)
+- [Pestañas de archivos abiertos](#pestañas-de-archivos-abiertos)
 - [Explorador de archivos](#explorador-de-archivos)
 - [Modo VIM opcional](#modo-vim-opcional)
 - [Paleta de comandos y buscador de archivos](#paleta-de-comandos-y-buscador-de-archivos)
@@ -33,10 +34,11 @@ tcode --version       # o -v — confirma qué versión quedó instalada
 `tcode` arranca directo en modo edición: no hay un modo "normal" separado
 como en Vim — se escribe y se navega con las flechas/`Home`/`End` desde el
 primer momento, con atajos estilo VSCode. `Ctrl+Q` sale — si hay cambios
-sin guardar, la primera vez no hace nada visible (queda pendiente de
-confirmación) y hace falta presionarlo una segunda vez seguida para
-confirmar y salir de verdad; cualquier otra tecla en el medio cancela esa
-confirmación pendiente.
+sin guardar en cualquier archivo abierto (también en pestañas o paneles
+que no se están viendo), la primera vez no sale: avisa en la barra de
+estado cuántos archivos tienen cambios, y hace falta presionarlo una
+segunda vez seguida para salir de verdad; cualquier otra tecla en el
+medio cancela esa confirmación pendiente.
 
 ## Atajos esenciales
 
@@ -46,6 +48,8 @@ confirmación pendiente.
 | `Ctrl+Shift+S` (o `Ctrl+K S`) | Guardar como... — elegir/cambiar la ruta del archivo |
 | `Ctrl+Z` / `Ctrl+Y` | Deshacer / Rehacer |
 | `Ctrl+Q` | Salir |
+| `Ctrl+PageDown` / `Ctrl+PageUp` | Pestaña siguiente / anterior (ver [Pestañas](#pestañas-de-archivos-abiertos)) |
+| `Ctrl+W` | Cerrar la pestaña activa |
 | `Tab` / `Shift+Tab` | Indentar / desindentar |
 | `Ctrl+B` | Mostrar/ocultar el explorador de archivos lateral |
 | `Ctrl+K J` | Salto rápido en el explorador (etiquetas de una tecla) |
@@ -145,11 +149,14 @@ suelto. Los cuatro comandos también están en la paleta (`Ctrl+Shift+P`,
 | `Ctrl+\` (o `Ctrl+K \`) | Dividir el panel activo verticalmente |
 | `Ctrl+K Ctrl+\` (o `Ctrl+K -`) | Dividir horizontalmente |
 | `Ctrl+1` / `Ctrl+2` / `Ctrl+3` (o `Ctrl+K 1`/`2`/`3`) | Saltar al panel 1/2/3 |
-| `Ctrl+K F` | Cerrar el panel activo |
+| `Ctrl+K F` | Cerrar el panel activo (con todas sus pestañas; si alguna tiene cambios sin guardar, pide repetirlo) |
 | `F11` (o `Ctrl+K G`) | Maximizar/restaurar el panel activo |
 
-Cada panel tiene su propio archivo abierto, cursor y estado de vista
-(tabla CSV, preview Markdown) — son independientes entre sí.
+Cada panel tiene sus propias pestañas (ver
+[Pestañas](#pestañas-de-archivos-abiertos)), y cada archivo abierto su
+propio cursor y estado de vista (tabla CSV, preview Markdown) — son
+independientes entre sí. Un panel recién dividido arranca con un
+"[Sin nombre]" vacío, que el primer archivo que se abra ahí reemplaza.
 
 **Maximizar** (`F11`, la "pantalla completa" de tcode) funciona como el
 zoom de tmux: el panel activo ocupa toda el área de edición y la barra de
@@ -163,8 +170,8 @@ terminal, no tcode.
 
 ### Modo zen (`Ctrl+K Z`)
 
-Oculta de un golpe todo lo que no es código — explorador y barra de
-estado — y otra vez `Ctrl+K Z` lo deja todo como estaba, incluido el foco
+Oculta de un golpe todo lo que no es código — explorador, barra de
+pestañas y barra de estado — y otra vez `Ctrl+K Z` lo deja todo como estaba, incluido el foco
 (si estabas en el explorador, volvés ahí). Es solo para la sesión: no
 cambia ninguna opción de la configuración ni se recuerda al volver a
 abrir tcode. La paleta, el buscador de archivos, la búsqueda y demás
@@ -172,6 +179,52 @@ ventanas flotantes funcionan igual en zen. Lo que necesita ver el
 explorador (`Ctrl+B`, `Ctrl+K J`, crear/renombrar) sale del zen primero.
 Se combina con maximizar: zen + `F11` deja solo el panel activo en toda
 la pantalla.
+
+## Pestañas de archivos abiertos
+
+Abrir un archivo (buscador `Ctrl+P`, explorador, salto rápido) lo agrega
+como pestaña nueva en el panel activo, justo a la derecha de la que se
+estaba viendo, en vez de reemplazarla. Si ese archivo ya estaba abierto
+en ese panel, solo se va a su pestaña (sin volver a leerlo de disco ni
+perder lo que tenga sin guardar). Cada pestaña conserva todo lo suyo al
+cambiar: cursor, scroll, deshacer/rehacer, pliegues, diagnósticos del
+LSP, marcas de git y vista Markdown/CSV.
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+PageDown` (o `Ctrl+K PageDown`) | Pestaña siguiente (de la última vuelve a la primera) |
+| `Ctrl+PageUp` (o `Ctrl+K PageUp`) | Pestaña anterior |
+| `Alt+1` ... `Alt+9` | Ir a la pestaña 1...9 del panel activo |
+| `Ctrl+W` | Cerrar la pestaña activa |
+
+La barra de pestañas va arriba del código de cada panel: el nombre del
+archivo (con la carpeta delante si hay dos con el mismo nombre en el
+panel, p. ej. `a/mod.rs` y `b/mod.rs`), un `*` si tiene cambios sin
+guardar, y la activa resaltada (en negrita en el panel con el foco). Si no
+entran todas, la barra se corre para que siempre se vea la activa, con
+`<`/`>` en los bordes indicando que hay más de ese lado. Se muestra
+también con una sola pestaña (así se ve qué archivo tiene cada panel);
+se puede ocultar en `Ctrl+,` → Interfaz → "Mostrar pestañas" — los
+atajos siguen andando igual sin la barra. El modo zen también la oculta.
+
+- **Cerrar con cambios sin guardar**: `Ctrl+W` no cierra, avisa en la
+  barra de estado; otro `Ctrl+W` seguido cierra descartando los cambios.
+  Cualquier otra tecla en el medio cancela.
+- **Cerrar la última pestaña de un panel**: si hay más paneles, se cierra
+  el panel; si es el único, queda un "[Sin nombre]" vacío.
+- Algunas terminales (GNOME Terminal, Windows Terminal) usan
+  `Ctrl+PageDown`/`Ctrl+PageUp` para sus propias pestañas y no se los
+  pasan a tcode: `Ctrl+K PageDown`/`Ctrl+K PageUp` hacen lo mismo en
+  cualquier terminal. `Alt+<número>` necesita que la terminal mande
+  `Alt`/`Option` como Meta (en macOS: iTerm2 → Profiles → Keys → "Left
+  Option key: Esc+"; Terminal.app → "Usar Option como tecla Meta"); si
+  no, "Pestañas: Ir a la pestaña N" está en la paleta (`F1`).
+- Guardado automático "al perder foco": cambiar de pestaña cuenta como
+  perder el foco, y se guardan también las pestañas que no se ven.
+- LSP: la sesión sigue a la pestaña activa. Cambiar a otro archivo del
+  mismo lenguaje no reinicia el servidor; a uno de otro lenguaje (o sin
+  lenguaje, como un `.txt`) sí, igual que al cambiar de panel — al volver,
+  los diagnósticos tardan lo que tarde el servidor en arrancar.
 
 ## Explorador de archivos
 
@@ -351,7 +404,7 @@ opción por nombre):
 | **Temas** | Elegir tema (abre el selector con preview) y duplicar el activo para editarlo. |
 | **Lenguajes / LSP** | Habilitar/deshabilitar el servidor LSP de cada lenguaje, ver si el binario está en el `PATH` y el estado de la sesión activa (Conectado/Iniciando/Inactivo). `c` sobre una fila edita el comando+argumentos a mano (ver [LSP](#lsp-autocompletado-y-diagnósticos)); `Backspace` quita ese override. |
 | **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, indicadores de git, modo VIM, regla vertical, guardado automático. |
-| **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo). |
+| **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo), y la barra de pestañas. |
 
 Todos los cambios se aplican y persisten al instante en `config.toml`, sin
 tocar ni reiniciar nada más.
