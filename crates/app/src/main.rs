@@ -234,10 +234,18 @@ fn forzar_redibujado_completo(_terminal: &mut Terminal<Backend>) -> Result<()> {
 /// estructurales" — no del contenido línea a línea (eso cambia
 /// constantemente al escribir, no amerita un redibujado completo), sino
 /// de la forma general: qué archivo está activo, cuántos paneles hay,
-/// si el explorador está visible. Comparar esto antes/después de
-/// procesar una tecla es lo que decide si hace falta forzar limpieza.
-fn firma_estructural(layout: &PanelLayout, explorador: &Explorador) -> (String, usize, bool) {
-    (layout.panel_activo().ruta_mostrada.clone(), layout.num_paneles(), explorador.visible())
+/// si el explorador está visible, si hay un panel maximizado o modo zen
+/// (los dos cambian de golpe qué se ve y dónde). Comparar esto
+/// antes/después de procesar una tecla es lo que decide si hace falta
+/// forzar limpieza.
+fn firma_estructural(layout: &PanelLayout, estado: &EstadoApp) -> (String, usize, bool, bool, bool) {
+    (
+        layout.panel_activo().ruta_mostrada.clone(),
+        layout.num_paneles(),
+        estado.explorador.visible(),
+        layout.maximizado(),
+        estado.modo_zen.is_some(),
+    )
 }
 
 /// Además de inicializar la terminal, intenta activar el protocolo de
@@ -369,6 +377,27 @@ struct EstadoApp {
     /// dibujar lo usan los comandos de plegado (BACKLOG.md P2 #7) para
     /// sacar los rangos plegables del mismo árbol, sin volver a parsear.
     resaltador: Resaltador,
+    /// Modo zen (`Ctrl+K Z`, BACKLOG.md P3 #12): `Some` mientras está
+    /// activo, con el foco que había al entrar para devolverlo igual al
+    /// salir. De sesión a propósito — no se guarda en la config ni toca
+    /// sus toggles (`mostrar_statusbar`, visibilidad del explorador): la UI
+    /// solo se saltea esas partes al dibujar (`tcode_ui::dibujar`, ver
+    /// `Cromo` ahí). Ver `alternar_modo_zen`.
+    modo_zen: Option<Foco>,
+}
+
+/// Entra o sale del modo zen (ver `EstadoApp::modo_zen`). Al entrar, el
+/// foco pasa al editor — el explorador deja de verse y las teclas no
+/// pueden quedar yendo a un árbol invisible —; al salir vuelve a donde
+/// estaba.
+fn alternar_modo_zen(modo_zen: &mut Option<Foco>, foco: &mut Foco) {
+    match modo_zen.take() {
+        Some(foco_previo) => *foco = foco_previo,
+        None => {
+            *modo_zen = Some(*foco);
+            *foco = Foco::Editor;
+        }
+    }
 }
 
 fn sin_modificadores(key: KeyEvent) -> bool {
@@ -436,6 +465,7 @@ async fn ejecutar(
         ultimo_autoguardado: Instant::now(),
         guardado_pendiente: false,
         resaltador: Resaltador::nuevo(),
+        modo_zen: None,
     };
 
     // Ver `forzar_redibujado_completo`: en Windows, si la "forma" de la
@@ -534,12 +564,13 @@ async fn ejecutar(
                     &estado.logs_lsp,
                     &estado.prompt_explorador,
                     &estado.confirmar_borrado,
+                    estado.modo_zen.is_some(),
                 )
             })?;
             ultimo_dibujo = Instant::now();
         }
 
-        let firma_antes = firma_estructural(layout, &estado.explorador);
+        let firma_antes = firma_estructural(layout, &estado);
 
         let evento = match teclas_sinteticas.pop_front() {
             Some(key) => Event::Key(key),
@@ -575,7 +606,7 @@ async fn ejecutar(
             Event::Key(key) if key.kind == KeyEventKind::Press => key,
             Event::Paste(texto) => {
                 pegar_texto(&texto, layout, &mut estado, &mut teclas_sinteticas);
-                necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+                necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
                 continue;
             }
             // La terminal dejó de tener el foco (otra ventana/pestaña/panel
@@ -659,7 +690,7 @@ async fn ejecutar(
                     _ => {}
                 },
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -805,7 +836,7 @@ async fn ejecutar(
                     },
                 }
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -830,7 +861,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.paleta_comandos.escribir(c),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -849,7 +880,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.buscador_archivos.escribir(c),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -887,7 +918,7 @@ async fn ejecutar(
                 }
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -937,7 +968,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.estado_busqueda.escribir(c, &texto),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -956,7 +987,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.guardar_como.escribir(c),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -975,7 +1006,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.logs_lsp.escribir(c),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -995,7 +1026,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.prompt_explorador.escribir(c),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -1018,7 +1049,7 @@ async fn ejecutar(
                 }
                 _ => estado.confirmar_borrado.cerrar(),
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -1041,7 +1072,7 @@ async fn ejecutar(
                 }
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -1060,7 +1091,7 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => layout.panel_activo_mut().estado_csv.escribir(c),
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -1079,7 +1110,7 @@ async fn ejecutar(
                 }
                 _ => {}
             }
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -1100,7 +1131,7 @@ async fn ejecutar(
             editor.colapsar_cursores();
             editor.entrar_modo_normal();
             estado.confirmar_salida = false;
-            necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -1123,7 +1154,7 @@ async fn ejecutar(
             };
             if manejada {
                 estado.confirmar_salida = false;
-                necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+                necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
                 continue;
             }
         }
@@ -1162,7 +1193,7 @@ async fn ejecutar(
             }
         }
 
-        necesita_redibujado |= firma_estructural(layout, &estado.explorador) != firma_antes;
+        necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
     }
 
     estado.lsp.cerrar().await;
@@ -1338,7 +1369,37 @@ async fn sincronizar_lsp(layout: &PanelLayout, lsp: &mut lsp::EstadoLsp, config:
 /// overlays, el prompt de "Guardar como"), así que se interceptan aquí
 /// antes de delegar.
 fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, resolvedor: &mut Resolvedor) -> Accion {
+    // En modo zen el explorador no se ve: lo que lo necesita en pantalla
+    // (mostrarlo, saltar a un archivo, crear/renombrar) sale del zen
+    // primero en vez de actuar sobre un árbol invisible. `Ctrl+B` en zen
+    // significa "quiero ver el explorador", no "ocultalo" (que es lo que
+    // haría alternarlo si antes del zen estaba visible).
+    if estado.modo_zen.is_some()
+        && matches!(
+            id,
+            "panel.alternar_lateral"
+                | "explorador.saltar"
+                | "explorador.nuevo_archivo"
+                | "explorador.nueva_carpeta"
+                | "explorador.renombrar"
+        )
+    {
+        alternar_modo_zen(&mut estado.modo_zen, &mut estado.foco);
+        if id == "panel.alternar_lateral" {
+            estado.explorador.mostrar();
+            estado.foco = Foco::Explorador;
+            return Accion::Continuar;
+        }
+    }
     match id {
+        "vista.modo_zen" => {
+            alternar_modo_zen(&mut estado.modo_zen, &mut estado.foco);
+            Accion::Continuar
+        }
+        "vista.pantalla_completa" => {
+            layout.alternar_maximizado();
+            Accion::Continuar
+        }
         "config.recargar" => {
             recargar_config_tema_y_keymap(estado, resolvedor);
             Accion::Continuar
@@ -2690,5 +2751,35 @@ mod tests_autoguardado {
         assert_eq!(layout.panel_activo().ruta_mostrada, a.display().to_string(), "no se reemplazó el documento");
         assert!(layout.editor_activo().buffer().modificado());
         assert!(layout.panel_activo().aviso_guardado.is_some());
+    }
+}
+
+#[cfg(test)]
+mod tests_modo_zen {
+    use super::*;
+
+    #[test]
+    fn modo_zen_desde_el_editor_entra_y_sale_sin_mover_el_foco() {
+        let mut zen = None;
+        let mut foco = Foco::Editor;
+        alternar_modo_zen(&mut zen, &mut foco);
+        assert_eq!(zen, Some(Foco::Editor));
+        assert_eq!(foco, Foco::Editor);
+
+        alternar_modo_zen(&mut zen, &mut foco);
+        assert_eq!(zen, None);
+        assert_eq!(foco, Foco::Editor);
+    }
+
+    #[test]
+    fn modo_zen_con_el_explorador_enfocado_pasa_al_editor_y_lo_devuelve_al_salir() {
+        let mut zen = None;
+        let mut foco = Foco::Explorador;
+        alternar_modo_zen(&mut zen, &mut foco);
+        assert_eq!(foco, Foco::Editor);
+
+        alternar_modo_zen(&mut zen, &mut foco);
+        assert_eq!(zen, None);
+        assert_eq!(foco, Foco::Explorador);
     }
 }

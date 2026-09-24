@@ -733,6 +733,28 @@ diff se recalcula en vivo al escribir. Preparar un repo de prueba:
 - [ ] Archivo de 10.000 líneas commiteado: tipear de corrido en el medio sigue siendo instantáneo.
 - [ ] Sin `git` en el `PATH` (p. ej. `PATH=/nada "$(command -v tcode)" archivo`): abre normal, sin columna ni errores.
 
+## Modo zen y panel maximizado (`Ctrl+K Z`, `F11`/`Ctrl+K G`)
+
+BACKLOG.md P3 #12 y #11. El modo zen es de sesión (no se guarda en la
+config): oculta explorador y statusbar sin tocar sus toggles. "Pantalla
+completa" en una terminal = maximizar el panel activo de un split (como
+el zoom de tmux); el tamaño de letra y la ventana los controla el
+emulador de terminal, no tcode.
+
+- [ ] Con el explorador visible y enfocado (`Ctrl+B`), `Ctrl+K Z`: se ven solo los paneles de código, sin explorador ni statusbar; las flechas mueven el cursor del editor, no la selección del árbol.
+- [ ] Otra vez `Ctrl+K Z`: vuelven explorador y statusbar, y el foco vuelve al explorador (las flechas mueven la selección del árbol).
+- [ ] Con la statusbar apagada en `Ctrl+,` → Interfaz, entrar y salir de zen: sigue apagada (zen no toca la config; `config.toml` no cambia).
+- [ ] En zen: `F1`/`Ctrl+Shift+P` abre la paleta, `Ctrl+P` el buscador, `Ctrl+F` la búsqueda, `Ctrl+K Ctrl+T` el selector de temas — todos se ven y funcionan; al cerrarlos se sigue en zen.
+- [ ] En zen, abrir un archivo desde `Ctrl+P`: se abre y se sigue en zen.
+- [ ] En zen, `Ctrl+B`: sale del zen y muestra el explorador enfocado (aunque antes del zen estuviera oculto). `Ctrl+K J`, `Ctrl+K N`/`C`/`M` también salen del zen antes de actuar.
+- [ ] Con 2 paneles, `F11` (o `Ctrl+K G` si la terminal/SO se come `F11`): el panel activo ocupa toda el área de edición, con `[MAX]` a la derecha de su statusbar. Otra vez: vuelven los dos paneles como estaban.
+- [ ] Con 3 paneles (vertical + horizontal), maximizar el del medio y restaurar: el layout vuelve idéntico, con el mismo panel activo.
+- [ ] Maximizado, `Ctrl+K 1`/`2`/`3` (o `Ctrl+1/2/3`): sale del maximizado y va a ese panel (como tmux). Dividir (`Ctrl+K \`) o cerrar (`Ctrl+K F`) también sale del maximizado primero.
+- [ ] Con un solo panel, `F11` no hace nada (sin `[MAX]`).
+- [ ] Zen + maximizado: solo el código del panel activo en toda la pantalla (sin `[MAX]`, porque no hay statusbar). Salir de zen: vuelve la statusbar con `[MAX]`; `F11`: vuelven todos los paneles.
+- [ ] En la paleta, buscar "zen" y "maximizar": aparecen "Ver: Alternar modo zen (solo el código)" y "Ver: Maximizar/restaurar el panel activo" y funcionan.
+- [ ] Salir de tcode en zen y volver a abrir: arranca normal (el zen no se recuerda).
+
 ## Temas en formato Helix
 
 BACKLOG.md P3 #13. Un `.toml` de tema de Helix dejado en la carpeta de

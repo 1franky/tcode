@@ -23,6 +23,8 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "editor.deshacer", descripcion: "Editor: Deshacer" },
         Comando { id: "editor.rehacer", descripcion: "Editor: Rehacer" },
         Comando { id: "panel.alternar_lateral", descripcion: "Ver: Alternar explorador de archivos" },
+        Comando { id: "vista.modo_zen", descripcion: "Ver: Alternar modo zen (solo el código)" },
+        Comando { id: "vista.pantalla_completa", descripcion: "Ver: Maximizar/restaurar el panel activo" },
         Comando { id: "explorador.saltar", descripcion: "Ver: Saltar a un archivo (etiquetas de una tecla)" },
         Comando { id: "explorador.nuevo_archivo", descripcion: "Explorador: Nuevo archivo" },
         Comando { id: "explorador.nueva_carpeta", descripcion: "Explorador: Nueva carpeta" },

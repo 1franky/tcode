@@ -146,9 +146,32 @@ suelto. Los cuatro comandos también están en la paleta (`Ctrl+Shift+P`,
 | `Ctrl+K Ctrl+\` (o `Ctrl+K -`) | Dividir horizontalmente |
 | `Ctrl+1` / `Ctrl+2` / `Ctrl+3` (o `Ctrl+K 1`/`2`/`3`) | Saltar al panel 1/2/3 |
 | `Ctrl+K F` | Cerrar el panel activo |
+| `F11` (o `Ctrl+K G`) | Maximizar/restaurar el panel activo |
 
 Cada panel tiene su propio archivo abierto, cursor y estado de vista
 (tabla CSV, preview Markdown) — son independientes entre sí.
+
+**Maximizar** (`F11`, la "pantalla completa" de tcode) funciona como el
+zoom de tmux: el panel activo ocupa toda el área de edición y la barra de
+estado muestra `[MAX]`; al volver a apretarlo los paneles vuelven
+exactamente como estaban. Cambiar de panel, dividir o cerrar mientras
+está maximizado sale del maximizado primero. Con un solo panel no hace
+nada. En muchas terminales (y en macOS, que lo usa para "mostrar
+escritorio") `F11` no llega a tcode: `Ctrl+K G` hace lo mismo. El tamaño
+de letra y la pantalla completa de la ventana los maneja el emulador de
+terminal, no tcode.
+
+### Modo zen (`Ctrl+K Z`)
+
+Oculta de un golpe todo lo que no es código — explorador y barra de
+estado — y otra vez `Ctrl+K Z` lo deja todo como estaba, incluido el foco
+(si estabas en el explorador, volvés ahí). Es solo para la sesión: no
+cambia ninguna opción de la configuración ni se recuerda al volver a
+abrir tcode. La paleta, el buscador de archivos, la búsqueda y demás
+ventanas flotantes funcionan igual en zen. Lo que necesita ver el
+explorador (`Ctrl+B`, `Ctrl+K J`, crear/renombrar) sale del zen primero.
+Se combina con maximizar: zen + `F11` deja solo el panel activo en toda
+la pantalla.
 
 ## Explorador de archivos
 
