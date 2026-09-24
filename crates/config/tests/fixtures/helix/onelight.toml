@@ -1,0 +1,66 @@
+# Fixture de test: versión recortada del tema `onelight` de Helix
+# (https://github.com/helix-editor/helix, runtime/themes/onelight.toml,
+# licencia MPL-2.0). Tema claro: `tcode` lo lista con el filtro "Claro".
+
+"attribute" = { fg = "yellow" }
+"comment" = { fg = "grey-light", modifiers = ["italic"] }
+"constant" = { fg = "cyan" }
+"constant.numeric" = { fg = "gold" }
+"constant.builtin" = { fg = "gold" }
+"function" = { fg = "blue" }
+"function.macro" = { fg = "red" }
+"keyword" = { fg = "purple" }
+"keyword.control" = { fg = "purple" }
+"label" = { fg = "orange" }
+"namespace" = { fg = "orange" }
+"operator" = { fg = "red" }
+"string" = { fg = "green" }
+"type" = { fg = "orange" }
+"type.builtin" = { fg = "orange" }
+"variable" = { fg = "black" }
+"variable.parameter" = { fg = "red" }
+
+"diff.plus" = { fg = "green" }
+"diff.delta" = { fg = "gold" }
+"diff.minus" = { fg = "red" }
+
+"info" = { fg = "blue", modifiers = ["bold"] }
+"hint" = { fg = "grey-dark", modifiers = ["bold"] }
+"warning" = { fg = "orange", modifiers = ["bold"] }
+"error" = { fg = "red", modifiers = ["bold"] }
+
+"ui.background" = { bg = "white" }
+"ui.cursor" = { fg = "white", bg = "black" }
+"ui.cursor.primary" = { fg = "white", bg = "purple" }
+"ui.cursor.match" = { bg = "light-white", modifiers = ["bold"] }
+"ui.cursorline.primary" = { bg = "light-white" }
+"ui.selection" = { bg = "light-white" }
+"ui.selection.primary" = { bg = "grey-selection" }
+"ui.linenr" = { fg = "grey-light" }
+"ui.linenr.selected" = { fg = "black", modifiers = ["bold"] }
+"ui.statusline" = { fg = "black", bg = "light-white" }
+"ui.statusline.inactive" = { fg = "grey-light", bg = "light-white" }
+"ui.statusline.insert" = { fg = "white", bg = "green" }
+"ui.statusline.select" = { fg = "white", bg = "purple" }
+"ui.text" = { fg = "black" }
+"ui.menu" = { fg = "black", bg = "light-white" }
+"ui.menu.selected" = { fg = "white", bg = "blue" }
+"ui.popup" = { bg = "light-white" }
+
+[palette]
+white = "#FAFAFA"
+yellow = "#FEA44C"
+blue = "#447BEF"
+light-blue = "#1E80F0"
+red = "#E45649"
+purple = "#A626A4"
+green = "#50A14F"
+gold = "#C18401"
+cyan = "#0184BC"
+black = "#383A42"
+light-black = "#2C323C"
+orange = "#C45500"
+light-white = "#EAEAEB"
+grey-light = "#A0A1A7"
+grey-dark = "#696C77"
+grey-selection = "#D0D0D0"

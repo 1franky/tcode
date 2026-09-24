@@ -337,6 +337,20 @@ de las primeras versiones).
   de los 13 incluidos) y va a aparecer solo en el selector (`Ctrl+K
   Ctrl+T`), con su nombre y filtro (claro/oscuro/alto contraste) reales
   — no hace falta reiniciar `tcode` ni editar `config.toml` a mano.
+- **Usar un tema de Helix**: los `.toml` de tema del editor Helix
+  (`runtime/themes/` de su repo, o cualquiera de la comunidad) también
+  sirven tal cual: copialo a esa misma carpeta de temas y aparece en el
+  selector como "<archivo> (Helix)", con el filtro claro/oscuro según su
+  color de fondo. `tcode` lo convierte al vuelo (resuelve `[palette]`,
+  los colores ANSI por nombre y `inherits` si el tema padre también está
+  en la carpeta; si no está, lo que falte sale del tema "Oscuro" o
+  "Claro" de `tcode`) y nunca modifica el archivo. Helix tiene muchos
+  más colores que `tcode`: se usan el fondo, el texto, cursor,
+  selección, números de línea, línea actual, statusbar, los tokens de
+  sintaxis principales, diagnósticos y los colores de diff; el resto
+  (menús, popups, markup, subrayados) se ignora. Para retocarlo,
+  "Duplicar tema activo" o `Ctrl+K Ctrl+P` crean una copia
+  `<archivo>-mio.toml` ya en formato `tcode`.
 
 ## Panel de administración
 
