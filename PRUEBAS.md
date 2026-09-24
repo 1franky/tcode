@@ -496,28 +496,46 @@ que se guardó.
 
 Apagado por defecto — no cambia el comportamiento de nadie que no lo
 prenda a propósito (panel de administración, sección "Editor", o a mano
-en `config.toml`). Alcance deliberadamente acotado para esta primera
-entrega (decisión explícita del usuario, ver PR): sin operadores
-combinables con movimientos (`dw`, `d$`), sin conteos numéricos (`3dd`),
-sin `:`. El resto de atajos de tcode (flechas, `Ctrl+S`, `Ctrl+B`, splits,
-etc.) siguen funcionando igual estando en cualquiera de los dos modos —
-el modo VIM solo cambia qué significa un carácter suelto sin modificador.
+en `config.toml`). Desde esta entrega tiene gramática completa de
+operador + conteo + movimiento/objeto de texto, modo Visual y línea de
+comandos `:` (ver la tabla en MANUAL.md). El resto de atajos de tcode
+(flechas, `Ctrl+S`, `Ctrl+B`, splits, etc.) siguen funcionando igual en
+cualquier modo — el modo VIM solo cambia qué significa un carácter suelto
+sin modificador, y solo con el foco en el editor (no en el explorador ni
+en la vista de tabla CSV).
 
 - [ ] Con el modo apagado (por defecto): abrir cualquier archivo, escribir texto normal con `hjkl` incluidos — se insertan como letras comunes, nada cambió.
 - [ ] Prender "Modo VIM" en el panel de administración (sección Editor): la barra de estado del panel activo pasa a `NORMAL` de inmediato, sin tener que reabrir el archivo.
-- [ ] En modo Normal: `h`/`j`/`k`/`l` mueven el cursor como las flechas; `0`/`$` van al inicio/fin de línea; `gg`/`G` van al inicio/fin del archivo.
-- [ ] `i` entra a Insertar en la posición actual; `a` entra a Insertar una posición a la derecha (al final de una línea, escribe justo después del último carácter); `o` abre una línea nueva debajo y entra a Insertar ahí.
-- [ ] Escribir texto en Insertar funciona exactamente igual que siempre; `Esc` vuelve a Normal (no a "explorador.enfocar_editor" como con el modo apagado).
-- [ ] `x` borra el carácter bajo el cursor; en el ÚLTIMO carácter de una línea no vacía sigue borrando ESE carácter (no fusiona con la línea siguiente) — el cursor en modo Normal nunca queda "después" del último carácter, a diferencia de Insertar.
-- [ ] `dd` borra la línea completa bajo el cursor (con su salto de línea); `yy` la copia sin borrar nada; `p` la pega como una línea nueva justo debajo de la actual. Yanquear/borrar en un archivo y pegar en otro panel funciona (el registro es uno solo para toda la app).
-- [ ] `u` deshace el último cambio (comparte historial con `Ctrl+Z`, no es un mecanismo aparte).
-- [ ] Un comando de dos teclas a medias (`d`, `y` o `g` sueltos) seguido de una tecla que no coincide: no hace nada raro, simplemente cancela y esa segunda tecla no dispara ningún movimiento.
+- [ ] En modo Normal: `h`/`j`/`k`/`l` mueven el cursor (sin pasar de línea con `h`/`l`); `0`/`^`/`$` van al inicio / primer no blanco / fin de línea; `gg`/`G` al inicio/fin del archivo y `5G` a la línea 5.
+- [ ] Conteos: `3j`, `5x`, `3dd`, `2yy`, `4p` hacen lo mismo que repetir el comando esa cantidad de veces (y `3dd` se deshace con un solo `u`).
+- [ ] `w`/`b`/`e` saltan por palabras (la puntuación es su propia palabra; una línea vacía también cuenta); `W`/`B`/`E` por palabras separadas solo por blancos.
+- [ ] `f,`/`t,`/`F,`/`T,` buscan en la línea; `;` repite la búsqueda y `,` la repite hacia el otro lado. `%` salta al paréntesis/llave/corchete que corresponde; `{`/`}` saltan entre párrafos (líneas vacías).
+- [ ] Operadores combinables: `dw`, `d$`, `d3w`, `2dw`, `dt,`, `df,`, `dG`, `dgg`, `d}`, `cw`, `c$`, `y3j`, `>j`. `dw` en la última palabra de una línea no se come el salto de línea; `cw` sobre una palabra no se come el espacio de después (como `ce`).
+- [ ] Objetos de texto: `diw`/`daw`, `ci"`/`da"`, `di(`/`da(` (y `dib`), `di{`/`da{` — dentro de un bloque `{ ... }` multilínea, `di{` borra las líneas de adentro y deja las llaves en líneas propias.
+- [ ] `D`, `C`, `Y`, `cc`, `S`, `s`, `x`, `X`, `r{c}` (con conteo: `3rx`), `J` (con conteo: `3J`), `~`, `>>`/`<<` (con la indentación de la config: espacios o tab).
+- [ ] Inserción: `i`, `a`, `I`, `A`, `o`, `O` (estos dos copian la indentación de la línea actual). `Esc` vuelve a Normal con el cursor sobre el último carácter escrito.
+- [ ] Un cambio con inserción (`cw` + texto + `Esc`, `o` + texto + `Esc`, `ihola` + `Esc`) se deshace con un solo `u`.
+- [ ] `.` repite el último cambio (con su texto tipeado: `cwfoo<Esc>` y después `w.` cambia la siguiente palabra por `foo`); `3.` lo repite con otro conteo. Sin ningún cambio previo avisa "Nada para repetir".
+- [ ] Registro: `dd`/`yy`/`Vd` guardan líneas enteras (`p` pega debajo, `P` arriba); `dw`/`x`/`y$`/`vd` guardan caracteres (`p` pega después del cursor, `P` antes). Yanquear/borrar en un archivo y pegar en otra pestaña o panel funciona (el registro es uno solo para toda la app).
+- [ ] `v`: la barra de estado dice `VISUAL` y la selección se ve resaltada mientras se mueve el cursor (`hjkl`, `w`, `e`, `$`...); `iw`/`i(`/`a"` extienden la selección al objeto; `o` cambia de extremo; `d`/`x`, `y`, `c`/`s`, `>`/`<`, `J`, `~` operan sobre la selección; `Esc` sale sin hacer nada.
+- [ ] `V`: la barra dice `VISUAL LÍNEA`; `d`/`y`/`c`/`>`/`<` operan sobre las líneas enteras. `v` y `V` alternan entre sí; repetir la misma tecla sale de Visual.
+- [ ] `:` abre una línea al pie de la pantalla; `Esc` (o `Backspace` con la línea vacía) la cierra sin hacer nada; `↑`/`↓` recorren los comandos ya usados en la sesión.
+- [ ] `:w` guarda por el mismo camino que `Ctrl+S` (formatea al guardar si está prendido; sobre un "[Sin nombre]" abre "Guardar como").
+- [ ] `:q` sin cambios cierra la pestaña; si es la última pestaña del único panel, sale de tcode. Con cambios avisa "Cambios sin guardar: :q de nuevo para cerrar sin guardar" y no cierra; un segundo `:q` seguido cierra igual; `:q!` cierra sin preguntar. `:wq`/`:x` guardan y cierran. `:qa` sale (avisa si hay archivos modificados), `:qa!` sale igual.
+- [ ] `:42` va a la línea 42; `:e otro.txt` abre ese archivo (relativo al directorio donde se lanzó tcode) en una pestaña nueva, o activa la que ya lo tenía; con una ruta que no existe avisa y no abre nada.
+- [ ] `:s/a/b/` reemplaza la primera coincidencia en la línea del cursor, `:s/a/b/g` todas las de la línea, `:%s/a/b/g` en todo el archivo (con `i` sin distinguir mayúsculas); la barra de estado dice cuántos reemplazos hizo, y un `u` los deshace todos juntos. El patrón es un regex (sintaxis de Rust, la misma de `Ctrl+F` con regex).
+- [ ] Un comando a medio escribir (`d`, `2d`, `ci`...) se ve en la barra de estado; una tecla que no lo completa lo cancela sin hacer nada; `Esc` también.
+- [ ] Un panel nuevo por `Ctrl+\` arranca en Normal si el modo VIM está prendido.
+- [ ] Con el foco en el explorador, las letras no ejecutan comandos VIM sobre el editor de atrás.
 - [ ] Apagar "Modo VIM" desde el panel de administración: `i`/`Esc` siguen funcionando en el panel que ya estaba en Normal (queda ahí hasta salir de Insertar), pero un archivo nuevo que se abra después ya no entra en modo VIM.
 
-### Limitaciones conocidas de este alcance inicial
+### Limitaciones conocidas
 
-- Un panel nuevo por `Ctrl+\` (split) siempre arranca en Insertar aunque el modo VIM esté prendido — reabrir el archivo en ese panel (o el buscador de archivos/explorador) sí respeta la config.
-- Sin operadores combinables (`dw`, `d$`, `ciw`, etc.), sin conteos numéricos (`3dd`, `5j`), sin modo Visual, sin `:` (comandos de línea de comandos de VIM) — quedan para una próxima pieza si hace falta.
+- Sin registros con nombre (`"a`), marcas (`m`/`'`), macros (`q`), búsqueda con `/`/`?`/`n`/`*`, `Ctrl+R` como rehacer (sigue siendo el rehacer de tcode), `gJ`/`gu`/`gU`, ni `p` sobre una selección Visual.
+- `.` no repite operaciones hechas en modo Visual; un conteo delante de `i`/`a`/`o` (`3ihola`) no repite la inserción.
+- En `V` la selección resaltada va desde el borde de la línea del ancla hasta el cursor (no hasta el final de la línea del cursor), aunque la operación sí toma las líneas enteras.
+- Moverse con las flechas (no con `hjkl`) en Visual colapsa la selección resaltada hasta la próxima tecla VIM.
+- `:s` usa regex de Rust y reemplazo literal (sin `\1`/`&`); sin rangos `:{a},{b}s`. `:e` no crea archivos nuevos; `:w <ruta>` no está soportado (usar "Guardar como").
 
 ## ⚠️ Bug conocido en Windows — 5º intento (CRLF sin normalizar)
 

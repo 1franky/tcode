@@ -87,6 +87,8 @@ pub fn dibujar(
             match editor.modo() {
                 Modo::Insertar => "INSERTAR",
                 Modo::Normal => "NORMAL",
+                Modo::Visual => "VISUAL",
+                Modo::VisualLinea => "VISUAL LÍNEA",
             }
             .to_string(),
         );

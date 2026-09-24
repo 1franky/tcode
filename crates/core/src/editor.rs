@@ -24,6 +24,12 @@ use crate::plegado::{tramo_que_oculta, Plegado, Pliegue};
 pub enum Modo {
     Insertar,
     Normal,
+    /// Modo Visual de VIM (`v`, por caracteres): la selección va del
+    /// ancla (en `tcode_core::EstadoVim`) al cursor, ambos incluidos.
+    Visual,
+    /// Modo Visual por líneas (`V`): la selección son las líneas enteras
+    /// entre el ancla y el cursor.
+    VisualLinea,
 }
 
 /// Estado de edición de un archivo: buffer + cursor(es) + historial de
@@ -113,7 +119,40 @@ impl Editor {
     /// reaplicar ese recorte en cada tecla, no solo al cambiar de modo.
     pub fn entrar_modo_normal(&mut self) {
         self.modo = Modo::Normal;
+        // Cualquier grupo de deshacer abierto por el modo VIM (`cw` +
+        // texto, `o` + texto...) termina al volver a Normal — así nunca
+        // queda uno abierto de más, salga como se salga de Insertar.
+        self.historia.cerrar_grupo();
         self.recortar_cursor_para_normal();
+    }
+
+    /// `v`/`V` del modo VIM: solo cambia el modo — el ancla de la
+    /// selección la lleva `tcode_core::EstadoVim` y la selección visible
+    /// la fija `fijar_seleccion` en cada tecla.
+    pub fn entrar_modo_visual(&mut self, lineas: bool) {
+        self.modo = if lineas { Modo::VisualLinea } else { Modo::Visual };
+    }
+
+    /// Deja un único cursor en `cursor` con la selección desde `ancla`
+    /// (la selección visible del modo Visual de VIM) — colapsa cualquier
+    /// otro cursor, igual que `mover_cursor_a_byte`.
+    pub fn fijar_seleccion(&mut self, ancla: Cursor, cursor: Cursor) {
+        let mut c = CursorMultiple { ancla, cursor };
+        c.recortar(&self.buffer);
+        self.cursores = vec![c];
+        self.revelar_cursores();
+    }
+
+    /// Abre un grupo de deshacer (ver `Historia::abrir_grupo`): todas las
+    /// ediciones hasta `cerrar_grupo_deshacer` (o volver a Normal, o
+    /// deshacer) se deshacen en un solo paso. Lo usa el modo VIM para que
+    /// `cw` + lo tipeado hasta `Esc` sea un único cambio, como en VIM.
+    pub fn abrir_grupo_deshacer(&mut self) {
+        self.historia.abrir_grupo();
+    }
+
+    pub fn cerrar_grupo_deshacer(&mut self) {
+        self.historia.cerrar_grupo();
     }
 
     /// VIM real nunca deja el cursor "después" del último carácter de una
