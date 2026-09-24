@@ -509,6 +509,16 @@ async fn ejecutar(
     // callado.
     let mut omitir_dibujo = false;
 
+    // Revisión periódica de `HEAD` (indicadores de git, ver
+    // `tcode_fs::VigiaHead`): un commit o checkout hecho desde otra
+    // terminal se ve solo, sin esperar al próximo `Ctrl+S`. Mismo esquema
+    // que `tick`, pero con su propio período (más lento: son unos `stat`
+    // por documento visible) y solo mientras algún documento visible
+    // está en un repo con los indicadores prendidos — sin eso el bucle
+    // sigue sin despertarse en reposo.
+    let mut tick_git = tokio::time::interval(tcode_fs::INTERVALO_REVISION_HEAD);
+    tick_git.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
     // "Al perder foco" (BACKLOG.md P2 #4): qué panel/archivo/zona tenía
     // el foco en la vuelta anterior del bucle — si cambió (`Ctrl+1/2/3`,
     // cerrar/dividir un panel, abrir otro archivo, pasar al explorador),
@@ -612,6 +622,13 @@ async fn ejecutar(
                     omitir_dibujo = !procesar_tick(layout, &mut estado);
                     continue;
                 }
+                // Si relanzó alguna carga, la rama de `INTERVALO_SONDEO_GIT`
+                // dibuja cuando llegue; si no, no hay nada que redibujar.
+                _ = tick_git.tick(), if estado.config.editor.indicadores_git && layout.vigila_heads_git() => {
+                    layout.revisar_heads_git();
+                    omitir_dibujo = true;
+                    continue;
+                }
             },
         };
 
@@ -629,6 +646,15 @@ async fn ejecutar(
             Event::FocusLost => {
                 if estado.config.editor.guardado_automatico == GuardadoAutomatico::AlPerderFoco {
                     autoguardar(layout);
+                }
+                continue;
+            }
+            // Al volver a la terminal (típicamente después de commitear o
+            // cambiar de rama en otra), se revisa `HEAD` en el acto en vez
+            // de esperar al próximo `tick_git`.
+            Event::FocusGained => {
+                if estado.config.editor.indicadores_git {
+                    layout.revisar_heads_git();
                 }
                 continue;
             }

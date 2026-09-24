@@ -450,6 +450,26 @@ impl Layout {
         }
     }
 
+    /// Revisa si `HEAD` cambió por fuera de `tcode` (un commit o checkout
+    /// desde otra terminal, ver `tcode_fs::VigiaHead`) para el documento
+    /// visible de cada panel, y relanza la carga de la base de los que
+    /// cambiaron. Devuelve si relanzó alguna. Solo los visibles: los de
+    /// pestañas ocultas se revisan solos al volver a dibujarse
+    /// (`DiffGit::actualizar`). Unos `stat` por documento, sin procesos.
+    pub fn revisar_heads_git(&mut self) -> bool {
+        let mut alguno = false;
+        for pestanas in self.hojas_mut() {
+            alguno |= pestanas.activo_mut().git.revisar_head(true);
+        }
+        alguno
+    }
+
+    /// Si algún documento visible está en un repo de git — solo entonces
+    /// la app se despierta cada tanto para [`Self::revisar_heads_git`].
+    pub fn vigila_heads_git(&self) -> bool {
+        self.hojas().iter().any(|p| p.activo().git.en_repo())
+    }
+
     /// Si algún documento está esperando que `git` devuelva su base o que
     /// termine de calcularse su diff: mientras tanto la app vuelve a
     /// dibujar cada tanto aunque no lleguen teclas, para que las marcas

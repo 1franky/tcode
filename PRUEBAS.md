@@ -829,6 +829,23 @@ CSS, SQL, texto plano) muestra solo la ruta.
 
 ---
 
+## Refresco solo de la base de git (commit/checkout desde otra terminal)
+
+Los indicadores de git vuelven a leer `HEAD` solos cuando cambia: cada
+2 segundos se miran las fechas de `.git/HEAD`, de la rama actual, de
+`packed-refs` y del índice (unos `stat`, sin procesos), y también al
+recuperar el foco de la terminal. Repo de prueba como el de la sección
+anterior.
+
+- [ ] Agregar una línea (aparece `+`), guardar y, SIN volver a tcode, `git commit -am x` desde otra terminal: en 2-3 segundos el `+` desaparece solo.
+- [ ] `git commit --amend`, `git reset --hard HEAD~1` y `git checkout` a otra rama con el archivo distinto: las marcas se ponen al día solas cada vez.
+- [ ] En un worktree (`git worktree add ...`) abrir un archivo y commitear desde ese worktree: también se refresca.
+- [ ] Con tmux (`set -g focus-events on`) o una terminal con eventos de foco: commitear en otra ventana y volver: se refresca al instante.
+- [ ] Un archivo sin trackear del repo, `git add` + `git commit` desde afuera: aparece la columna de git (sin marcas).
+- [ ] Con un archivo fuera de cualquier repo abierto y nada más, en reposo: tcode no consume CPU (el bucle no se despierta; p. ej. `top` muestra 0%).
+- [ ] Dos pestañas del mismo repo; commitear con la pestaña oculta y después cambiar a ella: sus marcas se ponen al día al mostrarse.
+- [ ] Tipear de corrido en un archivo grande de un repo: se siente igual que antes (la revisión es a lo sumo cada 2 segundos).
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).

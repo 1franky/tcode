@@ -494,9 +494,14 @@ Detalles:
   segundo plano, sin frenar nada). Sin `git`, o con un archivo fuera de
   un repo o todavía sin trackear (nunca commiteado), simplemente no hay
   columna ni marcas.
-- La versión de referencia se vuelve a leer al abrir el archivo y al
-  guardar (`Ctrl+S`). Tras un commit hecho desde otra terminal, las marcas
-  se ponen al día con el próximo `Ctrl+S` (aunque no haya cambios).
+- La versión de referencia se vuelve a leer al abrir el archivo, al
+  guardar (`Ctrl+S`) y sola cuando cambia `HEAD`: tras un commit,
+  checkout o reset hecho desde otra terminal, las marcas se ponen al día
+  en un par de segundos sin tocar nada (tcode mira cada 2 segundos las
+  fechas de `.git/HEAD`, de la rama y del índice — sin lanzar procesos —,
+  y también al volver a la terminal si esta avisa del foco; en tmux hace
+  falta `set -g focus-events on`). Con archivos fuera de un repo no se
+  revisa nada.
 - Con los números de línea apagados, la columna de git se sigue viendo
   sola (si el archivo está en un repo); para ocultarla está este mismo
   toggle.
