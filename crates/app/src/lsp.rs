@@ -1,18 +1,27 @@
-//! Gestión del ciclo de vida del cliente LSP activo (PLAN.md §2, §11 M2):
-//! cuándo lanzarlo, el handshake `initialize`/`initialized`, mantener al
-//! servidor al tanto de los cambios del archivo (`didOpen`/`didChange`), y
-//! convertir sus notificaciones de diagnósticos en algo que `tcode-ui`
-//! pueda dibujar.
+//! Gestión del ciclo de vida de los clientes LSP (PLAN.md §2, §5.3, §11
+//! M2): cuándo lanzarlos, el handshake `initialize`/`initialized`,
+//! mantener a cada servidor al tanto de los documentos abiertos
+//! (`didOpen`/`didChange`/`didClose`), y convertir sus notificaciones de
+//! diagnósticos en algo que `tcode-ui` pueda dibujar.
 //!
-//! Simplificación deliberada de esta primera pieza: un solo cliente LSP
-//! activo a la vez, asociado al documento activo (pestaña activa del
-//! panel activo) — no hay todavía un cliente por lenguaje corriendo en
-//! paralelo para cada split o pestaña abierta. Cambiar a un archivo de
-//! otro lenguaje relanza el cliente; a otro del mismo lenguaje, le pasa
-//! la sesión (`didClose` + `didOpen`, `SesionLsp::cambiar_documento`).
+//! Una sesión por lenguaje: se lanza la primera vez que aparece un
+//! documento de ese lenguaje en cualquier pestaña de cualquier panel, y
+//! sigue viva mientras quede alguno abierto — cambiar de pestaña o de
+//! panel entre un `.py` y un `.rs` ya no mata ni relanza nada (antes
+//! había una sola sesión, atada al documento activo, y volver a un
+//! lenguaje significaba esperar otra vez a que el servidor arrancara e
+//! indexara). Cada sesión tiene abiertos en el servidor TODOS los
+//! documentos de su lenguaje, no solo el visible: así una pestaña de
+//! fondo también recibe sus diagnósticos, y al volver a ella ya están.
+//!
+//! Todo lo que corre por frame (`EstadoLsp::sincronizar`) recorre solo la
+//! lista de pestañas y compara revisiones de buffer: el texto de un
+//! documento se copia únicamente al abrirlo en el servidor o cuando de
+//! verdad cambió (BACKLOG.md P1 #14).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
+use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -21,95 +30,161 @@ use lsp_types::{
     DocumentFormattingParams, FormattingOptions, InitializeParams, InitializedParams, TextDocumentClientCapabilities,
     TextDocumentIdentifier, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 use tcode_config::Config;
 use tcode_lsp::{Cliente, EdicionTexto, MensajeEntrante, ModoSincronizacion};
 use tcode_syntax::Lenguaje;
-use tcode_ui::Layout as PanelLayout;
+use tcode_ui::{Layout as PanelLayout, PanelEditor};
 
-/// Handshake en curso o completo con el servidor LSP activo.
+/// Comando + argumentos + variables de entorno con los que se lanza un
+/// servidor (ver [`comando_efectivo`]).
+type ComandoLsp = (String, Vec<String>, BTreeMap<String, String>);
+
+/// Handshake en curso o completo con el servidor de una sesión.
 enum Fase {
-    /// Se envió `initialize` con este id, se espera su respuesta.
+    /// Se envió `initialize` con este id, se espera su respuesta. Los
+    /// documentos que se agregan mientras tanto solo se anotan: su
+    /// `didOpen` sale todo junto al completar el handshake.
     Iniciando { id_initialize: i64 },
-    /// `initialize`/`initialized`/`didOpen` completos: se pueden mandar
-    /// `didChange` y se procesan diagnósticos entrantes. `modo` es cómo
-    /// pidió el servidor recibir esos cambios (texto completo o solo el
-    /// rango editado, ver `ModoSincronizacion::desde_initialize`).
-    Listo { version: i32, modo: ModoSincronizacion },
+    /// `initialize`/`initialized` completos: se mandan `didOpen`/
+    /// `didChange`/`didClose` y se procesan diagnósticos entrantes.
+    /// `modo` es cómo pidió el servidor recibir los cambios (texto
+    /// completo o solo el rango editado, ver
+    /// `ModoSincronizacion::desde_initialize`).
+    Listo { modo: ModoSincronizacion },
+}
+
+/// Un documento abierto en el servidor de una sesión. La sincronización
+/// incremental es por documento (cada uno tiene su propia versión y su
+/// propio texto base para calcular el próximo cambio), no por sesión.
+struct DocumentoLsp {
+    uri: Uri,
+    version: i32,
+    /// El texto tal como lo tiene el servidor: base del próximo cambio
+    /// incremental y de la conversión UTF-16 → carácter de las columnas
+    /// de sus diagnósticos.
+    ultimo_texto_enviado: String,
+    /// `Buffer::revision` de `ultimo_texto_enviado`: con la misma
+    /// revisión el texto es el mismo, y `sincronizar_documento` no
+    /// necesita ni copiarlo ni compararlo (BACKLOG.md P1 #14). Las
+    /// revisiones son únicas entre TODOS los buffers (no por buffer), así
+    /// que esto sigue siendo cierto aunque el mismo archivo esté abierto
+    /// en dos paneles con buffers distintos y el que se sincroniza pase
+    /// de uno al otro.
+    ultima_revision_enviada: u64,
 }
 
 struct SesionLsp {
     cliente: Cliente,
     lenguaje: Lenguaje,
-    /// Comando + argumentos + variables de entorno con los que se lanzó
-    /// esta sesión — `comando_efectivo` en el momento del lanzamiento.
-    /// Se guarda para que `actualizar_para_archivo` note un cambio de
-    /// configuración (usuario edita el comando personalizado desde el
-    /// panel de administración, variables de entorno incluidas) aunque
-    /// el lenguaje no haya cambiado, y relance.
-    comando_usado: (String, Vec<String>, BTreeMap<String, String>),
+    /// `comando_efectivo` en el momento del lanzamiento: si el usuario lo
+    /// edita desde el panel de administración (variables de entorno
+    /// incluidas), `sincronizar` nota la diferencia y relanza SOLO esta
+    /// sesión.
+    comando_usado: ComandoLsp,
     fase: Fase,
-    /// Documento abierto en el servidor: la ruta tal como la tiene el
-    /// panel (para compararla barato en cada frame, sin armar el URI) y
-    /// su URI.
-    ruta: String,
-    uri: Uri,
-    ultimo_texto_enviado: String,
-    /// `Buffer::revision` de `ultimo_texto_enviado`, si se conoce: con la
-    /// misma revisión el texto es el mismo, y `sincronizar_contenido` no
-    /// necesita ni copiarlo ni compararlo (BACKLOG.md P1 #14). `None`
-    /// hasta el primer envío con la sesión lista — el texto de `didOpen`
-    /// es el del momento del lanzamiento, y lo tipeado mientras el
-    /// servidor arrancaba sale en el primer `didChange`.
-    ultima_revision_enviada: Option<u64>,
     /// Si el servidor anunció `documentFormattingProvider` al responder
     /// `initialize` (BACKLOG.md P2 #5) — `false` hasta entonces, y para
     /// siempre en servidores que no formatean (pyright). Se mira ANTES de
     /// mandar `textDocument/formatting`, para no esperar en vano una
     /// respuesta que va a ser un error "método no soportado".
     soporta_formateo: bool,
+    /// Documentos de este lenguaje abiertos en alguna pestaña, uno por
+    /// URI (el mismo archivo en dos paneles es un solo documento para el
+    /// servidor).
+    documentos: Vec<DocumentoLsp>,
 }
 
 impl SesionLsp {
-    /// Pasa la sesión a otro documento del mismo lenguaje: `didClose` del
-    /// anterior y `didOpen` del nuevo con su texto actual (`contenido`,
-    /// que solo se pide acá, al cambiar — nunca por frame). Si el
-    /// handshake todavía no terminó alcanza con cambiar el URI y el
-    /// texto: el `didOpen` de `procesar_mensaje` usa esos. La versión
-    /// vuelve a 1: es por documento, y para el servidor este es un
-    /// documento recién abierto.
-    async fn cambiar_documento(&mut self, ruta: &str, contenido: impl FnOnce() -> String) {
-        let Ok(uri) = uri_de_archivo(Path::new(ruta)) else { return };
-        let texto = contenido();
-        if let Fase::Listo { version, .. } = &mut self.fase {
-            let _ = self
-                .cliente
-                .notificacion(
-                    "textDocument/didClose",
-                    DidCloseTextDocumentParams { text_document: TextDocumentIdentifier { uri: self.uri.clone() } },
-                )
-                .await;
-            let _ = self
-                .cliente
-                .notificacion(
-                    "textDocument/didOpen",
-                    DidOpenTextDocumentParams {
-                        text_document: TextDocumentItem {
-                            uri: uri.clone(),
-                            language_id: self.lenguaje.id().to_string(),
-                            version: 1,
-                            text: texto.clone(),
-                        },
-                    },
-                )
-                .await;
-            *version = 1;
-        }
-        self.ruta = ruta.to_string();
-        self.uri = uri;
-        self.ultimo_texto_enviado = texto;
-        self.ultima_revision_enviada = None;
+    fn indice_documento(&self, uri: &str) -> Option<usize> {
+        self.documentos.iter().position(|d| d.uri.as_str() == uri)
     }
+
+    async fn enviar_did_open(&mut self, indice: usize) {
+        let documento = &self.documentos[indice];
+        let params = DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: documento.uri.clone(),
+                language_id: self.lenguaje.id().to_string(),
+                version: documento.version,
+                text: documento.ultimo_texto_enviado.clone(),
+            },
+        };
+        let _ = self.cliente.notificacion("textDocument/didOpen", params).await;
+    }
+
+    /// Empieza a seguir un documento recién abierto en alguna pestaña.
+    /// Con el handshake completo se avisa ya mismo; si todavía está
+    /// iniciando, alcanza con anotarlo (ver [`Fase::Iniciando`]).
+    async fn abrir_documento(&mut self, uri: Uri, texto: String, revision: u64) {
+        self.documentos.push(DocumentoLsp { uri, version: 1, ultimo_texto_enviado: texto, ultima_revision_enviada: revision });
+        if let Fase::Listo { .. } = self.fase {
+            self.enviar_did_open(self.documentos.len() - 1).await;
+        }
+    }
+
+    /// Deja de seguir un documento cuya última pestaña se cerró (o que
+    /// cambió de ruta con "Guardar como"): `didClose`, así el servidor
+    /// libera lo que tenga de él y deja de publicarle diagnósticos.
+    async fn cerrar_documento(&mut self, indice: usize) {
+        let documento = self.documentos.remove(indice);
+        if let Fase::Listo { .. } = self.fase {
+            let params = DidCloseTextDocumentParams { text_document: TextDocumentIdentifier { uri: documento.uri } };
+            let _ = self.cliente.notificacion("textDocument/didClose", params).await;
+        }
+    }
+
+    /// Si el contenido del documento `indice` cambió desde el último
+    /// envío, notifica `textDocument/didChange`. `revision` es la del
+    /// `Buffer` que lo representa (`Buffer::revision`) y `texto_actual`
+    /// da su texto: si la revisión es la del último envío no se hace nada
+    /// — ni copiar ni comparar el archivo, el caso de casi todos los
+    /// frames. Si cambió, se manda solo el rango editado cuando el
+    /// servidor anunció sincronización incremental, o el texto completo
+    /// si no (`tcode_lsp::cambio_entre`) — con pyright y 10.000 líneas,
+    /// mandar y que el servidor procese el texto entero por cada frame
+    /// con cambios era el costo más grande que quedaba al tipear.
+    async fn sincronizar_documento(&mut self, indice: usize, revision: u64, texto_actual: impl FnOnce() -> String) {
+        let Fase::Listo { modo } = self.fase else { return };
+        let documento = &mut self.documentos[indice];
+        if documento.ultima_revision_enviada == revision {
+            return;
+        }
+        let texto_actual = texto_actual();
+        let Some(cambio) = tcode_lsp::cambio_entre(&documento.ultimo_texto_enviado, &texto_actual, modo) else {
+            documento.ultima_revision_enviada = revision;
+            return;
+        };
+
+        documento.version += 1;
+        let params = DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier { uri: documento.uri.clone(), version: documento.version },
+            content_changes: vec![cambio],
+        };
+        if self.cliente.notificacion("textDocument/didChange", params).await.is_ok() {
+            // Hace falta el texto entero igual: es la base del próximo
+            // cambio incremental y de la conversión UTF-16 → carácter de
+            // los diagnósticos (`procesar_mensaje`).
+            let documento = &mut self.documentos[indice];
+            documento.ultimo_texto_enviado = texto_actual;
+            documento.ultima_revision_enviada = revision;
+        }
+    }
+}
+
+/// Un lenguaje cuyo servidor no arrancó (no está instalado, falló el
+/// `initialize`) o se murió solo. No se reintenta en cada frame — lanzar
+/// un binario inexistente 60 veces por segundo no le sirve a nadie —
+/// sino cuando cambia algo que podría arreglarlo: el comando configurado,
+/// deshabilitar y volver a habilitar el lenguaje, o cerrar todos sus
+/// documentos y volver a abrir alguno. Guarda los últimos logs de stderr
+/// (más una línea propia con el motivo) para que `Ctrl+K R` siga
+/// mostrando por qué falló.
+struct Fallo {
+    lenguaje: Lenguaje,
+    comando: ComandoLsp,
+    logs: Vec<String>,
+    total_logs: u64,
 }
 
 /// Cuánto se espera, como mucho, la respuesta a `textDocument/formatting`
@@ -127,7 +202,7 @@ const TIMEOUT_FORMATEO: Duration = Duration::from_secs(2);
 /// defecto de `tcode_lsp::comando_para` (que puede no haber ninguno, como
 /// para todos los lenguajes salvo Python por ahora) sin ninguna variable
 /// de entorno — los defaults embebidos nunca las necesitan.
-pub fn comando_efectivo(lenguaje: Lenguaje, config: &Config) -> Option<(String, Vec<String>, BTreeMap<String, String>)> {
+pub fn comando_efectivo(lenguaje: Lenguaje, config: &Config) -> Option<ComandoLsp> {
     if let Some(personalizado) = config.lenguajes.comando_configurado(lenguaje.id()) {
         return Some((personalizado.comando.clone(), personalizado.argumentos.clone(), personalizado.env.clone()));
     }
@@ -135,11 +210,111 @@ pub fn comando_efectivo(lenguaje: Lenguaje, config: &Config) -> Option<(String, 
         .map(|(comando, args)| (comando.to_string(), args.iter().map(|a| a.to_string()).collect(), BTreeMap::new()))
 }
 
-/// Estado LSP de la aplicación: como mucho una sesión activa (ver nota de
-/// simplificación arriba).
+/// Lo que le toca a una sesión según los documentos abiertos ahora: su
+/// lenguaje, el comando con el que tiene que estar corriendo, y qué
+/// documentos (índices en la lista que recibió [`repartir_por_lenguaje`])
+/// tiene que tener abiertos.
+#[derive(Debug, PartialEq)]
+struct Reparto {
+    lenguaje: Lenguaje,
+    comando: ComandoLsp,
+    documentos: Vec<usize>,
+}
+
+/// Qué sesión corresponde a cada documento abierto. `documentos` son
+/// pares (ruta mostrada, URI) de todas las pestañas: se agrupan por
+/// lenguaje en el orden en que aparecen, dejando afuera los que no tienen
+/// lenguaje (un `.txt`, un "[Sin nombre]"), los de lenguajes con el LSP
+/// deshabilitado o sin comando conocido, y las repeticiones de un URI ya
+/// visto — el mismo archivo abierto en dos paneles se queda con la
+/// PRIMERA aparición, por eso quien llama pone primero el documento
+/// activo (ver `EstadoLsp::sincronizar`).
+fn repartir_por_lenguaje(documentos: &[(&str, &str)], config: &Config) -> Vec<Reparto> {
+    let mut repartos: Vec<Reparto> = Vec::new();
+    let mut vistos: Vec<&str> = Vec::new();
+    for (indice, &(ruta, uri)) in documentos.iter().enumerate() {
+        let Some(lenguaje) = Lenguaje::detectar_por_extension(ruta) else { continue };
+        if !config.lenguajes.lsp_habilitado(lenguaje.id()) || vistos.contains(&uri) {
+            continue;
+        }
+        match repartos.iter_mut().find(|r| r.lenguaje == lenguaje) {
+            Some(reparto) => reparto.documentos.push(indice),
+            None => {
+                let Some(comando) = comando_efectivo(lenguaje, config) else { continue };
+                repartos.push(Reparto { lenguaje, comando, documentos: vec![indice] });
+            }
+        }
+        vistos.push(uri);
+    }
+    repartos
+}
+
+/// Qué documentos abrir y cerrar en una sesión para pasar de los URIs que
+/// tiene abiertos (`abiertos`) a los que debería tener (`deseados`):
+/// índices en `abiertos` a cerrar (de menor a mayor) e índices en
+/// `deseados` a abrir.
+fn diferencia_documentos(abiertos: &[&str], deseados: &[&str]) -> (Vec<usize>, Vec<usize>) {
+    let cerrar = (0..abiertos.len()).filter(|&i| !deseados.contains(&abiertos[i])).collect();
+    let abrir = (0..deseados.len()).filter(|&i| !abiertos.contains(&deseados[i])).collect();
+    (cerrar, abrir)
+}
+
+/// Lanza el servidor de `lenguaje` con `comando` y le manda `initialize`.
+/// Devuelve la sesión en [`Fase::Iniciando`] y sin documentos (quien
+/// llama los agrega), o el motivo por el que no arrancó, como línea de
+/// log para [`Fallo`].
+async fn lanzar_sesion(lenguaje: Lenguaje, comando: ComandoLsp) -> std::result::Result<SesionLsp, String> {
+    let (programa, args, env) = &comando;
+    let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+    let env_ref: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let mut cliente = Cliente::lanzar(programa, &args_ref, &env_ref).await.map_err(|e| format!("[tcode] {e:#}"))?;
+
+    // Lo único que se declara explícitamente es `formatting` (sin
+    // registro dinámico: `tcode` no responde `client/
+    // registerCapability`), para que un servidor que decide qué anunciar
+    // según lo que soporta el cliente anuncie `documentFormattingProvider`
+    // de forma estática.
+    let capabilities = ClientCapabilities {
+        text_document: Some(TextDocumentClientCapabilities {
+            formatting: Some(DocumentFormattingClientCapabilities { dynamic_registration: Some(false) }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let params = InitializeParams { process_id: Some(std::process::id()), capabilities, ..Default::default() };
+    let Ok(id_initialize) = cliente.peticion("initialize", params).await else {
+        cliente.matar().await;
+        return Err(format!("[tcode] '{programa}' se cerró antes de recibir `initialize`"));
+    };
+
+    Ok(SesionLsp {
+        cliente,
+        lenguaje,
+        comando_usado: comando,
+        fase: Fase::Iniciando { id_initialize },
+        soporta_formateo: false,
+        documentos: Vec::new(),
+    })
+}
+
+/// Estado LSP de la aplicación: una sesión por lenguaje con documentos
+/// abiertos (ver la nota del módulo).
 #[derive(Default)]
 pub struct EstadoLsp {
-    sesion: Option<SesionLsp>,
+    sesiones: Vec<SesionLsp>,
+    fallos: Vec<Fallo>,
+    /// Ruta mostrada → URI, calculado una sola vez por ruta (`uri_de_
+    /// archivo` pregunta el directorio actual y codifica la ruta entera:
+    /// no es algo para hacer por pestaña en cada frame). `None` si la
+    /// ruta no se puede convertir. Lo usan también los diagnósticos para
+    /// encontrar las pestañas de un URI.
+    uris: HashMap<String, Option<Uri>>,
+    /// Lenguaje del documento activo en el último `sincronizar`: a qué
+    /// sesión le pertenecen los logs de `Ctrl+K R`.
+    lenguaje_activo: Option<Lenguaje>,
+    /// Por qué sesión empieza a mirar `siguiente_mensaje` la próxima vez,
+    /// para que un servidor muy hablador no tape a los demás.
+    turno: usize,
 }
 
 impl EstadoLsp {
@@ -147,116 +322,150 @@ impl EstadoLsp {
         Self::default()
     }
 
-    /// Al cambiar de archivo activo (abrir uno nuevo, cambiar de panel) O
-    /// al habilitar/deshabilitar el LSP de un lenguaje desde el panel de
-    /// administración (sección "Lenguajes / LSP", PLAN.md §5.3, sin
-    /// cambiar de archivo): si el lenguaje EFECTIVO (`None` si está
-    /// deshabilitado en `config`, aunque el archivo sí tenga ese
-    /// lenguaje) es distinto del que ya está corriendo, cierra la sesión
-    /// vieja y arranca una nueva. Si el nuevo archivo no tiene lenguaje
-    /// con LSP (o está deshabilitado, o el server configurado no se pudo
-    /// lanzar — no está instalado), simplemente no queda sesión activa —
-    /// el editor sigue funcionando igual, sin LSP. `contenido` da el
-    /// texto actual del archivo, y solo se llama si de verdad hay que
-    /// lanzar una sesión nueva — esto corre en cada frame, y copiar el
-    /// archivo entero cuando no hace falta era parte del costo por frame
-    /// con archivos grandes (BACKLOG.md P1 #14).
-    pub async fn actualizar_para_archivo(&mut self, ruta: &str, contenido: impl FnOnce() -> String, config: &Config) {
-        let lenguaje = Lenguaje::detectar_por_extension(ruta);
-        let lenguaje_efectivo = lenguaje.filter(|l| config.lenguajes.lsp_habilitado(l.id()));
-        let comando_efectivo_actual = lenguaje_efectivo.and_then(|l| comando_efectivo(l, config));
+    /// Una vez por frame (y justo antes de formatear al guardar): pone a
+    /// las sesiones al día con lo que hay abierto en `layout`. Lanza la
+    /// sesión de un lenguaje la primera vez que aparece un documento suyo
+    /// (en cualquier pestaña de cualquier panel), cierra la de un
+    /// lenguaje del que ya no queda ninguno — o que se deshabilitó desde
+    /// el panel de administración, o cuyo comando cambió (en ese caso se
+    /// relanza solo esa) —, manda `didOpen`/`didClose` a medida que se
+    /// abren y cierran pestañas, y `didChange` de cada documento cuyo
+    /// texto cambió.
+    ///
+    /// Las sesiones que sobran se cierran con el protocolo educado
+    /// (`shutdown` + `exit`) en una tarea aparte: acá no se espera a
+    /// nadie — esto corre en el camino de cada tecla, y el servidor viejo
+    /// puede tardar hasta un segundo en contestar.
+    pub async fn sincronizar(&mut self, layout: &PanelLayout, config: &Config) {
+        let activo = layout.panel_activo();
+        self.lenguaje_activo = Lenguaje::detectar_por_extension(&activo.ruta_mostrada);
 
-        let necesita_relanzar = match (&self.sesion, lenguaje_efectivo) {
-            // Mismo lenguaje: relanza si además cambió el comando
-            // configurado (edición en vivo desde el panel de
-            // administración), no solo si cambió el lenguaje.
-            (Some(sesion), Some(l)) => {
-                sesion.lenguaje != l || comando_efectivo_actual.as_ref() != Some(&sesion.comando_usado)
+        // El activo primero: si el mismo archivo está abierto en otro
+        // panel (con otro buffer), es el suyo el que se le manda al
+        // servidor — es donde se está tipeando.
+        let mut documentos = layout.documentos();
+        if let Some(posicion) = documentos.iter().position(|d| std::ptr::eq(*d, activo)) {
+            let documento = documentos.remove(posicion);
+            documentos.insert(0, documento);
+        }
+
+        for documento in &documentos {
+            let ruta = documento.ruta_mostrada.as_str();
+            if !self.uris.contains_key(ruta) && Lenguaje::detectar_por_extension(ruta).is_some() {
+                self.uris.insert(ruta.to_string(), uri_de_archivo(Path::new(ruta)).ok());
             }
-            (Some(_), None) | (None, Some(_)) => true,
-            (None, None) => false,
-        };
-        if !necesita_relanzar {
-            // Mismo lenguaje pero otro archivo (otra pestaña o panel,
-            // BACKLOG.md P3 #10): la sesión sigue al documento activo sin
-            // relanzar el servidor. Antes se quedaba con el URI del
-            // primero y le mandaba el texto del nuevo como `didChange` de
-            // aquel — con pestañas, cambiar entre dos `.py` es lo normal.
-            if let Some(sesion) = &mut self.sesion {
-                if sesion.ruta != ruta {
-                    sesion.cambiar_documento(ruta, contenido).await;
+        }
+        // Que el caché no crezca sin límite en una sesión larga abriendo
+        // y cerrando archivos: se poda (rara vez) a lo abierto ahora.
+        if self.uris.len() > documentos.len() + 64 {
+            self.uris.retain(|ruta, _| documentos.iter().any(|d| d.ruta_mostrada == *ruta));
+        }
+
+        let candidatos: Vec<(&PanelEditor, &Uri)> = documentos
+            .iter()
+            .filter_map(|d| Some((*d, self.uris.get(d.ruta_mostrada.as_str())?.as_ref()?)))
+            .collect();
+        let pares: Vec<(&str, &str)> = candidatos.iter().map(|(d, uri)| (d.ruta_mostrada.as_str(), uri.as_str())).collect();
+        let repartos = repartir_por_lenguaje(&pares, config);
+
+        let mut indice = 0;
+        while indice < self.sesiones.len() {
+            let sesion = &self.sesiones[indice];
+            if repartos.iter().any(|r| r.lenguaje == sesion.lenguaje && r.comando == sesion.comando_usado) {
+                indice += 1;
+            } else {
+                let sesion = self.sesiones.remove(indice);
+                tokio::spawn(sesion.cliente.cerrar());
+            }
+        }
+        self.fallos.retain(|f| repartos.iter().any(|r| r.lenguaje == f.lenguaje && r.comando == f.comando));
+
+        for reparto in repartos {
+            if self.fallos.iter().any(|f| f.lenguaje == reparto.lenguaje) {
+                continue;
+            }
+            let deseados: Vec<(&PanelEditor, &Uri)> = reparto.documentos.iter().map(|&i| candidatos[i]).collect();
+
+            let Some(sesion) = self.sesiones.iter_mut().find(|s| s.lenguaje == reparto.lenguaje) else {
+                match lanzar_sesion(reparto.lenguaje, reparto.comando.clone()).await {
+                    Ok(mut sesion) => {
+                        for (documento, uri) in deseados {
+                            let buffer = documento.editor.buffer();
+                            sesion.abrir_documento(uri.clone(), buffer.a_texto(), buffer.revision()).await;
+                        }
+                        self.sesiones.push(sesion);
+                    }
+                    Err(motivo) => self.fallos.push(Fallo {
+                        lenguaje: reparto.lenguaje,
+                        comando: reparto.comando,
+                        logs: vec![motivo],
+                        total_logs: 1,
+                    }),
+                }
+                continue;
+            };
+
+            let (cerrar, abrir) = {
+                let abiertos: Vec<&str> = sesion.documentos.iter().map(|d| d.uri.as_str()).collect();
+                let uris_deseados: Vec<&str> = deseados.iter().map(|(_, uri)| uri.as_str()).collect();
+                diferencia_documentos(&abiertos, &uris_deseados)
+            };
+            for indice in cerrar.into_iter().rev() {
+                sesion.cerrar_documento(indice).await;
+            }
+            for indice in abrir {
+                let (documento, uri) = deseados[indice];
+                let buffer = documento.editor.buffer();
+                sesion.abrir_documento(uri.clone(), buffer.a_texto(), buffer.revision()).await;
+            }
+            for (documento, uri) in deseados {
+                if let Some(indice) = sesion.indice_documento(uri.as_str()) {
+                    let buffer = documento.editor.buffer();
+                    sesion.sincronizar_documento(indice, buffer.revision(), || buffer.a_texto()).await;
                 }
             }
+        }
+    }
+
+    /// Espera el siguiente mensaje de CUALQUIERA de las sesiones, junto
+    /// con el lenguaje de la sesión que lo mandó (`None` en el mensaje:
+    /// ese servidor se murió). Nunca resuelve si no hay sesiones —
+    /// pensado para usarse dentro del `tokio::select!` de `ejecutar` junto
+    /// al stream de teclado, sin bloquearlo. Se sondea el canal de cada
+    /// sesión sin tareas ni canales intermedios: el future se vuelve a
+    /// armar en cada vuelta del bucle, así que siempre ve las sesiones
+    /// actuales, y cancelarlo (llegó una tecla antes) no pierde nada.
+    pub async fn siguiente_mensaje(&mut self) -> (Lenguaje, Option<MensajeEntrante>) {
+        std::future::poll_fn(|cx| {
+            let total = self.sesiones.len();
+            for paso in 0..total {
+                let indice = (self.turno + paso) % total;
+                let sesion = &mut self.sesiones[indice];
+                if let Poll::Ready(mensaje) = sesion.cliente.receptor.poll_recv(cx) {
+                    let lenguaje = sesion.lenguaje;
+                    self.turno = indice + 1;
+                    return Poll::Ready((lenguaje, mensaje));
+                }
+            }
+            Poll::Pending
+        })
+        .await
+    }
+
+    /// Procesa un mensaje ya recibido de la sesión de `lenguaje`:
+    /// completa el handshake si era la respuesta a `initialize` (y abre
+    /// en el servidor todos los documentos anotados mientras tanto), o
+    /// actualiza los diagnósticos de las pestañas de ese archivo si era un
+    /// `publishDiagnostics` — sea cual sea el documento, esté visible o
+    /// no. `None` quiere decir que el servidor se murió: la sesión pasa a
+    /// [`Fallo`] sin tocar a las demás.
+    pub async fn procesar_mensaje(&mut self, lenguaje: Lenguaje, mensaje: Option<MensajeEntrante>, layout: &mut PanelLayout) {
+        let Some(indice) = self.sesiones.iter().position(|s| s.lenguaje == lenguaje) else { return };
+        let Some(mensaje) = mensaje else {
+            self.marcar_caida(indice);
             return;
-        }
-
-        if let Some(sesion) = self.sesion.take() {
-            // `matar`, no `cerrar`: esto corre en el camino síncrono de
-            // cada tecla (`sincronizar_lsp`, `app/main.rs`) — el
-            // protocolo de cierre educado completo puede tardar hasta un
-            // segundo si el servidor viejo no responde `shutdown` rápido,
-            // y se sentiría como que `tcode` se traba al cambiar de
-            // archivo. El cierre prolijo se reserva para cuando de
-            // verdad no hay apuro: salir de `tcode` (`EstadoLsp::cerrar`,
-            // más abajo).
-            sesion.cliente.matar().await;
-        }
-
-        let Some(lenguaje) = lenguaje_efectivo else { return };
-        let Some((comando, args, env)) = comando_efectivo_actual else { return };
-        let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
-        let env_ref: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        let Ok(uri) = uri_de_archivo(Path::new(ruta)) else { return };
-        let Ok(mut cliente) = Cliente::lanzar(&comando, &args_ref, &env_ref).await else { return };
-
-        // Lo único que se declara explícitamente es `formatting` (sin
-        // registro dinámico: `tcode` no responde `client/
-        // registerCapability`), para que un servidor que decide qué
-        // anunciar según lo que soporta el cliente anuncie
-        // `documentFormattingProvider` de forma estática.
-        let capabilities = ClientCapabilities {
-            text_document: Some(TextDocumentClientCapabilities {
-                formatting: Some(DocumentFormattingClientCapabilities { dynamic_registration: Some(false) }),
-                ..Default::default()
-            }),
-            ..Default::default()
         };
-        let params = InitializeParams {
-            process_id: Some(std::process::id()),
-            capabilities,
-            ..Default::default()
-        };
-        let Ok(id_initialize) = cliente.peticion("initialize", params).await else { return };
-
-        self.sesion = Some(SesionLsp {
-            cliente,
-            lenguaje,
-            comando_usado: (comando, args, env),
-            fase: Fase::Iniciando { id_initialize },
-            ruta: ruta.to_string(),
-            uri,
-            ultimo_texto_enviado: contenido(),
-            ultima_revision_enviada: None,
-            soporta_formateo: false,
-        });
-    }
-
-    /// Espera el siguiente mensaje del servidor LSP activo. Nunca resuelve
-    /// si no hay sesión — pensado para usarse dentro de un `tokio::select!`
-    /// junto al stream de teclado, sin bloquearlo cuando no hay LSP.
-    pub async fn siguiente_mensaje(&mut self) -> Option<MensajeEntrante> {
-        match &mut self.sesion {
-            Some(sesion) => sesion.cliente.receptor.recv().await,
-            None => std::future::pending().await,
-        }
-    }
-
-    /// Procesa un mensaje ya recibido: completa el handshake si era la
-    /// respuesta a `initialize`, o actualiza los diagnósticos del panel
-    /// activo si era una notificación `publishDiagnostics` del archivo
-    /// actualmente activo.
-    pub async fn procesar_mensaje(&mut self, mensaje: MensajeEntrante, layout: &mut PanelLayout) {
-        let Some(sesion) = &mut self.sesion else { return };
+        let sesion = &mut self.sesiones[indice];
 
         match mensaje {
             MensajeEntrante::Respuesta { id, resultado } => {
@@ -265,100 +474,75 @@ impl EstadoLsp {
                         let modo = ModoSincronizacion::desde_initialize(resultado);
                         sesion.soporta_formateo = tcode_lsp::soporta_formateo(resultado);
                         let _ = sesion.cliente.notificacion("initialized", InitializedParams {}).await;
-                        let _ = sesion
-                            .cliente
-                            .notificacion(
-                                "textDocument/didOpen",
-                                DidOpenTextDocumentParams {
-                                    text_document: TextDocumentItem {
-                                        uri: sesion.uri.clone(),
-                                        language_id: sesion.lenguaje.id().to_string(),
-                                        version: 1,
-                                        text: sesion.ultimo_texto_enviado.clone(),
-                                    },
-                                },
-                            )
-                            .await;
-                        sesion.fase = Fase::Listo { version: 1, modo };
+                        for indice in 0..sesion.documentos.len() {
+                            sesion.enviar_did_open(indice).await;
+                        }
+                        sesion.fase = Fase::Listo { modo };
                     }
                 }
             }
             MensajeEntrante::Notificacion { metodo, params } => {
-                if metodo == "textDocument/publishDiagnostics" {
-                    // El texto tal como lo tiene `tcode` ahora mismo — hace
-                    // falta para la conversión UTF-16 → carácter de las
-                    // columnas del diagnóstico (`parsear_diagnosticos`).
-                    if let Ok((uri, diagnosticos)) =
-                        tcode_lsp::parsear_diagnosticos(&params, &sesion.ultimo_texto_enviado)
-                    {
-                        if uri == sesion.uri.as_str() {
-                            layout.establecer_diagnosticos_activo(diagnosticos);
-                        }
+                if metodo != "textDocument/publishDiagnostics" {
+                    return;
+                }
+                let Some(uri) = params.get("uri").and_then(Value::as_str) else { return };
+                // Un documento que ya se cerró (o de otro lenguaje) no
+                // tiene a quién mostrarle nada.
+                let Some(documento) = sesion.documentos.iter().find(|d| d.uri.as_str() == uri) else { return };
+                // El texto tal como lo tiene el servidor — hace falta
+                // para la conversión UTF-16 → carácter de las columnas.
+                let Ok((_, diagnosticos)) = tcode_lsp::parsear_diagnosticos(&params, &documento.ultimo_texto_enviado) else {
+                    return;
+                };
+                for panel in layout.paneles_mut() {
+                    let es_este = self
+                        .uris
+                        .get(panel.ruta_mostrada.as_str())
+                        .and_then(Option::as_ref)
+                        .is_some_and(|u| u.as_str() == uri);
+                    if es_este {
+                        panel.diagnosticos = diagnosticos.clone();
                     }
                 }
             }
         }
     }
 
-    /// Si el contenido del archivo activo cambió desde el último envío,
-    /// notifica `textDocument/didChange`. `revision` es la del `Buffer`
-    /// activo (`Buffer::revision`) y `texto_actual` da su texto: si la
-    /// revisión es la del último envío no se hace nada — ni copiar ni
-    /// comparar el archivo, el caso de casi todos los frames. Si cambió,
-    /// se manda solo el rango editado cuando el servidor anunció
-    /// sincronización incremental, o el texto completo si no
-    /// (`tcode_lsp::cambio_entre`) — con pyright y 10.000 líneas, mandar
-    /// y que el servidor procese el texto entero por cada frame con
-    /// cambios era el costo más grande que quedaba al tipear.
-    pub async fn sincronizar_contenido(&mut self, revision: u64, texto_actual: impl FnOnce() -> String) {
-        let Some(sesion) = &mut self.sesion else { return };
-        let Fase::Listo { version, modo } = &mut sesion.fase else { return };
-        if sesion.ultima_revision_enviada == Some(revision) {
-            return;
-        }
-        let texto_actual = texto_actual();
-        let Some(cambio) = tcode_lsp::cambio_entre(&sesion.ultimo_texto_enviado, &texto_actual, *modo) else {
-            sesion.ultima_revision_enviada = Some(revision);
-            return;
-        };
-
-        *version += 1;
-        let params = DidChangeTextDocumentParams {
-            text_document: VersionedTextDocumentIdentifier { uri: sesion.uri.clone(), version: *version },
-            content_changes: vec![cambio],
-        };
-        if sesion.cliente.notificacion("textDocument/didChange", params).await.is_ok() {
-            // Hace falta el texto entero igual: es la base del próximo
-            // cambio incremental y de la conversión UTF-16 → carácter de
-            // los diagnósticos (`procesar_mensaje`).
-            sesion.ultimo_texto_enviado = texto_actual;
-            sesion.ultima_revision_enviada = Some(revision);
-        }
+    /// El servidor de la sesión `indice` se murió (su stdout se cerró):
+    /// pasa a [`Fallo`], con sus logs más una línea que lo dice, y se
+    /// recoge el proceso en segundo plano para que no quede como zombi.
+    fn marcar_caida(&mut self, indice: usize) {
+        let sesion = self.sesiones.remove(indice);
+        let (mut logs, mut total_logs) = sesion.cliente.logs_con_total();
+        logs.push(format!("[tcode] el servidor '{}' se cerró inesperadamente", sesion.comando_usado.0));
+        total_logs += 1;
+        self.fallos.push(Fallo { lenguaje: sesion.lenguaje, comando: sesion.comando_usado, logs, total_logs });
+        tokio::spawn(sesion.cliente.matar());
     }
 
     /// Pide `textDocument/formatting` para el archivo `ruta` (cuyo texto
-    /// actual es `texto`) y espera la respuesta, como mucho
-    /// [`TIMEOUT_FORMATEO`] — lo usa el guardado con "formatear al
-    /// guardar" prendido (`guardar_archivo_activo`, `app/main.rs`,
-    /// BACKLOG.md P2 #5). Devuelve las ediciones ya traducidas a offsets
-    /// de bytes sobre `texto`, o el motivo (texto corto, para la barra de
-    /// estado) por el que no se formateó: no hay sesión, todavía está
-    /// iniciando, el servidor no anuncia `documentFormattingProvider`,
-    /// la sesión está abierta sobre otro archivo, respondió con error, o
-    /// no respondió a tiempo. Nunca falla de otra forma: quien llama
-    /// guarda igual en cualquiera de esos casos.
+    /// actual es `texto`) a la sesión de su lenguaje y espera la
+    /// respuesta, como mucho [`TIMEOUT_FORMATEO`] — lo usa el guardado
+    /// con "formatear al guardar" prendido (`guardar_archivo_activo`,
+    /// `app/main.rs`, BACKLOG.md P2 #5). Devuelve las ediciones ya
+    /// traducidas a offsets de bytes sobre `texto`, o el motivo (texto
+    /// corto, para la barra de estado) por el que no se formateó: no hay
+    /// sesión para ese lenguaje, todavía está iniciando, el servidor no
+    /// anuncia `documentFormattingProvider`, el documento no está abierto
+    /// en él, respondió con error, o no respondió a tiempo. Nunca falla de
+    /// otra forma: quien llama guarda igual en cualquiera de esos casos.
     ///
     /// Quien llama tiene que haber sincronizado el texto antes
     /// (`sincronizar_lsp`): las posiciones de la respuesta se refieren al
     /// documento que tiene el SERVIDOR, así que si no coincide con `texto`
     /// no se pide nada (aplicarlas sobre otro texto rompería el archivo).
     ///
-    /// La espera es un bucle propio sobre el mismo canal que lee el
-    /// `tokio::select!` de `ejecutar`, no un segundo lector: la respuesta
-    /// se reconoce por su id, y cualquier otro mensaje que llegue
-    /// mientras tanto (diagnósticos, otra respuesta) se procesa ahí mismo
-    /// con `procesar_mensaje`, igual que lo habría hecho el bucle
-    /// principal — no se pierde nada. Si se vence el tiempo se manda
+    /// La espera es un bucle propio sobre el canal de esa sesión (el mismo
+    /// que sondea `siguiente_mensaje`, no un segundo lector): la respuesta
+    /// se reconoce por su id, y cualquier otro mensaje de esa sesión que
+    /// llegue mientras tanto se procesa ahí mismo con `procesar_mensaje`,
+    /// igual que lo habría hecho el bucle principal; los de las demás
+    /// sesiones esperan en sus canales. Si se vence el tiempo se manda
     /// `$/cancelRequest`; si la respuesta llega igual más tarde, el bucle
     /// principal la recibe con un id que nadie espera y la ignora.
     pub async fn pedir_formateo(
@@ -368,16 +552,23 @@ impl EstadoLsp {
         opciones: FormattingOptions,
         layout: &mut PanelLayout,
     ) -> std::result::Result<Vec<EdicionTexto>, &'static str> {
-        let Some(sesion) = &mut self.sesion else { return Err("sin LSP activo") };
+        let Some(lenguaje) = Lenguaje::detectar_por_extension(ruta) else { return Err("sin LSP activo") };
+        let Some(sesion) = self.sesiones.iter_mut().find(|s| s.lenguaje == lenguaje) else {
+            return Err(if self.fallos.iter().any(|f| f.lenguaje == lenguaje) {
+                "el LSP no arrancó o se cerró"
+            } else {
+                "sin LSP activo"
+            });
+        };
         let Fase::Listo { .. } = sesion.fase else { return Err("el LSP todavía está iniciando") };
         if !sesion.soporta_formateo {
             return Err("el LSP no soporta formatear");
         }
         let Ok(uri) = uri_de_archivo(Path::new(ruta)) else { return Err("sin LSP activo") };
-        if uri.as_str() != sesion.uri.as_str() {
-            return Err("el LSP está abierto sobre otro archivo");
-        }
-        if sesion.ultimo_texto_enviado != texto {
+        let Some(documento) = sesion.documentos.iter().find(|d| d.uri.as_str() == uri.as_str()) else {
+            return Err("el documento no está abierto en el LSP");
+        };
+        if documento.ultimo_texto_enviado != texto {
             return Err("el LSP no tiene el texto al día");
         }
 
@@ -392,13 +583,18 @@ impl EstadoLsp {
 
         let limite = tokio::time::Instant::now() + TIMEOUT_FORMATEO;
         loop {
-            let Some(sesion) = &mut self.sesion else { return Err("sin LSP activo") };
+            let Some(sesion) = self.sesiones.iter_mut().find(|s| s.lenguaje == lenguaje) else {
+                return Err("el LSP se cerró");
+            };
             match tokio::time::timeout_at(limite, sesion.cliente.receptor.recv()).await {
                 Err(_) => {
                     let _ = sesion.cliente.notificacion("$/cancelRequest", json!({ "id": id_formateo })).await;
                     return Err("el LSP tardó demasiado en formatear");
                 }
-                Ok(None) => return Err("el LSP se cerró"),
+                Ok(None) => {
+                    self.procesar_mensaje(lenguaje, None, layout).await;
+                    return Err("el LSP se cerró");
+                }
                 Ok(Some(MensajeEntrante::Respuesta { id, resultado })) if id == id_formateo => {
                     return match resultado {
                         Ok(valor) => {
@@ -407,45 +603,54 @@ impl EstadoLsp {
                         Err(_) => Err("el LSP devolvió un error al formatear"),
                     };
                 }
-                Ok(Some(otro)) => self.procesar_mensaje(otro, layout).await,
+                Ok(Some(otro)) => self.procesar_mensaje(lenguaje, Some(otro), layout).await,
             }
         }
     }
 
-    /// El lenguaje de la sesión LSP activa, si hay una — usado por la
-    /// sección "Lenguajes / LSP" del panel de administración para saber
-    /// a cuál de sus filas corresponde el estado en vivo (PLAN.md §5.3:
-    /// "ver estado conectado/error").
-    pub fn lenguaje_activo(&self) -> Option<Lenguaje> {
-        self.sesion.as_ref().map(|s| s.lenguaje)
-    }
-
-    /// Líneas de stderr acumuladas por la sesión activa, de la más
-    /// vieja a la más nueva — vacío si no hay sesión, o si la hay pero
-    /// nunca escribió nada (PLAN.md §5.3, "ver logs"; `Ctrl+K R`,
-    /// `crates/app/src/main.rs`), más el total de líneas recibidas por la
-    /// sesión (`Cliente::logs_con_total`) — lo que usa el visor en vivo
-    /// (`EstadoLogsLsp::actualizar`, BACKLOG.md P1 #2) para saber cuántas
-    /// son nuevas. `(vacío, 0)` sin sesión.
+    /// Líneas de stderr acumuladas por la sesión del lenguaje del
+    /// documento activo, de la más vieja a la más nueva (PLAN.md §5.3,
+    /// "ver logs"; `Ctrl+K R`, `crates/app/src/main.rs`), más el total de
+    /// líneas recibidas (`Cliente::logs_con_total`) — lo que usa el visor
+    /// en vivo (`EstadoLogsLsp::actualizar`, BACKLOG.md P1 #2) para saber
+    /// cuántas son nuevas. Si ese servidor no arrancó o se murió, los
+    /// logs que dejó más el motivo ([`Fallo`]). `(vacío, 0)` si el
+    /// documento activo no tiene sesión.
     pub fn logs_con_total(&self) -> (Vec<String>, u64) {
-        self.sesion.as_ref().map(|s| s.cliente.logs_con_total()).unwrap_or_default()
+        let Some(lenguaje) = self.lenguaje_activo else { return Default::default() };
+        if let Some(sesion) = self.sesiones.iter().find(|s| s.lenguaje == lenguaje) {
+            return sesion.cliente.logs_con_total();
+        }
+        self.fallos
+            .iter()
+            .find(|f| f.lenguaje == lenguaje)
+            .map(|f| (f.logs.clone(), f.total_logs))
+            .unwrap_or_default()
     }
 
-    /// Texto legible en español del estado de la sesión activa —
-    /// `None` si no hay ninguna (el panel muestra "Inactivo" en ese
-    /// caso, decidido ahí en vez de acá para no acoplar este módulo a
-    /// cómo se ve la fila).
-    pub fn estado_texto(&self) -> Option<&'static str> {
-        self.sesion.as_ref().map(|s| match s.fase {
-            Fase::Iniciando { .. } => "Iniciando…",
-            Fase::Listo { .. } => "Conectado",
-        })
+    /// Texto legible en español del estado de la sesión de `lenguaje` —
+    /// `None` si no hay ninguna (el panel muestra "Inactivo" en ese caso,
+    /// decidido ahí en vez de acá para no acoplar este módulo a cómo se ve
+    /// la fila). "Error" si no arrancó o se murió (los logs de `Ctrl+K R`
+    /// dicen por qué).
+    pub fn estado_texto(&self, lenguaje: Lenguaje) -> Option<&'static str> {
+        if let Some(sesion) = self.sesiones.iter().find(|s| s.lenguaje == lenguaje) {
+            return Some(match sesion.fase {
+                Fase::Iniciando { .. } => "Iniciando…",
+                Fase::Listo { .. } => "Conectado",
+            });
+        }
+        self.fallos.iter().any(|f| f.lenguaje == lenguaje).then_some("Error")
     }
 
-    /// Cierra la sesión LSP activa, si hay una (al salir de tcode).
+    /// Cierra todas las sesiones al salir de tcode, con el protocolo
+    /// educado (`shutdown` + `exit`, `Cliente::cerrar`) y EN PARALELO:
+    /// con varios servidores, la salida sigue demorando como mucho lo
+    /// mismo que con uno (el tope de `Cliente::cerrar`), no la suma.
     pub async fn cerrar(self) {
-        if let Some(sesion) = self.sesion {
-            sesion.cliente.cerrar().await;
+        let tareas: Vec<_> = self.sesiones.into_iter().map(|s| tokio::spawn(s.cliente.cerrar())).collect();
+        for tarea in tareas {
+            let _ = tarea.await;
         }
     }
 }
@@ -552,3 +757,140 @@ mod tests_uri {
     }
 }
 
+
+#[cfg(test)]
+mod tests_ruteo {
+    use super::*;
+    use tcode_core::Editor;
+    use tcode_ui::DireccionSplit;
+
+    fn config_con(comandos: &[(&str, &str)]) -> Config {
+        let mut config = Config::default();
+        for (lenguaje, linea) in comandos {
+            config.lenguajes.fijar_comando_desde_linea(lenguaje, linea);
+        }
+        config
+    }
+
+    #[test]
+    fn cada_documento_va_a_la_sesion_de_su_lenguaje() {
+        let config = config_con(&[("rust", "rust-analyzer")]);
+        let documentos =
+            [("a.py", "file:///a.py"), ("b.rs", "file:///b.rs"), ("notas.txt", "file:///notas.txt"), ("c.py", "file:///c.py")];
+        let repartos = repartir_por_lenguaje(&documentos, &config);
+        assert_eq!(repartos.len(), 2);
+        assert_eq!(repartos[0].lenguaje, Lenguaje::Python);
+        assert_eq!(repartos[0].documentos, vec![0, 3]);
+        assert_eq!(repartos[0].comando.0, "pyright-langserver");
+        assert_eq!(repartos[1].lenguaje, Lenguaje::Rust);
+        assert_eq!(repartos[1].documentos, vec![1]);
+    }
+
+    #[test]
+    fn sin_comando_o_deshabilitado_no_hay_sesion() {
+        // Rust no tiene comando por defecto; Python está deshabilitado.
+        let mut config = Config::default();
+        config.lenguajes.alternar_lsp("python");
+        let documentos = [("a.py", "file:///a.py"), ("b.rs", "file:///b.rs")];
+        assert!(repartir_por_lenguaje(&documentos, &config).is_empty());
+    }
+
+    #[test]
+    fn el_mismo_uri_en_dos_paneles_es_un_solo_documento_y_gana_el_primero() {
+        let config = Config::default();
+        // Misma ruta en dos paneles, y la misma escrita relativa y
+        // absoluta (distinta ruta mostrada, mismo URI).
+        let documentos = [("/p/a.py", "file:///p/a.py"), ("/p/a.py", "file:///p/a.py"), ("a.py", "file:///p/a.py")];
+        let repartos = repartir_por_lenguaje(&documentos, &config);
+        assert_eq!(repartos[0].documentos, vec![0]);
+    }
+
+    #[test]
+    fn diferencia_abre_lo_nuevo_y_cierra_lo_que_ya_no_esta() {
+        let (cerrar, abrir) = diferencia_documentos(&["u1", "u2", "u3"], &["u3", "u4", "u1"]);
+        assert_eq!(cerrar, vec![1]);
+        assert_eq!(abrir, vec![1]);
+        let (cerrar, abrir) = diferencia_documentos(&["u1"], &["u1"]);
+        assert!(cerrar.is_empty() && abrir.is_empty());
+    }
+
+    /// Panel 1: `a.py`. Panel 2 (split): `b.rs` y `c.py` en pestañas, con
+    /// `c.py` activa.
+    fn layout_de_prueba() -> PanelLayout {
+        let mut layout = PanelLayout::nuevo(editor_con("a = 1\n"), "a.py".to_string());
+        layout.dividir(DireccionSplit::Vertical);
+        layout.abrir_en_activo(editor_con("fn main() {}\n"), "b.rs".to_string());
+        layout.abrir_en_activo(editor_con("c = 2\n"), "c.py".to_string());
+        layout
+    }
+
+    /// Con texto, para que abrir otro archivo no lo tome por un "[Sin
+    /// nombre]" descartable y lo reemplace.
+    fn editor_con(texto: &str) -> Editor {
+        let mut editor = Editor::nuevo();
+        editor.insertar_texto(texto);
+        editor
+    }
+
+    fn documentos_de(lsp: &EstadoLsp, lenguaje: Lenguaje) -> usize {
+        lsp.sesiones.iter().find(|s| s.lenguaje == lenguaje).map_or(0, |s| s.documentos.len())
+    }
+
+    /// Con procesos de verdad pero sin servidores LSP reales: `cat` nunca
+    /// contesta `initialize` (se queda "Iniciando…"), un binario
+    /// inexistente no arranca y `true` se muere enseguida.
+    #[tokio::test]
+    async fn una_sesion_por_lenguaje_que_sigue_a_las_pestanas_y_aisla_fallos() {
+        let mut layout = layout_de_prueba();
+        let mut lsp = EstadoLsp::nuevo();
+        let config = config_con(&[("python", "cat"), ("rust", "comando-que-no-existe-tcode")]);
+
+        lsp.sincronizar(&layout, &config).await;
+        assert_eq!(lsp.sesiones.len(), 1);
+        assert_eq!(documentos_de(&lsp, Lenguaje::Python), 2, "a.py y c.py, de paneles distintos, en la misma sesión");
+        assert_eq!(lsp.estado_texto(Lenguaje::Python), Some("Iniciando…"));
+        assert_eq!(lsp.estado_texto(Lenguaje::Rust), Some("Error"), "no arrancó, pero no afecta a Python");
+        assert_eq!(lsp.lenguaje_activo, Some(Lenguaje::Python));
+
+        // Otro frame sin cambios: nada se relanza ni se reintenta.
+        lsp.sincronizar(&layout, &config).await;
+        assert_eq!(lsp.sesiones.len(), 1);
+        assert_eq!(lsp.fallos.len(), 1);
+
+        // Cerrar la pestaña de c.py: la sesión sigue, con un documento menos.
+        layout.cerrar_pestana_activa();
+        lsp.sincronizar(&layout, &config).await;
+        assert_eq!(documentos_de(&lsp, Lenguaje::Python), 1);
+        assert_eq!(lsp.lenguaje_activo, Some(Lenguaje::Rust));
+        assert!(lsp.logs_con_total().0[0].contains("comando-que-no-existe-tcode"), "Ctrl+K R muestra por qué no arrancó");
+
+        // Cambiar el comando de Rust relanza solo Rust; Python pasa a un
+        // servidor que se muere solo, y eso tampoco toca a Rust.
+        let config = config_con(&[("python", "true"), ("rust", "cat")]);
+        lsp.sincronizar(&layout, &config).await;
+        assert_eq!(lsp.estado_texto(Lenguaje::Rust), Some("Iniciando…"));
+        // `cat` le devuelve a tcode lo que recibe (métodos que se
+        // ignoran): se procesan hasta que llega el cierre de Python.
+        loop {
+            let (lenguaje, mensaje) =
+                tokio::time::timeout(Duration::from_secs(5), lsp.siguiente_mensaje()).await.expect("llega el cierre");
+            let cerro_python = lenguaje == Lenguaje::Python && mensaje.is_none();
+            assert!(mensaje.is_some() || cerro_python, "solo Python se muere");
+            lsp.procesar_mensaje(lenguaje, mensaje, &mut layout).await;
+            if cerro_python {
+                break;
+            }
+        }
+        assert_eq!(lsp.estado_texto(Lenguaje::Python), Some("Error"));
+        assert_eq!(lsp.estado_texto(Lenguaje::Rust), Some("Iniciando…"));
+        lsp.sincronizar(&layout, &config).await;
+        assert_eq!(lsp.sesiones.len(), 1, "el caído no se relanza en cada frame");
+
+        // Sin documentos de ningún lenguaje con LSP, no queda nada.
+        let layout = PanelLayout::nuevo(Editor::nuevo(), "notas.txt".to_string());
+        lsp.sincronizar(&layout, &config).await;
+        assert!(lsp.sesiones.is_empty());
+        assert!(lsp.fallos.is_empty(), "sin documentos de Python, su fallo se olvida y se reintenta al volver");
+        lsp.cerrar().await;
+    }
+}

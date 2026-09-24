@@ -307,6 +307,15 @@ impl Layout {
         self.hojas_mut().into_iter().flat_map(|p| p.documentos.iter_mut()).collect()
     }
 
+    /// Todos los documentos abiertos, solo lectura, en el mismo orden que
+    /// [`Layout::paneles_mut`]. Lo usa el LSP (`app/lsp.rs`) una vez por
+    /// frame para saber qué archivos tiene que tener abiertos cada sesión
+    /// (una por lenguaje): recorre pestañas, nunca el texto de los
+    /// buffers.
+    pub fn documentos(&self) -> Vec<&PanelEditor> {
+        self.hojas().into_iter().flat_map(|p| p.documentos.iter()).collect()
+    }
+
     fn hojas_mut(&mut self) -> Vec<&mut Pestanas> {
         fn recorrer<'a>(panel: &'a mut Panel, salida: &mut Vec<&'a mut Pestanas>) {
             match panel {
@@ -372,6 +381,12 @@ impl Layout {
     /// agrega una pestaña propia.
     pub fn activar_pestana_de(&mut self, ruta: &Path) -> bool {
         self.pestanas_activas_mut().activar_ruta(ruta)
+    }
+
+    /// Los documentos (pestañas) del panel activo, en orden — p. ej. para
+    /// recordar sus pliegues antes de cerrar el panel entero.
+    pub fn documentos_panel_activo(&self) -> impl Iterator<Item = &PanelEditor> {
+        self.pestanas_activas().documentos.iter()
     }
 
     /// Cantidad de pestañas del panel activo.
@@ -448,6 +463,26 @@ impl Layout {
         for documento in self.paneles_mut() {
             documento.git.refrescar_base();
         }
+    }
+
+    /// Revisa si `HEAD` cambió por fuera de `tcode` (un commit o checkout
+    /// desde otra terminal, ver `tcode_fs::VigiaHead`) para el documento
+    /// visible de cada panel, y relanza la carga de la base de los que
+    /// cambiaron. Devuelve si relanzó alguna. Solo los visibles: los de
+    /// pestañas ocultas se revisan solos al volver a dibujarse
+    /// (`DiffGit::actualizar`). Unos `stat` por documento, sin procesos.
+    pub fn revisar_heads_git(&mut self) -> bool {
+        let mut alguno = false;
+        for pestanas in self.hojas_mut() {
+            alguno |= pestanas.activo_mut().git.revisar_head(true);
+        }
+        alguno
+    }
+
+    /// Si algún documento visible está en un repo de git — solo entonces
+    /// la app se despierta cada tanto para [`Self::revisar_heads_git`].
+    pub fn vigila_heads_git(&self) -> bool {
+        self.hojas().iter().any(|p| p.activo().git.en_repo())
     }
 
     /// Si algún documento está esperando que `git` devuelva su base o que

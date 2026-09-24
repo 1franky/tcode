@@ -1,6 +1,8 @@
 //! Jerarquía de símbolos que contienen una posición del documento, para
 //! los breadcrumbs de arriba del código (BACKLOG.md P3 #10, PLAN.md §5
 //! "Interfaz"): `impl Editor > fn insertar_texto`, `class A > def b`...
+//! Y el esquema del archivo entero ([`esquema`]) para el selector "Ir a
+//! símbolo" (`Ctrl+K .`), con los mismos criterios.
 //!
 //! Sale del mismo árbol de tree-sitter que el resaltador ya mantiene de
 //! forma incremental (ver `Resaltador::simbolos_en`): se baja al nodo más
@@ -187,6 +189,53 @@ pub(crate) fn simbolos_en(arbol: &Tree, lenguaje: Lenguaje, fuente: &str, punto:
     }
     simbolos.reverse();
     simbolos
+}
+
+/// Un símbolo del esquema (outline) de un documento entero, para el
+/// selector de símbolos (`Ctrl+K .`): el [`Simbolo`], cuántos
+/// contenedores con nombre lo encierran (`profundidad`, 0 = de primer
+/// nivel) y el rango de bytes de su nodo (`inicio` es donde se salta;
+/// `fin` sirve para saber si contiene al cursor).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SimboloEsquema {
+    pub simbolo: Simbolo,
+    pub profundidad: usize,
+    pub inicio: usize,
+    pub fin: usize,
+}
+
+/// Todos los contenedores con nombre del árbol, en orden de aparición
+/// (recorrido en preorden), con su anidamiento. O(nodos del árbol): se
+/// llama solo al abrir el selector, nunca por frame.
+pub(crate) fn esquema(arbol: &Tree, lenguaje: Lenguaje, fuente: &str) -> Vec<SimboloEsquema> {
+    let mut resultado = Vec::new();
+    let mut cursor = arbol.walk();
+    // Por cada nivel del recorrido, si el nodo de ese nivel era un
+    // símbolo: la profundidad de un símbolo es cuántos `true` hay arriba.
+    let mut pila: Vec<bool> = Vec::new();
+    loop {
+        let nodo = cursor.node();
+        let simbolo = simbolo_de(nodo, lenguaje, fuente);
+        let es_simbolo = simbolo.is_some();
+        if let Some(simbolo) = simbolo {
+            let profundidad = pila.iter().filter(|&&b| b).count();
+            resultado.push(SimboloEsquema { simbolo, profundidad, inicio: nodo.start_byte(), fin: nodo.end_byte() });
+        }
+        if cursor.goto_first_child() {
+            pila.push(es_simbolo);
+            continue;
+        }
+        // Sin hijos: al hermano siguiente, o subiendo hasta encontrar uno.
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return resultado;
+            }
+            pila.pop();
+        }
+    }
 }
 
 fn simbolo_de(nodo: Node, lenguaje: Lenguaje, fuente: &str) -> Option<Simbolo> {
@@ -407,6 +456,65 @@ mod tests {
         let largo = "x".repeat(100);
         assert_eq!(normalizar(&largo).chars().count(), MAX_NOMBRE);
         assert!(normalizar(&largo).ends_with(".."));
+    }
+
+    fn esquema_de(lenguaje: Lenguaje, fuente: &str) -> Vec<(usize, String)> {
+        let mut resaltador = Resaltador::nuevo();
+        resaltador
+            .esquema("prueba", lenguaje, None, || fuente.to_string())
+            .into_iter()
+            .map(|s| (s.profundidad, s.simbolo.etiqueta()))
+            .collect()
+    }
+
+    #[test]
+    fn esquema_rust_en_orden_y_con_anidamiento() {
+        let fuente = "struct A;
+impl A {
+    fn uno(&self) {
+        fn interna() {}
+    }
+    fn dos(&self) {}
+}
+fn suelta() {}
+";
+        assert_eq!(
+            esquema_de(Lenguaje::Rust, fuente),
+            [
+                (0, "struct A".to_string()),
+                (0, "impl A".to_string()),
+                (1, "fn uno".to_string()),
+                (2, "fn interna".to_string()),
+                (1, "fn dos".to_string()),
+                (0, "fn suelta".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn esquema_python_y_rangos_de_bytes() {
+        let fuente = "class A:
+    def b(self):
+        pass
+
+def c():
+    pass
+";
+        assert_eq!(
+            esquema_de(Lenguaje::Python, fuente),
+            [(0, "class A".to_string()), (1, "def b".to_string()), (0, "def c".to_string())]
+        );
+        let mut resaltador = Resaltador::nuevo();
+        let esquema = resaltador.esquema("p", Lenguaje::Python, None, || fuente.to_string());
+        assert_eq!(esquema[1].inicio, fuente.find("def b").unwrap());
+        assert!(esquema[0].fin >= fuente.find("pass").unwrap());
+        assert_eq!(esquema[2].inicio, fuente.find("def c").unwrap());
+    }
+
+    #[test]
+    fn esquema_de_un_lenguaje_sin_reglas_esta_vacio() {
+        assert!(esquema_de(Lenguaje::Css, "body { color: red; }
+").is_empty());
     }
 
     #[test]

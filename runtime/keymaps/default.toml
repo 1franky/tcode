@@ -84,6 +84,8 @@
 # (confirmado en tmux). F1 (como en VSCode) funciona en cualquier terminal.
 "F1"            = "paleta.comandos"
 "Ctrl+P"        = "buscar.archivos"
+"Ctrl+Shift+O"  = "simbolos.ir_a"
+"Ctrl+K ."      = "simbolos.ir_a"
 'Ctrl+\'        = "panel.dividir_vertical"
 'Ctrl+K Ctrl+\' = "panel.dividir_horizontal"
 # Alternativas: en terminales clásicos Ctrl+\ suele decodificarse como

@@ -845,7 +845,103 @@ CSS, SQL, texto plano) muestra solo la ruta.
 - [ ] Apagar "Mostrar pestañas" y dejar los breadcrumbs: los breadcrumbs quedan en la primera fila del panel.
 - [ ] Modo zen (`Ctrl+K Z`): los breadcrumbs se ocultan junto con la statusbar y las pestañas; al salir del zen vuelven (sin tocar la config).
 
+## Un servidor LSP por lenguaje
+
+Con `pyright-langserver` y `rust-analyzer` instalados, un proyecto Cargo
+temporal (`cargo new /tmp/prueba_ra`) con un `.py` suelto adentro, y el
+comando de Rust configurado (`Ctrl+,` → Lenguajes / LSP → Rust → `c` →
+`rust-analyzer`). Contar procesos con
+`ps -ax -o pid,ppid,command | grep -E "pyright|rust-analyzer" | grep -v grep`.
+
+- [ ] Abrir `src/main.rs` y después el `.py` en otra pestaña (`Ctrl+P`): quedan corriendo los dos servidores a la vez (un `rust-analyzer` y un `pyright-langserver`/node).
+- [ ] Alternar pestañas varias veces (`Ctrl+PageDown`/`Ctrl+PageUp`): los PID no cambian (ningún servidor se reinicia) y "Lenguajes / LSP" muestra Python y Rust "Conectado" a la vez.
+- [ ] Un error en cada archivo (`x: int = "a"` en el `.py`, `let x: i32 = "a";` en el `.rs`): cada pestaña muestra el suyo en el gutter y en la statusbar, nunca el del otro.
+- [ ] Con el `.rs` visible, romper algo en el `.py` desde otro panel (`Ctrl+\`, abrir el `.py` ahí, editar) y volver: los diagnósticos de cada archivo siguen correctos; una pestaña de fondo ya tiene sus errores al volver a ella, sin esperar a que el servidor arranque.
+- [ ] Split con el `.py` en un panel y el `.rs` en el otro: alternar `Ctrl+1`/`Ctrl+2` no reinicia nada.
+- [ ] `Ctrl+K R` con el `.rs` activo muestra los logs de rust-analyzer; con el `.py` activo, los de pyright.
+- [ ] Formatear al guardar prendido para Rust (`f` en su fila): desordenar la indentación del `.rs` y `Ctrl+S` → "Formateado al guardar", aunque el servidor de Python también esté corriendo.
+- [ ] Cerrar (`Ctrl+W`) la única pestaña `.py`: su servidor termina (desaparece de `ps`) y el de Rust sigue igual. Volver a abrir el `.py`: arranca uno nuevo.
+- [ ] Cambiar el comando de Python (`c`, p. ej. agregarle una variable `A=1 -- pyright-langserver --stdio`): se relanza solo pyright; el PID de rust-analyzer no cambia.
+- [ ] Un comando inexistente para un lenguaje: su fila dice "Error", `Ctrl+K R` con ese archivo activo dice por qué, y los demás servidores siguen funcionando. `kill` a mano de un servidor: su fila pasa a "Error" y `tcode` no consume CPU ni lo relanza en bucle.
+- [ ] `Ctrl+Q` con los dos servidores corriendo: sale en menos de un segundo y `ps` no muestra ningún proceso huérfano.
+
+## Formateadores externos y "confiar en este proyecto"
+
+Formateador externo por lenguaje (stdin → stdout) con prioridad sobre el
+LSP en "formatear al guardar", y confianza por proyecto para las claves
+de `.tcode/config.toml` que ejecutan comandos. Probar con un `HOME`
+temporal (la config global vive en `$HOME/Library/Application Support/
+tcode/config.toml` en macOS, `~/.config/tcode/` en Linux).
+
+- [ ] `Ctrl+,` → Lenguajes / LSP → fila Rust: `f` (Formato: Sí), `e`, escribir `rustfmt --emit stdout --edition 2021`, `Enter`: la fila muestra `formateador: rustfmt ...` y `config.toml` queda con `[lenguajes.formateador.rust]`. El pie dice `e formateador externo`; mientras se edita, explica `{archivo}` y que una línea vacía lo quita.
+- [ ] Un `.rs` desprolijo (`fn main(){` / `let x=1;` / sin `\n` final), cursor sobre `let`, `Ctrl+S`: el archivo queda formateado en disco, la barra dice `Formateado al guardar (rustfmt)` y el cursor sigue sobre `let`. Un bloque plegado sigue plegado sobre el mismo código.
+- [ ] `Ctrl+Z` después de ese guardado: vuelve al texto sin formatear en UN paso.
+- [ ] Guardar un archivo ya formateado: no aparece ningún aviso ni un paso de deshacer vacío.
+- [ ] Formateador que falla (un script que escribe `error: ...` en stderr y sale con 3): el archivo se guarda sin formatear y la barra dice `Sin formatear: 'falla.sh' falló (código 3): error: ...`.
+- [ ] Formateador que tarda (`sleep 10`): a los ~3 s se guarda sin formatear con `Sin formatear: '...' no respondió en 3 s`; el proceso no queda colgado (`ps`).
+- [ ] Formateador inexistente (`e` → `no-existe`): `Sin formatear: no se pudo lanzar 'no-existe': ...`; se guarda igual.
+- [ ] Con "Formato: No" el formateador no corre (guardar no cambia nada). Sin formateador externo y con LSP que formatea, se sigue usando el LSP como antes.
+- [ ] `e` y `Enter` con la línea vacía: se quita el formateador (desaparece de la fila y de `config.toml`).
+- [ ] Proyecto con `.tcode/config.toml` que define `[lenguajes.formateador.rust]` (o `[lenguajes.lsp_comando.*]`), sin confiar: al arrancar la barra dice `Proyecto no confiable: se ignoran lenguajes.formateador (paleta: ...)`; la cabecera de `Ctrl+,` dice `IGNORADO por falta de confianza: ...`; `Ctrl+S` NO corre el formateador del proyecto (usa el de la global o el LSP).
+- [ ] Paleta → "Proyecto: Confiar en este proyecto": la barra dice `Proyecto confiable: <ruta> — se aplican ...`; la cabecera del panel dice `Proyecto CONFIABLE`; `Ctrl+S` corre el formateador del proyecto. La fila de Lenguajes muestra `[proyecto: ...]` junto al formateador.
+- [ ] La config global solo ganó `[[confianza.proyectos]]` con `ruta` y `sha256`: ningún comando del proyecto se copió a la global.
+- [ ] Editar el `.tcode/config.toml` del proyecto (agregar un comentario) y `Ctrl+K Ctrl+L` (o reabrir `tcode`): vuelve a `IGNORADO por falta de confianza` y `Ctrl+S` ya no corre el formateador del proyecto.
+- [ ] Paleta → "Proyecto: Revocar confianza": la entrada desaparece de `[confianza]` y los comandos del proyecto vuelven a ignorarse. Escribir "Proyecto: Confiar" en la paleta no elige por error el de revocar.
+- [ ] Un `.tcode/config.toml` con su propia sección `[[confianza.proyectos]]`: se ignora (cabecera: `Ignorado siempre (solo global): confianza`) y el proyecto sigue sin ser confiable.
+- [ ] Con un proyecto confiable que define `lsp_comando`, `c` en esa fila precarga el comando de la GLOBAL (no el del proyecto): `Enter` no copia el comando del proyecto a la global.
+
 ---
+
+## Refresco solo de la base de git (commit/checkout desde otra terminal)
+
+Los indicadores de git vuelven a leer `HEAD` solos cuando cambia: cada
+2 segundos se miran las fechas de `.git/HEAD`, de la rama actual, de
+`packed-refs` y del índice (unos `stat`, sin procesos), y también al
+recuperar el foco de la terminal. Repo de prueba como el de la sección
+anterior.
+
+- [ ] Agregar una línea (aparece `+`), guardar y, SIN volver a tcode, `git commit -am x` desde otra terminal: en 2-3 segundos el `+` desaparece solo.
+- [ ] `git commit --amend`, `git reset --hard HEAD~1` y `git checkout` a otra rama con el archivo distinto: las marcas se ponen al día solas cada vez.
+- [ ] En un worktree (`git worktree add ...`) abrir un archivo y commitear desde ese worktree: también se refresca.
+- [ ] Con tmux (`set -g focus-events on`) o una terminal con eventos de foco: commitear en otra ventana y volver: se refresca al instante.
+- [ ] Un archivo sin trackear del repo, `git add` + `git commit` desde afuera: aparece la columna de git (sin marcas).
+- [ ] Con un archivo fuera de cualquier repo abierto y nada más, en reposo: tcode no consume CPU (el bucle no se despierta; p. ej. `top` muestra 0%).
+- [ ] Dos pestañas del mismo repo; commitear con la pestaña oculta y después cambiar a ella: sus marcas se ponen al día al mostrarse.
+- [ ] Tipear de corrido en un archivo grande de un repo: se siente igual que antes (la revisión es a lo sumo cada 2 segundos).
+
+## Ir a un símbolo (`Ctrl+K .`, breadcrumbs navegables)
+
+Selector con el esquema (outline) del archivo actual, sobre el mismo
+árbol de tree-sitter que el resaltado y los breadcrumbs.
+
+- [ ] En un `.rs` con `struct`, `impl` con dos métodos y una `fn` suelta, con el cursor adentro del segundo método: `Ctrl+K .` abre "Ir a símbolo" con todos en orden, los métodos indentados bajo el `impl`, cada uno con `:línea`, y la selección en el segundo método.
+- [ ] Escribir `ins`: quedan solo los que coinciden (con las letras en negrita), en el orden del archivo; `Backspace` vuelve a mostrar más.
+- [ ] `Enter`: el cursor salta a la línea del símbolo y el breadcrumb lo muestra. `Esc` en otro intento: cierra sin mover el cursor.
+- [ ] Plegar todo (`Ctrl+K 0`) y saltar a un método de adentro del `impl` plegado: el `impl` se despliega y el cursor queda en el método.
+- [ ] Un `.py` con `class` + `def`s y una función suelta: mismo comportamiento; con el cursor fuera de todo, la selección arranca en el primero.
+- [ ] Un filtro que no coincide con nada: lista vacía, `Enter` no hace nada (cierra).
+- [ ] Un `.txt` o `.css`: la lista dice que el archivo no tiene símbolos.
+- [ ] Con el protocolo de Kitty, `Ctrl+Shift+O` hace lo mismo. En la paleta (`F1`), "Ir: Símbolo del archivo" también.
+- [ ] Con el foco en el explorador o en la vista de tabla de un CSV: no abre nada.
+- [ ] Pegar texto (bracketed paste) con el selector abierto: se escribe en el filtro, no en el archivo.
+
+## Pliegues recordados entre sesiones
+
+Los pliegues de cada archivo se guardan al cerrar la pestaña, el panel o
+tcode, y se restauran al reabrirlo si el archivo no cambió (huella del
+contenido). Archivo de estado: `pliegues.toml` en `~/.local/state/tcode/estado/`
+(Linux) o `~/Library/Application Support/tcode/estado/` (macOS). Probar
+con `HOME` apuntando a una carpeta temporal para no tocar el estado real.
+
+- [ ] Plegar dos funciones de un `.rs`, `Ctrl+Q`, volver a abrir el archivo: las dos siguen plegadas; el archivo de estado tiene una entrada `[[archivo]]` con su ruta absoluta, una `huella` y los rangos.
+- [ ] Plegar todo (`Ctrl+K 0`), cerrar la pestaña con `Ctrl+W` y reabrir con `Ctrl+P`: sale plegado igual. Lo mismo cerrando un panel dividido con `Ctrl+K F`.
+- [ ] Con pliegues guardados, agregar una línea al archivo desde otra terminal (`echo >> archivo` o `sed`) y reabrirlo: arranca todo desplegado.
+- [ ] Hacer `touch` al archivo (sin cambiar el contenido) y reabrir: los pliegues se restauran igual.
+- [ ] Desplegar todo (`Ctrl+K Ctrl+J`) y salir: al reabrir arranca desplegado y el archivo ya no figura en el estado.
+- [ ] Plegar, guardar, salir; reabrir, editar sin guardar, desplegar y salir descartando (`Ctrl+Q` dos veces): al reabrir vuelven los pliegues de la primera vez.
+- [ ] Abrir el mismo archivo con otra ruta (relativa vs. absoluta, o por un symlink): se reconoce como el mismo (ruta canónica).
+- [ ] Un `pliegues.toml` corrupto (texto cualquiera) o sin permiso de escritura: tcode abre y cierra normal, sin errores visibles (solo no recuerda nada).
+- [ ] Abrir un archivo sin nada guardado: abre igual de rápido que antes (no se calcula la huella si no hay entrada).
 
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
