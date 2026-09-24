@@ -15,6 +15,7 @@
 //! escuchar en paralelo los mensajes que llegan del servidor LSP activo
 //! (`lsp.rs`) sin bloquear ninguno de los dos.
 
+mod formateador;
 mod lsp;
 mod pliegues;
 mod vim;
@@ -491,6 +492,9 @@ async fn ejecutar(
         resaltador: Resaltador::nuevo(),
         modo_zen: None,
     };
+    if let Some(aviso) = aviso_proyecto_no_confiable(&estado.capas_config) {
+        layout.panel_activo_mut().mensaje_estado = Some(aviso);
+    }
 
     // Ver `forzar_redibujado_completo`: en Windows, si la "forma" de la
     // pantalla cambió (otro archivo activo, otro número de paneles, el
@@ -771,6 +775,9 @@ async fn ejecutar(
                 // buffer de texto.
                 match key.code {
                     KeyCode::Esc => estado.panel_admin.cancelar_edicion_comando_lsp(),
+                    KeyCode::Enter if estado.panel_admin.editando_formateador() => {
+                        confirmar_edicion_formateador(&mut estado)
+                    }
                     KeyCode::Enter => confirmar_edicion_comando_lsp(&mut estado),
                     KeyCode::Backspace => estado.panel_admin.borrar_comando_lsp(),
                     KeyCode::Char(c) if sin_modificadores(key) => estado.panel_admin.escribir_comando_lsp(c),
@@ -829,6 +836,11 @@ async fn ejecutar(
                             if sin_modificadores(key) && estado.panel_admin.seccion_actual() == Seccion::Lenguajes =>
                         {
                             iniciar_edicion_comando_lsp_seleccionado(&mut estado);
+                        }
+                        KeyCode::Char('e')
+                            if sin_modificadores(key) && estado.panel_admin.seccion_actual() == Seccion::Lenguajes =>
+                        {
+                            iniciar_edicion_formateador_seleccionado(&mut estado);
                         }
                         KeyCode::Backspace if estado.panel_admin.seccion_actual() == Seccion::Lenguajes => {
                             quitar_comando_lsp_seleccionado(&mut estado);
@@ -1479,6 +1491,11 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         }
         "config.recargar" => {
             recargar_config_tema_y_keymap(estado, resolvedor);
+            Accion::Continuar
+        }
+        "proyecto.confiar" | "proyecto.dejar_de_confiar" => {
+            let mensaje = alternar_confianza_proyecto(estado, id == "proyecto.confiar");
+            layout.panel_activo_mut().mensaje_estado = Some(mensaje);
             Accion::Continuar
         }
         "paleta.comandos" => {
@@ -2138,6 +2155,11 @@ async fn guardar_archivo_activo(layout: &mut PanelLayout, estado: &mut EstadoApp
 /// absolutamente nada — ni siquiera sincroniza con el LSP —, así que
 /// guardar se comporta exactamente igual que antes de esta pieza.
 ///
+/// Prioridad: si el lenguaje tiene un formateador EXTERNO configurado
+/// (`lenguajes.formateador`, `e` en el panel) se usa ese y el LSP no se
+/// consulta (ver `formateador`); si no, el LSP. Ambos caminos terminan
+/// igual: ediciones mínimas en un solo paso de deshacer, o un aviso.
+///
 /// Nunca bloquea el guardado: si no hay LSP, todavía está iniciando, no
 /// soporta formatear, devuelve error o no responde a tiempo
 /// (`EstadoLsp::pedir_formateo`, ~2 s como mucho), simplemente no se
@@ -2145,6 +2167,16 @@ async fn guardar_archivo_activo(layout: &mut PanelLayout, estado: &mut EstadoApp
 async fn formatear_antes_de_guardar(layout: &mut PanelLayout, estado: &mut EstadoApp) {
     let Some(lenguaje) = Lenguaje::detectar_por_extension(&layout.panel_activo().ruta_mostrada) else { return };
     if !estado.config.lenguajes.formatear_al_guardar(lenguaje.id()) {
+        return;
+    }
+    // Un formateador externo configurado para el lenguaje tiene
+    // prioridad sobre el LSP (ver `formateador`): se usa ese y el
+    // servidor ni se consulta.
+    if let Some(comando) = estado.config.lenguajes.formateador_configurado(lenguaje.id()).cloned() {
+        let archivo = PathBuf::from(&layout.panel_activo().ruta_mostrada);
+        if let Some(mensaje) = formateador::formatear_editor(layout.editor_activo_mut(), &archivo, &comando).await {
+            layout.panel_activo_mut().mensaje_estado = Some(mensaje);
+        }
         return;
     }
 
@@ -2270,6 +2302,54 @@ fn recargar_config_tema_y_keymap(estado: &mut EstadoApp, resolvedor: &mut Resolv
         estado.keymap = nuevo_keymap;
         resolvedor.reemplazar_keymap(estado.keymap.clone());
     }
+}
+
+/// "Proyecto: Confiar en este proyecto" / "Proyecto: Revocar confianza"
+/// (paleta de comandos): agrega o quita la `.tcode/config.toml` activa
+/// de la lista de confianza de la GLOBAL (`tcode_config::
+/// ConfigConfianza`), identificada por la raíz del proyecto y el hash del
+/// contenido TAL COMO SE LEYÓ — no se relee el archivo acá, así se
+/// confía exactamente en lo que ya está cargado (y mostrado en el panel);
+/// si cambió en disco desde entonces, el próximo `config.recargar` no lo
+/// va a encontrar confiable. Lo único que se escribe a la global es la
+/// lista de confianza (`guardar_config_global`). Devuelve el aviso para
+/// la barra de estado.
+fn alternar_confianza_proyecto(estado: &mut EstadoApp, confiar: bool) -> String {
+    let Some(proyecto) = estado.capas_config.proyecto.as_ref() else {
+        return "No hay una .tcode/config.toml de proyecto activa".to_string();
+    };
+    if proyecto.error().is_some() {
+        return "La config de proyecto tiene errores: se ignora entera, no hay nada que confiar".to_string();
+    }
+    let (raiz, sha256) = (proyecto.raiz().to_string(), proyecto.sha256().to_string());
+    let comandos = proyecto.claves_comandos().join(", ");
+    if confiar {
+        estado.capas_config.global.confianza.confiar(&raiz, &sha256);
+    } else {
+        estado.capas_config.global.confianza.dejar_de_confiar(&raiz);
+    }
+    guardar_config_global(estado);
+    match (confiar, comandos.is_empty()) {
+        (true, true) => format!("Proyecto confiable: {raiz} (no define comandos)"),
+        (true, false) => format!("Proyecto confiable: {raiz} — se aplican {comandos}"),
+        (false, true) => format!("Proyecto ya no es confiable: {raiz}"),
+        (false, false) => format!("Proyecto ya no es confiable: {raiz} — se ignoran {comandos}"),
+    }
+}
+
+/// Aviso de arranque si la config de proyecto define claves que ejecutan
+/// comandos pero NO es confiable (así no se pierde en silencio que su
+/// `lsp_comando`/`formateador` no hace nada) — `None` si no hay nada que
+/// avisar.
+fn aviso_proyecto_no_confiable(capas: &CapasConfig) -> Option<String> {
+    let proyecto = capas.proyecto.as_ref()?;
+    if proyecto.claves_comandos().is_empty() || proyecto.es_confiable(&capas.global) {
+        return None;
+    }
+    Some(format!(
+        "Proyecto no confiable: se ignoran {} (paleta: \"Proyecto: Confiar en este proyecto\")",
+        proyecto.claves_comandos().join(", ")
+    ))
 }
 
 /// Aplica a `estado.paleta` el tema bajo la fila seleccionada del selector
@@ -2410,10 +2490,27 @@ fn filas_lenguajes_lsp(estado: &EstadoApp) -> Vec<FilaLenguajeLsp> {
                     && !estado.config.lenguajes.lsp_habilitado(lenguaje.id()),
                 personalizado: estado.capas_config.global.lenguajes.comando_configurado(lenguaje.id()).is_some(),
                 formatear_al_guardar: estado.capas_config.global.lenguajes.formatear_al_guardar(lenguaje.id()),
+                formateador: texto_formateador(estado, lenguaje),
                 estado: estado_texto,
             }
         })
         .collect()
+}
+
+/// Texto de la columna "formateador externo" de "Lenguajes / LSP": el
+/// de la GLOBAL (lo que `e` edita), y si el efectivo es otro porque lo
+/// define un proyecto confiable, marcado como `[proyecto: ...]` — mismo
+/// criterio que `CapasPanel::valor_con_marca` en el resto del panel.
+fn texto_formateador(estado: &EstadoApp, lenguaje: Lenguaje) -> String {
+    let global = estado.capas_config.global.lenguajes.formateador_configurado(lenguaje.id());
+    let efectivo = estado.config.lenguajes.formateador_configurado(lenguaje.id());
+    let texto = global.map(ComandoLsp::como_linea).unwrap_or_default();
+    match efectivo {
+        Some(efectivo) if Some(efectivo) != global => {
+            format!("{texto}{}[proyecto: {}]", if texto.is_empty() { "" } else { " " }, efectivo.como_linea())
+        }
+        _ => texto,
+    }
 }
 
 /// Búsqueda simple del ejecutable `comando` en el `PATH` — suficiente
@@ -2499,10 +2596,44 @@ fn alternar_formatear_al_guardar_seleccionado(estado: &mut EstadoApp) {
 /// sin volver a escribir todo desde cero.
 fn iniciar_edicion_comando_lsp_seleccionado(estado: &mut EstadoApp) {
     let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
-    let valor_inicial = lsp::comando_efectivo(lenguaje, &estado.config)
+    // Desde la GLOBAL, no la efectiva: con un proyecto confiable que
+    // define su propio `lsp_comando`, precargar el efectivo haría que
+    // `Enter` lo copie a la config global de todos los proyectos.
+    let valor_inicial = lsp::comando_efectivo(lenguaje, &estado.capas_config.global)
         .map(|(comando, argumentos, env)| ComandoLsp { comando, argumentos, env }.como_linea())
         .unwrap_or_default();
     estado.panel_admin.iniciar_edicion_comando_lsp(valor_inicial);
+}
+
+/// `e` sobre una fila de "Lenguajes / LSP": empieza a editar el
+/// formateador externo de ese lenguaje (`lenguajes.formateador`, ver
+/// `formateador`), con la misma línea que el comando LSP (`VAR=valor --
+/// comando args...`) precargada con el de la GLOBAL si hay uno — el
+/// panel edita solo la global, igual que con `c`.
+fn iniciar_edicion_formateador_seleccionado(estado: &mut EstadoApp) {
+    let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else { return };
+    let valor_inicial = estado
+        .capas_config
+        .global
+        .lenguajes
+        .formateador_configurado(lenguaje.id())
+        .map(ComandoLsp::como_linea)
+        .unwrap_or_default();
+    estado.panel_admin.iniciar_edicion_formateador(valor_inicial);
+}
+
+/// `Enter` mientras se edita el formateador externo: lo guarda en la
+/// global — o lo QUITA si la línea quedó vacía (ver
+/// `ConfigLenguajes::fijar_formateador_desde_linea`).
+fn confirmar_edicion_formateador(estado: &mut EstadoApp) {
+    let Some(lenguaje) = lenguaje_seleccionado_en_lenguajes(&estado.panel_admin) else {
+        estado.panel_admin.cancelar_edicion_comando_lsp();
+        return;
+    };
+    if let Some(linea) = estado.panel_admin.confirmar_edicion_comando_lsp() {
+        estado.capas_config.global.lenguajes.fijar_formateador_desde_linea(lenguaje.id(), &linea);
+        guardar_config_global(estado);
+    }
 }
 
 /// `Enter` mientras se edita el comando LSP de un lenguaje: guarda la

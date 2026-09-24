@@ -6,6 +6,7 @@ pub mod buffer;
 pub mod busqueda;
 pub mod csv;
 pub mod cursor;
+pub mod diff;
 pub mod editor;
 pub mod estado_busqueda;
 pub mod estado_csv;
@@ -21,6 +22,7 @@ pub use csv::{
     serializar_fila as serializar_fila_csv, EdicionCsv, FilaCsv, FiltroCsv, TablaCsv,
 };
 pub use cursor::{Cursor, CursorMultiple};
+pub use diff::ediciones_minimas;
 pub use editor::{Editor, Modo};
 pub use estado_busqueda::{CampoBusqueda, EstadoBusqueda};
 pub use estado_csv::EstadoCsv;
