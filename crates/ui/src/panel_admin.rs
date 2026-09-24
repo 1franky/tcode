@@ -38,6 +38,10 @@ pub struct FilaLenguajeLsp {
     /// "Formatear al guardar" prendido para este lenguaje (`f`,
     /// BACKLOG.md P2 #5) — `ConfigLenguajes::formatear_al_guardar`.
     pub formatear_al_guardar: bool,
+    /// Formateador externo (`e`, `ConfigLenguajes::formateador`) ya
+    /// resuelto a texto por `app`: el de la global, más `[proyecto: ...]`
+    /// si un proyecto confiable lo pisa; vacío si no hay ninguno.
+    pub formateador: String,
     /// "Conectado" / "Iniciando…" / "Inactivo" — ya resuelto a texto por
     /// `app`, que es quien tiene acceso al estado real de la sesión LSP.
     pub estado: String,
@@ -90,7 +94,7 @@ pub fn dibujar(
     // necesite su texto (la ruta sola ya puede ser larga) — con una línea
     // de más por el corte en palabras de `Wrap`, y un tope para no
     // comerse el área central.
-    let cabecera = capas.proyecto.map(|p| texto_cabecera_proyecto(p, paleta));
+    let cabecera = capas.proyecto.map(|p| texto_cabecera_proyecto(p, capas.global, paleta));
     let alto_cabecera = cabecera.as_ref().map_or(0, |(texto, _)| {
         let ancho = columnas[1].width.max(1) as usize;
         (texto.chars().count().div_ceil(ancho) + 1).min(ALTO_MAXIMO_CABECERA_PROYECTO) as u16
@@ -125,7 +129,11 @@ const ALTO_MAXIMO_CABECERA_PROYECTO: usize = 6;
 /// (BACKLOG.md P2 #8): su ruta, qué claves pisa, y que el panel edita y
 /// guarda SOLO la config global — o, si el archivo tiene errores, por
 /// qué se ignoró entero (así no se pierde en silencio un TOML roto).
-fn texto_cabecera_proyecto(proyecto: &ConfigProyecto, paleta: &Paleta) -> (String, Color) {
+///
+/// Si el proyecto define claves que ejecutan comandos (`lsp_comando`,
+/// `formateador`), dice claramente si se APLICAN (proyecto confiable) o
+/// se IGNORAN por falta de confianza, y cómo cambiarlo.
+fn texto_cabecera_proyecto(proyecto: &ConfigProyecto, global: &Config, paleta: &Paleta) -> (String, Color) {
     let ruta = proyecto.ruta().display();
     match proyecto.error() {
         Some(error) => (
@@ -141,8 +149,21 @@ fn texto_cabecera_proyecto(proyecto: &ConfigProyecto, paleta: &Paleta) -> (Strin
             let mut texto = format!(
                 " Config de proyecto activa: {ruta} — pisa: {pisadas}. Este panel edita y guarda solo la config global."
             );
-            if !proyecto.claves_ignoradas().is_empty() {
-                texto.push_str(&format!(" Ignorado por seguridad: {}.", proyecto.claves_ignoradas().join(", ")));
+            let confiable = proyecto.es_confiable(global);
+            if !proyecto.claves_comandos().is_empty() {
+                let comandos = proyecto.claves_comandos().join(", ");
+                texto.push_str(&if confiable {
+                    format!(" Proyecto CONFIABLE: se aplican {comandos} (paleta: \"Proyecto: Revocar confianza\").")
+                } else {
+                    format!(
+                        " IGNORADO por falta de confianza: {comandos} (paleta: \"Proyecto: Confiar en este proyecto\")."
+                    )
+                });
+            } else if confiable {
+                texto.push_str(" Proyecto confiable.");
+            }
+            if !proyecto.claves_solo_globales().is_empty() {
+                texto.push_str(&format!(" Ignorado siempre (solo global): {}.", proyecto.claves_solo_globales().join(", ")));
             }
             if !proyecto.claves_desconocidas().is_empty() {
                 texto.push_str(&format!(" Claves desconocidas: {}.", proyecto.claves_desconocidas().join(", ")));
@@ -376,13 +397,15 @@ fn filas_lenguajes_lsp<'a>(
             let habilitado = if fila.habilitado { "Sí" } else { "No" };
             let marca_proyecto = if fila.deshabilitado_por_proyecto { " [proyecto: No]" } else { "" };
             let formato = if fila.formatear_al_guardar { "Sí" } else { "No" };
+            let formateador = if fila.formateador.is_empty() { String::new() } else { format!("  formateador: {}", fila.formateador) };
 
             if let (true, Some(buffer)) = (seleccionada, panel.editando_comando_lsp()) {
+                let etiqueta = if panel.editando_formateador() { "  Formateador: " } else { "  LSP: " };
                 let spans = vec![
                     Span::styled(format!("{:<14}", fila.nombre), estilo_fila),
                     Span::styled(format!("Habilitado: {habilitado:<5}"), estilo_fila),
                     Span::styled(format!("Formato: {formato:<4}"), estilo_fila),
-                    Span::styled("  ", estilo_fila),
+                    Span::styled(etiqueta, estilo_fila),
                     Span::styled(format!("{buffer}▏"), estilo_fila),
                     Span::styled(" (Enter guarda · Esc cancela)", estilo_fila),
                 ];
@@ -408,6 +431,7 @@ fn filas_lenguajes_lsp<'a>(
                 Span::styled(personalizado, estilo_comando),
                 Span::styled(en_path, estilo_comando),
                 Span::styled(format!("  — {}", fila.estado), estilo_fila),
+                Span::styled(formateador, estilo_fila),
             ];
             ListItem::new(Line::from(spans)).style(estilo_fila)
         })
@@ -474,6 +498,9 @@ fn dibujar_pie(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, paleta: 
     let texto = match panel.foco() {
         FocoPanelAdmin::Barra => "↑↓ moverse · Enter/→ entrar a la sección · Ctrl+F buscar · Esc cerrar panel",
         FocoPanelAdmin::Central if panel.capturando() => "Presioná la nueva combinación · Esc cancela",
+        FocoPanelAdmin::Central if panel.editando_formateador() => {
+            "Comando que lee stdin y escribe stdout ({archivo} = ruta) · línea vacía lo quita · Enter guarda · Esc cancela"
+        }
         FocoPanelAdmin::Central if panel.editando_comando_lsp().is_some() => {
             "Escribí el comando y sus argumentos · Enter guarda · Esc cancela"
         }
@@ -484,7 +511,7 @@ fn dibujar_pie(frame: &mut Frame, area: Rect, panel: &EstadoPanelAdmin, paleta: 
             "↑↓ moverse · Enter capturar nuevo atajo · Backspace restablecer · Tab secciones · Ctrl+F buscar · Esc volver"
         }
         FocoPanelAdmin::Central if panel.seccion_actual() == Seccion::Lenguajes => {
-            "↑↓ moverse · Enter/←→ habilitar · f formatear al guardar · c editar comando · Backspace quitar override · Tab secciones · Esc volver"
+            "↑↓ moverse · Enter/←→ habilitar · f formatear al guardar · c editar comando · e formateador externo · Backspace quitar override · Tab secciones · Esc volver"
         }
         FocoPanelAdmin::Central => {
             "↑↓ moverse · Enter/←→ cambiar valor · Tab volver a secciones · Ctrl+F buscar · Esc volver"

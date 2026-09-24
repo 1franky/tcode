@@ -6,6 +6,7 @@
 //! temas en formato Helix (BACKLOG.md P3 #13), en `helix`.
 
 mod color;
+mod confianza;
 mod config;
 mod editor_tema;
 mod helix;
@@ -15,6 +16,7 @@ mod selector;
 mod tema;
 
 pub use color::{analizar_color_hex, formatear_color_hex, hsl_a_rgb, rgb_a_hsl};
+pub use confianza::{sha256_hex, ConfigConfianza, ProyectoConfiable};
 pub use config::{
     cargar, directorio_config, directorio_temas_usuario, guardar, guardar_en, recargar, ruta_config, ComandoLsp,
     Config, ConfigEditor, ConfigInterfaz, ConfigLenguajes, GuardadoAutomatico,

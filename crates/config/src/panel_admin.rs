@@ -456,6 +456,11 @@ pub struct EstadoPanelAdmin {
     /// `capturando`, es un flag genérico: este crate no sabe de teclas
     /// concretas, solo guarda el texto que `app` va acumulando.
     editando_comando_lsp: Option<String>,
+    /// Si el buffer de `editando_comando_lsp` es el FORMATEADOR externo
+    /// del lenguaje (`e`) en vez de su comando LSP (`c`): mismo modo de
+    /// edición de una línea, distinto destino al confirmar. Solo tiene
+    /// sentido mientras `editando_comando_lsp` es `Some`.
+    edicion_es_formateador: bool,
 }
 
 impl EstadoPanelAdmin {
@@ -472,6 +477,7 @@ impl EstadoPanelAdmin {
             opciones_externas: Vec::new(),
             capturando: false,
             editando_comando_lsp: None,
+            edicion_es_formateador: false,
         }
     }
 
@@ -529,7 +535,23 @@ impl EstadoPanelAdmin {
     /// uno, o el efectivo por defecto, o vacío si no hay ninguno).
     pub fn iniciar_edicion_comando_lsp(&mut self, valor_inicial: String) {
         self.editando_comando_lsp = Some(valor_inicial);
+        self.edicion_es_formateador = false;
         self.mensaje = None;
+    }
+
+    /// Igual que [`Self::iniciar_edicion_comando_lsp`], pero para el
+    /// formateador externo del lenguaje (`e` en "Lenguajes / LSP"): el
+    /// buffer se edita con las mismas teclas, `app` mira
+    /// [`Self::editando_formateador`] al confirmar para saber dónde va.
+    pub fn iniciar_edicion_formateador(&mut self, valor_inicial: String) {
+        self.editando_comando_lsp = Some(valor_inicial);
+        self.edicion_es_formateador = true;
+        self.mensaje = None;
+    }
+
+    /// `true` mientras el buffer en edición es el del formateador externo.
+    pub fn editando_formateador(&self) -> bool {
+        self.editando_comando_lsp.is_some() && self.edicion_es_formateador
     }
 
     pub fn escribir_comando_lsp(&mut self, c: char) {

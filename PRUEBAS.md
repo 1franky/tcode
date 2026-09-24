@@ -827,6 +827,31 @@ CSS, SQL, texto plano) muestra solo la ruta.
 - [ ] Apagar "Mostrar pestañas" y dejar los breadcrumbs: los breadcrumbs quedan en la primera fila del panel.
 - [ ] Modo zen (`Ctrl+K Z`): los breadcrumbs se ocultan junto con la statusbar y las pestañas; al salir del zen vuelven (sin tocar la config).
 
+## Formateadores externos y "confiar en este proyecto"
+
+Formateador externo por lenguaje (stdin → stdout) con prioridad sobre el
+LSP en "formatear al guardar", y confianza por proyecto para las claves
+de `.tcode/config.toml` que ejecutan comandos. Probar con un `HOME`
+temporal (la config global vive en `$HOME/Library/Application Support/
+tcode/config.toml` en macOS, `~/.config/tcode/` en Linux).
+
+- [ ] `Ctrl+,` → Lenguajes / LSP → fila Rust: `f` (Formato: Sí), `e`, escribir `rustfmt --emit stdout --edition 2021`, `Enter`: la fila muestra `formateador: rustfmt ...` y `config.toml` queda con `[lenguajes.formateador.rust]`. El pie dice `e formateador externo`; mientras se edita, explica `{archivo}` y que una línea vacía lo quita.
+- [ ] Un `.rs` desprolijo (`fn main(){` / `let x=1;` / sin `\n` final), cursor sobre `let`, `Ctrl+S`: el archivo queda formateado en disco, la barra dice `Formateado al guardar (rustfmt)` y el cursor sigue sobre `let`. Un bloque plegado sigue plegado sobre el mismo código.
+- [ ] `Ctrl+Z` después de ese guardado: vuelve al texto sin formatear en UN paso.
+- [ ] Guardar un archivo ya formateado: no aparece ningún aviso ni un paso de deshacer vacío.
+- [ ] Formateador que falla (un script que escribe `error: ...` en stderr y sale con 3): el archivo se guarda sin formatear y la barra dice `Sin formatear: 'falla.sh' falló (código 3): error: ...`.
+- [ ] Formateador que tarda (`sleep 10`): a los ~3 s se guarda sin formatear con `Sin formatear: '...' no respondió en 3 s`; el proceso no queda colgado (`ps`).
+- [ ] Formateador inexistente (`e` → `no-existe`): `Sin formatear: no se pudo lanzar 'no-existe': ...`; se guarda igual.
+- [ ] Con "Formato: No" el formateador no corre (guardar no cambia nada). Sin formateador externo y con LSP que formatea, se sigue usando el LSP como antes.
+- [ ] `e` y `Enter` con la línea vacía: se quita el formateador (desaparece de la fila y de `config.toml`).
+- [ ] Proyecto con `.tcode/config.toml` que define `[lenguajes.formateador.rust]` (o `[lenguajes.lsp_comando.*]`), sin confiar: al arrancar la barra dice `Proyecto no confiable: se ignoran lenguajes.formateador (paleta: ...)`; la cabecera de `Ctrl+,` dice `IGNORADO por falta de confianza: ...`; `Ctrl+S` NO corre el formateador del proyecto (usa el de la global o el LSP).
+- [ ] Paleta → "Proyecto: Confiar en este proyecto": la barra dice `Proyecto confiable: <ruta> — se aplican ...`; la cabecera del panel dice `Proyecto CONFIABLE`; `Ctrl+S` corre el formateador del proyecto. La fila de Lenguajes muestra `[proyecto: ...]` junto al formateador.
+- [ ] La config global solo ganó `[[confianza.proyectos]]` con `ruta` y `sha256`: ningún comando del proyecto se copió a la global.
+- [ ] Editar el `.tcode/config.toml` del proyecto (agregar un comentario) y `Ctrl+K Ctrl+L` (o reabrir `tcode`): vuelve a `IGNORADO por falta de confianza` y `Ctrl+S` ya no corre el formateador del proyecto.
+- [ ] Paleta → "Proyecto: Revocar confianza": la entrada desaparece de `[confianza]` y los comandos del proyecto vuelven a ignorarse. Escribir "Proyecto: Confiar" en la paleta no elige por error el de revocar.
+- [ ] Un `.tcode/config.toml` con su propia sección `[[confianza.proyectos]]`: se ignora (cabecera: `Ignorado siempre (solo global): confianza`) y el proyecto sigue sin ser confiable.
+- [ ] Con un proyecto confiable que define `lsp_comando`, `c` en esa fila precarga el comando de la GLOBAL (no el del proyecto): `Enter` no copia el comando del proyecto a la global.
+
 ---
 
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca

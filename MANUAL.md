@@ -561,6 +561,55 @@ Si el servidor lo soporta (pyright, por ejemplo), `tcode` le manda solo
 lo que cambió en cada edición en vez del archivo entero — con archivos
 de miles de líneas, tipear no se frena por el LSP.
 
+### Formatear al guardar
+
+Apagado por defecto para todos los lenguajes. En "Lenguajes / LSP" del
+panel de administración, `f` sobre la fila de un lenguaje lo prende: cada
+`Ctrl+S` (y "Guardar como") formatea el archivo antes de escribirlo. Hay
+dos formas de formatear, con esta prioridad:
+
+1. **Formateador externo** (si el lenguaje tiene uno configurado): un
+   programa que recibe el texto por stdin y devuelve el formateado por
+   stdout. `e` sobre la fila lo edita, con la misma sintaxis que el
+   comando LSP (`VAR=valor -- comando args...`); una línea vacía lo
+   quita. En los argumentos, `{archivo}` se reemplaza por la ruta
+   absoluta del archivo. Se lanza con la carpeta del archivo como
+   directorio de trabajo, así encuentra su propia config
+   (`rustfmt.toml`, `pyproject.toml`...). Ejemplos:
+
+   | Lenguaje | Formateador |
+   |---|---|
+   | Rust | `rustfmt --emit stdout --edition 2021` |
+   | Python | `black -q -` o `ruff format -` |
+   | JS/TS/CSS/HTML | `prettier --stdin-filepath {archivo}` |
+   | Go | `gofmt` |
+
+2. **El LSP** del lenguaje (`textDocument/formatting`), si no hay
+   formateador externo y el servidor lo soporta.
+
+En los dos casos el resultado se aplica como **un solo paso de
+deshacer** (`Ctrl+Z` vuelve al texto sin formatear) y solo se tocan las
+partes que cambian: el cursor y los bloques plegados se quedan sobre el
+mismo código. Formatear **nunca impide guardar**: si el formateador no
+está instalado, termina con error, no devuelve nada o tarda más de 3
+segundos (se lo corta), el archivo se guarda tal cual y la barra de
+estado dice por qué (`Sin formatear: 'black' falló (código 123): ...`,
+con la primera línea de su stderr). El guardado automático no formatea.
+
+En `config.toml`:
+
+```toml
+[lenguajes]
+formatear_al_guardar = ["rust", "python"]
+
+[lenguajes.formateador.rust]
+comando = "rustfmt"
+argumentos = ["--emit", "stdout", "--edition", "2021"]
+```
+
+Límite: los argumentos se separan por espacios, sin comillas (igual que
+el comando LSP); para algo más complejo, apuntá a un script propio.
+
 **`Ctrl+K R`** ("LSP: Ver logs de la sesión activa" en la paleta):
 muestra lo que el servidor escribió en su stderr — útil para entender
 por qué no conecta o se comporta raro, más allá del estado "Conectado"/
@@ -635,11 +684,26 @@ numeros_de_linea = false
   de proyecto activa, el panel lo avisa arriba (con su ruta y qué
   claves pisa), y las filas pisadas muestran el valor en uso como
   `[proyecto: ...]` al lado del valor de tu global.
-- **Seguridad**: una config de proyecto **no puede** definir comandos de
-  LSP (`[lenguajes.lsp_comando.*]`, con sus variables de entorno) — se
-  ignoran, para que abrir un repo ajeno nunca ejecute un programa que
-  eligió otra persona. Tampoco puede volver a habilitar un LSP que
-  tengas deshabilitado en tu global (sí puede deshabilitar otros).
+- **Seguridad**: las claves que ejecutan programas — comandos de LSP
+  (`[lenguajes.lsp_comando.*]`, con sus variables de entorno) y
+  formateadores externos (`[lenguajes.formateador.*]`) — **se ignoran**
+  mientras no marques el proyecto como confiable, para que abrir un repo
+  ajeno nunca ejecute un programa que eligió otra persona. Al arrancar,
+  la barra de estado avisa si se ignoró alguna, y la cabecera del panel
+  de administración dice cuáles. Un proyecto tampoco puede volver a
+  habilitar un LSP que tengas deshabilitado en tu global (sí puede
+  deshabilitar otros).
+- **Confiar en un proyecto**: paleta (`Ctrl+Shift+P`/`F1`) → "Proyecto:
+  Confiar en este proyecto". Desde ese momento se aplican sus comandos;
+  la cabecera del panel lo muestra como "Proyecto CONFIABLE". La
+  confianza se guarda en **tu** config global (sección `[confianza]`,
+  nunca en el proyecto) con la ruta de la carpeta del proyecto y un
+  hash (SHA-256) del contenido de su `.tcode/config.toml`: **si ese
+  archivo cambia** (por ejemplo, un `git pull` que trae otro comando),
+  el proyecto vuelve a ser no confiable al reabrirlo o con
+  `config.recargar`, hasta que confíes de nuevo. "Proyecto: Revocar
+  confianza" la quita. Un `.tcode/config.toml` no puede escribir la
+  sección `[confianza]` (se ignora siempre).
 - **Errores**: si el archivo tiene un error (TOML mal formado o un valor
   del tipo equivocado), se ignora entero y se sigue con tu config
   global; el motivo aparece en la cabecera del panel de administración.
