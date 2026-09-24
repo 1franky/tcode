@@ -9,7 +9,7 @@ use tcode_fs::DiffGit;
 use tcode_lsp::DiagnosticoSimple;
 use tcode_syntax::{Lenguaje, Resaltador};
 
-use crate::{barra_pestanas, statusbar, vista_codigo, vista_csv, vista_markdown, EstadoUi, Paleta};
+use crate::{barra_pestanas, breadcrumbs, statusbar, vista_codigo, vista_csv, vista_markdown, EstadoUi, Paleta};
 
 /// Cómo se divide un panel (`Ctrl+\`/`Ctrl+K Ctrl+\`, PLAN.md §4): en
 /// paneles lado a lado (una línea divisoria vertical entre ellos) o
@@ -615,6 +615,38 @@ fn hoja_en_indice(panel: &mut Panel, indice: usize) -> &mut Panel {
     }
 }
 
+/// Filas angostas que van arriba del contenido de un panel (código,
+/// tabla o preview), de arriba hacia abajo: barra de pestañas y
+/// breadcrumbs (ambos BACKLOG.md P3 #10). Se recortan del área en este
+/// único lugar, así las vistas de abajo no se enteran y una franja nueva
+/// se apila acá mismo.
+struct FranjasSuperiores {
+    pestanas: Option<Rect>,
+    breadcrumbs: Option<Rect>,
+    resto: Rect,
+}
+
+/// Reparte `area` en [`FranjasSuperiores`]. Cada franja solo se reserva
+/// si después queda al menos una fila para el contenido (el contenido
+/// tiene prioridad en un panel muy bajo); las pestañas antes que los
+/// breadcrumbs, que son lo primero que se sacrifica.
+fn franjas_superiores(area: Rect, interfaz: &ConfigInterfaz) -> FranjasSuperiores {
+    fn tomar_fila(resto: &mut Rect, mostrar: bool) -> Option<Rect> {
+        (mostrar && resto.height > 1).then(|| {
+            let fila = Rect { height: 1, ..*resto };
+            *resto = Rect { y: resto.y + 1, height: resto.height - 1, ..*resto };
+            fila
+        })
+    }
+    let mut resto = area;
+    let pestanas = tomar_fila(&mut resto, interfaz.mostrar_pestanas);
+    // Con la statusbar prendida el contenido además pierde su última
+    // fila: los breadcrumbs solo si igual queda una para el código.
+    let hay_lugar = !interfaz.mostrar_statusbar || resto.height > 2;
+    let breadcrumbs = tomar_fila(&mut resto, interfaz.mostrar_breadcrumbs && hay_lugar);
+    FranjasSuperiores { pestanas, breadcrumbs, resto }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn dibujar_panel(
     frame: &mut Frame,
@@ -640,13 +672,13 @@ fn dibujar_panel(
             // código, también con una sola pestaña — es además donde se
             // ve qué archivo tiene cada panel sin mirar la statusbar.
             // "Mostrar pestañas" apagado la saca y devuelve la fila.
-            let area = if interfaz.mostrar_pestanas && area.height > 1 {
-                let (barra, resto) = (Rect { height: 1, ..area }, Rect { y: area.y + 1, height: area.height - 1, ..area });
+            // Debajo, los breadcrumbs del documento activo (se dibujan
+            // más abajo, cuando ya se sabe qué vista usa el panel).
+            let franjas = franjas_superiores(area, interfaz);
+            if let Some(barra) = franjas.pestanas {
                 barra_pestanas::dibujar(frame, barra, &pestanas.documentos, pestanas.activa, es_activo, paleta);
-                resto
-            } else {
-                area
-            };
+            }
+            let (area, area_breadcrumbs) = (franjas.resto, franjas.breadcrumbs);
             let panel_editor = pestanas.activo_mut();
 
             // "Mostrar barra de estado" (PLAN.md §5.5, M4): si está
@@ -677,7 +709,23 @@ fn dibujar_panel(
             // `panel_busqueda::dibujar`), no en el código.
             let mostrar_cursor = es_activo && !estado_busqueda.activa();
 
-            if panel_editor.es_csv() && panel_editor.modo_csv == ModoCsv::Tabla {
+            let es_tabla_csv = panel_editor.es_csv() && panel_editor.modo_csv == ModoCsv::Tabla;
+            if let Some(area_breadcrumbs) = area_breadcrumbs {
+                breadcrumbs::dibujar(
+                    frame,
+                    area_breadcrumbs,
+                    &panel_editor.editor,
+                    &panel_editor.ruta_mostrada,
+                    &mut panel_editor.estado_ui.breadcrumbs,
+                    resaltador,
+                    paleta,
+                    // En la tabla CSV la posición del cursor en el texto
+                    // no es la celda seleccionada: solo la ruta.
+                    !es_tabla_csv,
+                );
+            }
+
+            if es_tabla_csv {
                 let tabla = panel_editor.tabla_csv();
                 // Un `Ctrl+Z` (global, no pasa por la vista) o un filtro
                 // que dejó menos filas pueden dejar la selección fuera de

@@ -801,6 +801,32 @@ de `runtime/themes/` del repo de Helix.
 - [ ] Con un tema de Helix activo, `Ctrl+,` → Temas → "Duplicar tema activo": crea `<tema>-mio.toml` en formato `tcode` (con `name`, `[ui]`, `[statusbar]`...); el archivo de Helix original queda byte a byte igual.
 - [ ] Con un tema de Helix activo, `Ctrl+K Ctrl+P`: el editor visual muestra sus colores convertidos; cambiar uno guarda en `<tema>-mio.toml` (formato `tcode`) y nunca toca el original.
 
+## Breadcrumbs (ruta > símbolos arriba del código)
+
+BACKLOG.md P3 #10 (segunda mitad). Una fila arriba del código de cada
+panel: ruta del archivo relativa a la raíz del repo git (o al directorio
+de trabajo si no hay repo) y los contenedores con nombre que encierran
+al cursor. Símbolos para Rust, Python, JavaScript/TypeScript, Go, Java,
+C/C++, C#, Kotlin, Ruby, PHP y encabezados de Markdown; el resto (HTML,
+CSS, SQL, texto plano) muestra solo la ruta.
+
+- [ ] Desde la raíz del repo, `tcode crates/core/src/editor.rs`: arriba del código se ve `crates > core > src > editor.rs`.
+- [ ] Bajar hasta adentro de un método de `impl Editor`: `... > editor.rs > impl Editor > fn <método>`; moverse al método siguiente y el breadcrumb cambia; en la línea en blanco entre dos métodos queda solo `impl Editor`.
+- [ ] Con el cursor en la indentación de la línea `fn ...` o justo después del `}` que la cierra: sigue mostrando esa `fn` (no el `impl` de afuera).
+- [ ] Bajar hasta `mod tests`: `mod tests > fn <test>`.
+- [ ] Un `.py` con `class A:` / `def b(self):` adentro: `class A > def b`; una función suelta: `def f`; una línea fuera de todo: solo la ruta.
+- [ ] Un `.ts` con `namespace` > `class` > método: `namespace X > class Y > metodo()`; `const f = () => {...}`: `f()`.
+- [ ] Un `.md`: los encabezados en los que está el cursor (`# Título > ## Sección`).
+- [ ] Un `.txt` (sin lenguaje): solo la ruta. Un buffer nuevo (`tcode` sin argumentos, o el panel nuevo de un split): `[Sin nombre]`.
+- [ ] Un CSV en vista de tabla: solo la ruta (sin símbolos).
+- [ ] Achicar la ventana de a poco: primero desaparecen las carpetas del medio (`crates > .. > src > editor.rs > ...`), después todas (`.. > editor.rs > ...`), después los símbolos de afuera (`editor.rs > .. > fn interna`) y por último se acorta el símbolo más interno con `..`. El nombre del archivo y el símbolo más interno siempre quedan. Sin caracteres raros ni desalineados (separador ASCII ` > `).
+- [ ] Tipear rápido en un archivo Rust de 10.000 líneas, con breadcrumbs prendidos y apagados: se siente igual (la consulta de símbolos usa el árbol que ya tiene el resaltado, cacheada por revisión + posición del cursor).
+- [ ] `Ctrl+,` (o `Ctrl+K A`) → Interfaz → "Mostrar breadcrumbs (ruta > símbolos)": apagarlo saca la fila en todos los paneles y el código sube una fila; `config.toml` queda con `mostrar_breadcrumbs = false`. Prenderlo de nuevo: vuelve.
+- [ ] Con 2 paneles, cada uno muestra su propio breadcrumb; maximizado (`F11`/`Ctrl+K G`) el panel activo lo sigue mostrando.
+- [ ] Con la barra de pestañas prendida: el orden de arriba hacia abajo es pestañas, breadcrumbs, código. Abrir otro archivo en una pestaña nueva y alternar (`Ctrl+PageDown`/`Ctrl+PageUp`): el breadcrumb pasa a la ruta y los símbolos del cursor de la pestaña activa, sin demora.
+- [ ] Apagar "Mostrar pestañas" y dejar los breadcrumbs: los breadcrumbs quedan en la primera fila del panel.
+- [ ] Modo zen (`Ctrl+K Z`): los breadcrumbs se ocultan junto con la statusbar y las pestañas; al salir del zen vuelven (sin tocar la config).
+
 ---
 
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca

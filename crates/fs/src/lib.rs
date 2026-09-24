@@ -19,6 +19,6 @@ mod nodo;
 
 pub use buscador::{listar_archivos_recursivo, BuscadorArchivos, ResultadoBusqueda};
 pub use estado_prompt::{EstadoConfirmarBorrado, EstadoPromptExplorador, ModoPromptExplorador};
-pub use explorador::{raiz_por_defecto, Explorador};
+pub use explorador::{partes_ruta_en_proyecto, raiz_por_defecto, Explorador};
 pub use git::{calcular_marcas, leer_base_head, DiffGit, MarcaGit};
 pub use nodo::Nodo;

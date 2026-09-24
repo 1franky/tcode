@@ -171,14 +171,40 @@ terminal, no tcode.
 ### Modo zen (`Ctrl+K Z`)
 
 Oculta de un golpe todo lo que no es código — explorador, barra de
-pestañas y barra de estado — y otra vez `Ctrl+K Z` lo deja todo como estaba, incluido el foco
-(si estabas en el explorador, volvés ahí). Es solo para la sesión: no
-cambia ninguna opción de la configuración ni se recuerda al volver a
-abrir tcode. La paleta, el buscador de archivos, la búsqueda y demás
+pestañas, breadcrumbs y barra de estado — y otra vez `Ctrl+K Z` lo deja
+todo como estaba, incluido el foco (si estabas en el explorador, volvés
+ahí). Es solo para la sesión: no cambia ninguna opción de la
+configuración ni se recuerda al volver a abrir tcode. La paleta, el buscador de archivos, la búsqueda y demás
 ventanas flotantes funcionan igual en zen. Lo que necesita ver el
 explorador (`Ctrl+B`, `Ctrl+K J`, crear/renombrar) sale del zen primero.
 Se combina con maximizar: zen + `F11` deja solo el panel activo en toda
 la pantalla.
+
+### Breadcrumbs
+
+Arriba del código de cada panel (debajo de la barra de
+[pestañas](#pestañas-de-archivos-abiertos)) hay una fila con dónde está
+el cursor: la ruta del archivo relativa a la raíz del proyecto (la carpeta del repo
+git que lo contiene, o el directorio desde el que abriste tcode si no hay
+repo) seguida de los símbolos que encierran al cursor, del más externo al
+más interno:
+
+```
+crates > core > src > editor.rs > impl Editor > fn insertar_texto
+```
+
+Reconoce funciones, métodos, clases, structs, `impl`, traits,
+interfaces, enums, módulos y namespaces en Rust, Python,
+JavaScript/TypeScript, Go, Java, C/C++, C#, Kotlin, Ruby y PHP, y los
+encabezados en Markdown (`# Manual > ## Atajos`). En los demás archivos
+(texto plano, HTML, CSS, SQL...) y en la vista de tabla CSV muestra solo
+la ruta. Si no entra en el ancho del panel, se recorta de a poco: primero
+las carpetas del medio (`..`), después los símbolos de afuera, y por
+último el final del símbolo más interno — el nombre del archivo y el
+símbolo más interno siempre quedan a la vista. No es interactivo (no se
+puede hacer clic ni navegar por él). Se apaga en `Ctrl+,` → Interfaz →
+"Mostrar breadcrumbs" (viene prendido) y se oculta en modo zen. Muestra
+siempre la ubicación del documento de la pestaña activa.
 
 ## Pestañas de archivos abiertos
 
@@ -418,7 +444,7 @@ opción por nombre):
 | **Temas** | Elegir tema (abre el selector con preview) y duplicar el activo para editarlo. |
 | **Lenguajes / LSP** | Habilitar/deshabilitar el servidor LSP de cada lenguaje, ver si el binario está en el `PATH` y el estado de la sesión activa (Conectado/Iniciando/Inactivo). `c` sobre una fila edita el comando+argumentos a mano (ver [LSP](#lsp-autocompletado-y-diagnósticos)); `Backspace` quita ese override. |
 | **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, indicadores de git, modo VIM, regla vertical, guardado automático. |
-| **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo), y la barra de pestañas. |
+| **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo), la barra de pestañas y los [breadcrumbs](#breadcrumbs) de arriba del código. |
 
 Todos los cambios se aplican y persisten al instante en `config.toml`, sin
 tocar ni reiniciar nada más.

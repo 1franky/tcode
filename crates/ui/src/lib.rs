@@ -4,6 +4,7 @@
 //! `core` (ver PLAN.md §3).
 
 mod barra_pestanas;
+mod breadcrumbs;
 mod editor_tema;
 mod overlay;
 mod paleta;
@@ -85,6 +86,9 @@ pub struct EstadoUi {
     /// frame (BACKLOG.md P1 #14, `vista_codigo::ajustar_scroll_con_ajuste`).
     /// Sin ajuste vale siempre 0.
     subfila_scroll: usize,
+    /// Partes de la ruta ya resueltas para el breadcrumb del panel
+    /// (BACKLOG.md P3 #10, ver `breadcrumbs::CacheRuta`).
+    breadcrumbs: breadcrumbs::CacheRuta,
 }
 
 /// Modo zen (`Ctrl+K Z`, BACKLOG.md P3 #12): punto ÚNICO que decide qué
@@ -93,8 +97,9 @@ pub struct EstadoUi {
 /// es código SIN tocar los toggles de config — al salir, cada barra vuelve
 /// a lo que diga su config de siempre. Hoy cubre el explorador
 /// (`explorador_visible`), la statusbar (`interfaz.mostrar_statusbar`) y
-/// la barra de pestañas (`interfaz.mostrar_pestanas`, BACKLOG.md P3 #10);
-/// cualquier barra nueva alrededor del código (breadcrumbs...)
+/// la barra de pestañas (`interfaz.mostrar_pestanas`) y los breadcrumbs
+/// (`interfaz.mostrar_breadcrumbs`), ambos BACKLOG.md P3 #10; cualquier
+/// barra nueva alrededor del código
 /// tiene que preguntar acá — agregar su `mostrar_*` a `interfaz` o su
 /// propio booleano a este struct — en vez de leer `config` directo.
 struct Cromo<'a> {
@@ -107,7 +112,12 @@ impl<'a> Cromo<'a> {
         if !modo_zen {
             return Self { explorador_visible, interfaz: std::borrow::Cow::Borrowed(interfaz) };
         }
-        let interfaz = ConfigInterfaz { mostrar_statusbar: false, mostrar_pestanas: false, ..interfaz.clone() };
+        let interfaz = ConfigInterfaz {
+            mostrar_statusbar: false,
+            mostrar_pestanas: false,
+            mostrar_breadcrumbs: false,
+            ..interfaz.clone()
+        };
         Self { explorador_visible: false, interfaz: std::borrow::Cow::Owned(interfaz) }
     }
 }
@@ -235,8 +245,10 @@ mod tests {
         assert!(!cromo.explorador_visible);
         assert!(!cromo.interfaz.mostrar_statusbar);
         assert!(!cromo.interfaz.mostrar_pestanas);
+        assert!(!cromo.interfaz.mostrar_breadcrumbs);
         // El resto se copia igual — y la config original no se toca.
         assert!(!cromo.interfaz.statusbar_eol);
         assert!(interfaz.mostrar_statusbar);
+        assert!(interfaz.mostrar_breadcrumbs);
     }
 }
