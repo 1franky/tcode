@@ -124,6 +124,13 @@
 "Alt+7"           = "pestana.ir_a_7"
 "Alt+8"           = "pestana.ir_a_8"
 "Alt+9"           = "pestana.ir_a_9"
+# "Pantalla completa" en una terminal = maximizar el panel activo (como el
+# zoom de tmux); la ventana y la letra las controla el emulador de
+# terminal. Alternativa: F11 lo suele capturar el sistema (en macOS,
+# "mostrar escritorio") o la terminal misma antes de que llegue.
+"F11"           = "vista.pantalla_completa"
+"Ctrl+K G"      = "vista.pantalla_completa"
+"Ctrl+K Z"      = "vista.modo_zen"
 "Ctrl+F"        = "buscar.en_archivo"
 "Ctrl+H"        = "buscar.reemplazar"
 # F3/Shift+F3 y Alt+R/C/W funcionan tanto con la barra abierta (capturados

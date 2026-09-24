@@ -35,6 +35,8 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "pestana.ir_a_7", descripcion: "Pestañas: Ir a la pestaña 7" },
         Comando { id: "pestana.ir_a_8", descripcion: "Pestañas: Ir a la pestaña 8" },
         Comando { id: "pestana.ir_a_9", descripcion: "Pestañas: Ir a la pestaña 9" },
+        Comando { id: "vista.modo_zen", descripcion: "Ver: Alternar modo zen (solo el código)" },
+        Comando { id: "vista.pantalla_completa", descripcion: "Ver: Maximizar/restaurar el panel activo" },
         Comando { id: "explorador.saltar", descripcion: "Ver: Saltar a un archivo (etiquetas de una tecla)" },
         Comando { id: "explorador.nuevo_archivo", descripcion: "Explorador: Nuevo archivo" },
         Comando { id: "explorador.nueva_carpeta", descripcion: "Explorador: Nueva carpeta" },

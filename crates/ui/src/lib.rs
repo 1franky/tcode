@@ -27,7 +27,7 @@ use ratatui::layout::{Constraint, Direction, Layout as LayoutRatatui};
 use ratatui::Frame;
 
 use tcode_commands::EstadoPaleta;
-use tcode_config::{Config, ConfigProyecto, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema};
+use tcode_config::{Config, ConfigInterfaz, ConfigProyecto, EstadoEditorTema, EstadoPanelAdmin, EstadoSelectorTema};
 use tcode_core::{EstadoBusqueda, EstadoGuardarComo};
 use tcode_fs::{BuscadorArchivos, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador};
 use tcode_keymap::Keymap;
@@ -87,6 +87,31 @@ pub struct EstadoUi {
     subfila_scroll: usize,
 }
 
+/// Modo zen (`Ctrl+K Z`, BACKLOG.md P3 #12): punto ÚNICO que decide qué
+/// "cromo" alrededor del código se dibuja en este frame. Es un booleano de
+/// sesión (vive en `app`, no en la config): en zen se apaga todo lo que no
+/// es código SIN tocar los toggles de config — al salir, cada barra vuelve
+/// a lo que diga su config de siempre. Hoy cubre el explorador
+/// (`explorador_visible`), la statusbar (`interfaz.mostrar_statusbar`) y
+/// la barra de pestañas (`interfaz.mostrar_pestanas`, BACKLOG.md P3 #10);
+/// cualquier barra nueva alrededor del código (breadcrumbs...)
+/// tiene que preguntar acá — agregar su `mostrar_*` a `interfaz` o su
+/// propio booleano a este struct — en vez de leer `config` directo.
+struct Cromo<'a> {
+    explorador_visible: bool,
+    interfaz: std::borrow::Cow<'a, ConfigInterfaz>,
+}
+
+impl<'a> Cromo<'a> {
+    fn nuevo(modo_zen: bool, explorador_visible: bool, interfaz: &'a ConfigInterfaz) -> Self {
+        if !modo_zen {
+            return Self { explorador_visible, interfaz: std::borrow::Cow::Borrowed(interfaz) };
+        }
+        let interfaz = ConfigInterfaz { mostrar_statusbar: false, mostrar_pestanas: false, ..interfaz.clone() };
+        Self { explorador_visible: false, interfaz: std::borrow::Cow::Owned(interfaz) }
+    }
+}
+
 /// Dibuja un frame completo. El panel de administración (`Ctrl+,`,
 /// PLAN.md §5) es una vista aparte, a pantalla completa — mientras está
 /// activo, es lo único que se dibuja (ni editor ni explorador se ven
@@ -102,7 +127,9 @@ pub struct EstadoUi {
 /// prompt de texto del explorador (`Ctrl+K N`/`Ctrl+K C`/`Ctrl+K M` —
 /// nuevo archivo/carpeta/renombrar) o su confirmación de borrado
 /// (`Delete`) encima de todo cuando alguno de los siete está abierto (son
-/// mutuamente excluyentes — nunca dos a la vez).
+/// mutuamente excluyentes — nunca dos a la vez). `modo_zen` esconde el
+/// explorador y las barras (ver [`Cromo`]); los overlays se siguen
+/// dibujando igual, sobre el área completa.
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -125,6 +152,7 @@ pub fn dibujar(
     logs_lsp: &EstadoLogsLsp,
     prompt_explorador: &EstadoPromptExplorador,
     confirmar_borrado: &EstadoConfirmarBorrado,
+    modo_zen: bool,
 ) {
     let area_total = frame.area();
 
@@ -139,7 +167,9 @@ pub fn dibujar(
         return;
     }
 
-    let area_principal = if explorador.visible() {
+    let cromo = Cromo::nuevo(modo_zen, explorador.visible(), &config.interfaz);
+
+    let area_principal = if cromo.explorador_visible {
         let partes = LayoutRatatui::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(ANCHO_PANEL_LATERAL), Constraint::Min(1)])
@@ -160,7 +190,7 @@ pub fn dibujar(
         config.editor.ajuste_linea,
         config.editor.columna_regla,
         config.editor.indicadores_git,
-        &config.interfaz,
+        &cromo.interfaz,
     );
     panel_busqueda::dibujar(frame, area_principal, estado_busqueda, paleta);
 
@@ -178,5 +208,35 @@ pub fn dibujar(
         panel_prompt_explorador::dibujar(frame, area_total, prompt_explorador, paleta);
     } else if confirmar_borrado.activo() {
         panel_confirmar_borrado::dibujar(frame, area_total, confirmar_borrado, paleta);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fuera_de_zen_el_cromo_respeta_la_config_tal_cual() {
+        let interfaz = ConfigInterfaz::default();
+        let cromo = Cromo::nuevo(false, true, &interfaz);
+        assert!(cromo.explorador_visible);
+        assert!(cromo.interfaz.mostrar_statusbar);
+
+        let sin_barra = ConfigInterfaz { mostrar_statusbar: false, ..ConfigInterfaz::default() };
+        let cromo = Cromo::nuevo(false, false, &sin_barra);
+        assert!(!cromo.explorador_visible);
+        assert!(!cromo.interfaz.mostrar_statusbar);
+    }
+
+    #[test]
+    fn en_zen_se_oculta_todo_sin_tocar_el_resto_de_la_interfaz() {
+        let interfaz = ConfigInterfaz { statusbar_eol: false, ..ConfigInterfaz::default() };
+        let cromo = Cromo::nuevo(true, true, &interfaz);
+        assert!(!cromo.explorador_visible);
+        assert!(!cromo.interfaz.mostrar_statusbar);
+        assert!(!cromo.interfaz.mostrar_pestanas);
+        // El resto se copia igual — y la config original no se toca.
+        assert!(!cromo.interfaz.statusbar_eol);
+        assert!(interfaz.mostrar_statusbar);
     }
 }
