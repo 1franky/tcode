@@ -242,11 +242,12 @@ impl CampoTemas {
 /// Un campo editable de la sección "Interfaz" (PLAN.md §5.5) —
 /// corresponde 1 a 1 con `tcode_config::ConfigInterfaz`, salvo `tema`
 /// (que tiene su propia sección "Temas") y lo que todavía no existe
-/// como feature (densidad de UI, tabs, breadcrumbs, rama git en la
+/// como feature (densidad de UI, breadcrumbs, rama git en la
 /// statusbar).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CampoInterfaz {
     MostrarStatusbar,
+    MostrarPestanas,
     StatusbarPosicionCursor,
     StatusbarCodificacion,
     StatusbarEol,
@@ -256,8 +257,9 @@ pub enum CampoInterfaz {
 }
 
 impl CampoInterfaz {
-    pub const TODOS: [CampoInterfaz; 7] = [
+    pub const TODOS: [CampoInterfaz; 8] = [
         CampoInterfaz::MostrarStatusbar,
+        CampoInterfaz::MostrarPestanas,
         CampoInterfaz::StatusbarPosicionCursor,
         CampoInterfaz::StatusbarCodificacion,
         CampoInterfaz::StatusbarEol,
@@ -269,6 +271,7 @@ impl CampoInterfaz {
     pub fn nombre(&self) -> &'static str {
         match self {
             CampoInterfaz::MostrarStatusbar => "Mostrar barra de estado",
+            CampoInterfaz::MostrarPestanas => "Mostrar pestañas",
             CampoInterfaz::StatusbarPosicionCursor => "Statusbar: posición del cursor",
             CampoInterfaz::StatusbarCodificacion => "Statusbar: codificación",
             CampoInterfaz::StatusbarEol => "Statusbar: fin de línea (EOL)",
@@ -283,6 +286,7 @@ impl CampoInterfaz {
     pub fn clave_toml(&self) -> (&'static str, &'static str) {
         let clave = match self {
             CampoInterfaz::MostrarStatusbar => "mostrar_statusbar",
+            CampoInterfaz::MostrarPestanas => "mostrar_pestanas",
             CampoInterfaz::StatusbarPosicionCursor => "statusbar_posicion_cursor",
             CampoInterfaz::StatusbarCodificacion => "statusbar_codificacion",
             CampoInterfaz::StatusbarEol => "statusbar_eol",
@@ -296,6 +300,7 @@ impl CampoInterfaz {
     pub fn valor_actual(&self, config: &Config) -> String {
         let activo = match self {
             CampoInterfaz::MostrarStatusbar => config.interfaz.mostrar_statusbar,
+            CampoInterfaz::MostrarPestanas => config.interfaz.mostrar_pestanas,
             CampoInterfaz::StatusbarPosicionCursor => config.interfaz.statusbar_posicion_cursor,
             CampoInterfaz::StatusbarCodificacion => config.interfaz.statusbar_codificacion,
             CampoInterfaz::StatusbarEol => config.interfaz.statusbar_eol,
@@ -312,6 +317,7 @@ impl CampoInterfaz {
     pub fn aplicar(&self, config: &mut Config) {
         let campo = match self {
             CampoInterfaz::MostrarStatusbar => &mut config.interfaz.mostrar_statusbar,
+            CampoInterfaz::MostrarPestanas => &mut config.interfaz.mostrar_pestanas,
             CampoInterfaz::StatusbarPosicionCursor => &mut config.interfaz.statusbar_posicion_cursor,
             CampoInterfaz::StatusbarCodificacion => &mut config.interfaz.statusbar_codificacion,
             CampoInterfaz::StatusbarEol => &mut config.interfaz.statusbar_eol,

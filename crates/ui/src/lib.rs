@@ -3,6 +3,7 @@
 //! activo y el resaltado de sintaxis de `tcode-syntax`; no modifica el
 //! `core` (ver PLAN.md §3).
 
+mod barra_pestanas;
 mod editor_tema;
 mod overlay;
 mod paleta;
