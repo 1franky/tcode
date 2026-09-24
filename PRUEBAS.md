@@ -781,6 +781,26 @@ un archivo agrega una en vez de reemplazar lo que se estaba viendo.
 - [ ] LSP (pyright): `malo.py` con un error de tipos y `bueno.py` sin errores en dos pestañas: al alternar, la statusbar muestra "1 error" solo en `malo.py`; escribir un error en `bueno.py` lo marca ahí y no en `malo.py`.
 - [ ] Archivo de 200.000 líneas en una pestaña: `Ctrl+PageDown`/`Ctrl+PageUp` mantenidos cambian de pestaña al instante, y al volver sigue en la misma línea.
 
+## Temas en formato Helix
+
+BACKLOG.md P3 #13. Un `.toml` de tema de Helix dejado en la carpeta de
+temas del usuario (`~/.config/tcode/themes/`, en macOS `~/Library/
+Application Support/tcode/themes/`) se convierte al vuelo al cargarlo;
+el archivo nunca se reescribe. Hay temas de ejemplo en
+`crates/config/tests/fixtures/helix/` (`onedark`, `onelight`, `gruvbox`
+y `gruvbox_dark_hard`, que hereda del anterior); también sirve cualquiera
+de `runtime/themes/` del repo de Helix.
+
+- [ ] Copiar `onedark.toml` y `onelight.toml` a la carpeta de temas: sin reiniciar, `Ctrl+K Ctrl+T` los lista al final como "onedark (Helix)" y "onelight (Helix)".
+- [ ] `Tab` hasta el filtro "Oscuro": aparece `onedark (Helix)` y no `onelight`; en "Claro", al revés.
+- [ ] Moverse sobre `onedark (Helix)`: preview en vivo con fondo `#282c34`, palabras clave violetas, strings verdes, comentarios grises en cursiva; `Enter` lo deja activo y sobrevive a reiniciar `tcode`.
+- [ ] Copiar `gruvbox.toml` y `gruvbox_dark_hard.toml`: el segundo (solo `inherits = "gruvbox"` + otro `bg0`) se ve como gruvbox pero con fondo más oscuro (`#1d2021`).
+- [ ] Borrar `gruvbox.toml` y volver a elegir `gruvbox_dark_hard`: no falla — usa el tema base "Oscuro" de `tcode` para todo lo que no define (fondo `#1d2021` igual).
+- [ ] Un tema de Helix con scopes raros, modificadores desconocidos o colores que no existen en `[palette]`: se lista y se aplica igual (lo que no entiende queda con el color de texto).
+- [ ] Un `.toml` roto (TOML inválido) en la carpeta: no aparece en el selector y no rompe nada.
+- [ ] Con un tema de Helix activo, `Ctrl+,` → Temas → "Duplicar tema activo": crea `<tema>-mio.toml` en formato `tcode` (con `name`, `[ui]`, `[statusbar]`...); el archivo de Helix original queda byte a byte igual.
+- [ ] Con un tema de Helix activo, `Ctrl+K Ctrl+P`: el editor visual muestra sus colores convertidos; cambiar uno guarda en `<tema>-mio.toml` (formato `tcode`) y nunca toca el original.
+
 ---
 
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca

@@ -1,0 +1,8 @@
+# Fixture de test: `gruvbox_dark_hard` de Helix
+# (https://github.com/helix-editor/helix, licencia MPL-2.0) — solo pisa
+# el fondo de la paleta del padre vía `inherits`.
+
+inherits = "gruvbox"
+
+[palette]
+bg0 = "#1d2021"

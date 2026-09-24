@@ -23,7 +23,8 @@ use anyhow::{Context, Result};
 use crate::color::{analizar_color_hex, formatear_color_hex, hsl_a_rgb, rgb_a_hsl};
 use crate::config::directorio_temas_usuario;
 use crate::tema::{
-    cargar_tema, duplicar_tema_para_editar, guardar_tema, tema_por_defecto, EstiloToken, ResultadoDuplicarTema, Tema,
+    cargar_tema, duplicar_tema_para_editar, guardar_tema, tema_es_formato_helix, tema_por_defecto, EstiloToken,
+    ResultadoDuplicarTema, Tema,
 };
 
 type Obtener = fn(&Tema) -> Option<String>;
@@ -316,9 +317,11 @@ impl EstadoEditorTema {
     /// (o se reusa la copia si ya existía de antes — nunca se pisa una
     /// personalización previa, ver `duplicar_tema_para_editar`). Si algo
     /// falla (el tema base no existe, no se puede escribir el archivo),
-    /// el editor queda como estaba — nunca a mitad de abrir.
+    /// el editor queda como estaba — nunca a mitad de abrir. Un tema en
+    /// formato Helix siempre se duplica (aunque su archivo termine en
+    /// `-mio`): `guardar_tema` lo reescribiría en formato `tcode`.
     pub fn abrir(&mut self, id_tema_actual: &str) -> Result<()> {
-        let id_tema = if id_tema_actual.ends_with("-mio") {
+        let id_tema = if id_tema_actual.ends_with("-mio") && !tema_es_formato_helix(id_tema_actual) {
             id_tema_actual.to_string()
         } else {
             let ruta = match duplicar_tema_para_editar(id_tema_actual)? {
