@@ -140,8 +140,18 @@ suelto. Los cuatro comandos también están en la paleta (`Ctrl+Shift+P`,
   los lenguajes con resaltado, salvo Markdown, que no tiene plegado. En
   archivos sin lenguaje reconocido (texto plano, YAML, TOML...) se pliega
   por indentación: una línea seguida de otras más indentadas.
-- El plegado es de cada panel y no se guarda: al volver a abrir el
-  archivo arranca todo desplegado.
+- El plegado es de cada documento abierto y **se recuerda entre
+  sesiones**: al cerrar la pestaña (`Ctrl+W`), el panel (`Ctrl+K F`) o
+  tcode (`Ctrl+Q`), los bloques plegados de cada archivo se guardan, y
+  al volver a abrirlo aparecen plegados igual. Si el archivo cambió por
+  fuera mientras tanto (otro editor, `git checkout`...), arranca todo
+  desplegado en vez de plegar líneas equivocadas; lo mismo si se cerró
+  descartando cambios sin guardar (se conserva lo que había guardado de
+  antes). Se guarda en un archivo de estado aparte de la configuración
+  — `~/.local/state/tcode/estado/pliegues.toml` en Linux,
+  `~/Library/Application Support/tcode/estado/pliegues.toml` en macOS,
+  `%LOCALAPPDATA%\tcode\estado\pliegues.toml` en Windows —, con los
+  últimos 200 archivos; se puede borrar sin problema.
 
 ## Paneles divididos (splits)
 

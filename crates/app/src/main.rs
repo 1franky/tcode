@@ -16,6 +16,7 @@
 //! (`lsp.rs`) sin bloquear ninguno de los dos.
 
 mod lsp;
+mod pliegues;
 mod vim;
 
 use std::collections::VecDeque;
@@ -78,10 +79,11 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let editor = match &ruta_arg {
+    let mut editor = match &ruta_arg {
         Some(ruta) => Editor::abrir(ruta)?,
         None => Editor::nuevo(),
     };
+    pliegues::restaurar(&mut editor);
     let mut layout = PanelLayout::nuevo(editor, ruta_arg.clone().unwrap_or_else(|| "[Sin nombre]".to_string()));
 
     // La config y el keymap nunca hacen fallar el arranque: si el archivo
@@ -110,6 +112,11 @@ async fn main() -> Result<()> {
     let (mut terminal, protocolo_kitty) = iniciar_terminal()?;
     let resultado = ejecutar(&mut terminal, &mut layout, capas_config, keymap, explorador, ruta_arg.as_deref()).await;
     finalizar_terminal(&mut terminal, protocolo_kitty)?;
+    // Al salir, los pliegues de todo lo que quedó abierto (ver `pliegues`).
+    pliegues::recordar(layout.paneles_mut().into_iter().map(|p| {
+        let p: &PanelEditor = p;
+        &p.editor
+    }));
 
     resultado
 }
@@ -1653,6 +1660,7 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         "pestana.cerrar" => {
             let modificado = layout.editor_activo().buffer().modificado();
             if cierre_confirmado(layout, estado, id, modificado, "Ctrl+W") {
+                pliegues::recordar([layout.editor_activo()]);
                 layout.cerrar_pestana_activa();
             }
             Accion::Continuar
@@ -1663,6 +1671,9 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         "panel.cerrar" => {
             let modificado = layout.num_paneles() > 1 && layout.panel_activo_modificado();
             if cierre_confirmado(layout, estado, id, modificado, "Ctrl+K F") {
+                if layout.num_paneles() > 1 {
+                    pliegues::recordar(layout.documentos_panel_activo().map(|d| &d.editor));
+                }
                 layout.cerrar_activo();
             }
             Accion::Continuar
@@ -1903,6 +1914,7 @@ fn abrir_ruta_desde_explorador(layout: &mut PanelLayout, foco: &mut Foco, ruta: 
         return;
     }
     if let Ok(mut nuevo_editor) = Editor::abrir(&ruta) {
+        pliegues::restaurar(&mut nuevo_editor);
         if config.modo_vim {
             nuevo_editor.entrar_modo_normal();
         }

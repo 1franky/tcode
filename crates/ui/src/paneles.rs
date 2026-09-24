@@ -374,6 +374,12 @@ impl Layout {
         self.pestanas_activas_mut().activar_ruta(ruta)
     }
 
+    /// Los documentos (pestañas) del panel activo, en orden — p. ej. para
+    /// recordar sus pliegues antes de cerrar el panel entero.
+    pub fn documentos_panel_activo(&self) -> impl Iterator<Item = &PanelEditor> {
+        self.pestanas_activas().documentos.iter()
+    }
+
     /// Cantidad de pestañas del panel activo.
     pub fn num_pestanas(&self) -> usize {
         self.pestanas_activas().documentos.len()

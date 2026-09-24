@@ -862,6 +862,24 @@ Selector con el esquema (outline) del archivo actual, sobre el mismo
 - [ ] Con el foco en el explorador o en la vista de tabla de un CSV: no abre nada.
 - [ ] Pegar texto (bracketed paste) con el selector abierto: se escribe en el filtro, no en el archivo.
 
+## Pliegues recordados entre sesiones
+
+Los pliegues de cada archivo se guardan al cerrar la pestaña, el panel o
+tcode, y se restauran al reabrirlo si el archivo no cambió (huella del
+contenido). Archivo de estado: `pliegues.toml` en `~/.local/state/tcode/estado/`
+(Linux) o `~/Library/Application Support/tcode/estado/` (macOS). Probar
+con `HOME` apuntando a una carpeta temporal para no tocar el estado real.
+
+- [ ] Plegar dos funciones de un `.rs`, `Ctrl+Q`, volver a abrir el archivo: las dos siguen plegadas; el archivo de estado tiene una entrada `[[archivo]]` con su ruta absoluta, una `huella` y los rangos.
+- [ ] Plegar todo (`Ctrl+K 0`), cerrar la pestaña con `Ctrl+W` y reabrir con `Ctrl+P`: sale plegado igual. Lo mismo cerrando un panel dividido con `Ctrl+K F`.
+- [ ] Con pliegues guardados, agregar una línea al archivo desde otra terminal (`echo >> archivo` o `sed`) y reabrirlo: arranca todo desplegado.
+- [ ] Hacer `touch` al archivo (sin cambiar el contenido) y reabrir: los pliegues se restauran igual.
+- [ ] Desplegar todo (`Ctrl+K Ctrl+J`) y salir: al reabrir arranca desplegado y el archivo ya no figura en el estado.
+- [ ] Plegar, guardar, salir; reabrir, editar sin guardar, desplegar y salir descartando (`Ctrl+Q` dos veces): al reabrir vuelven los pliegues de la primera vez.
+- [ ] Abrir el mismo archivo con otra ruta (relativa vs. absoluta, o por un symlink): se reconoce como el mismo (ruta canónica).
+- [ ] Un `pliegues.toml` corrupto (texto cualquiera) o sin permiso de escritura: tcode abre y cierra normal, sin errores visibles (solo no recuerda nada).
+- [ ] Abrir un archivo sin nada guardado: abre igual de rápido que antes (no se calcula la huella si no hay entrada).
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).
