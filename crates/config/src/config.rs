@@ -115,13 +115,16 @@ impl Default for ConfigEditor {
 /// (PLAN.md §5.5). Los `statusbar_*` son los elementos "marcar/
 /// desmarcar" que menciona el plan — salvo la rama git, que todavía no
 /// existe como feature (no tiene sentido un toggle para algo que nunca
-/// se muestra); densidad de UI y mostrar/ocultar tabs/breadcrumbs quedan
-/// para cuando esos widgets existan.
+/// se muestra); densidad de UI y mostrar/ocultar tabs quedan para cuando
+/// esos widgets existan. `mostrar_breadcrumbs` (BACKLOG.md P3 #10) viene
+/// prendido por defecto, como en VSCode: es una sola fila por panel y
+/// dice dónde está el cursor sin tener que buscarlo.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ConfigInterfaz {
     pub tema: String,
     pub mostrar_statusbar: bool,
+    pub mostrar_breadcrumbs: bool,
     pub statusbar_posicion_cursor: bool,
     pub statusbar_codificacion: bool,
     pub statusbar_eol: bool,
@@ -135,6 +138,7 @@ impl Default for ConfigInterfaz {
         Self {
             tema: TEMA_POR_DEFECTO.to_string(),
             mostrar_statusbar: true,
+            mostrar_breadcrumbs: true,
             statusbar_posicion_cursor: true,
             statusbar_codificacion: true,
             statusbar_eol: true,
@@ -367,6 +371,7 @@ mod tests {
             interfaz: ConfigInterfaz {
                 tema: "claro".into(),
                 mostrar_statusbar: false,
+                mostrar_breadcrumbs: false,
                 statusbar_posicion_cursor: false,
                 statusbar_codificacion: true,
                 statusbar_eol: false,

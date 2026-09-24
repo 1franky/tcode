@@ -7,7 +7,7 @@ use tcode_fs::DiffGit;
 use tcode_lsp::DiagnosticoSimple;
 use tcode_syntax::{Lenguaje, Resaltador};
 
-use crate::{statusbar, vista_codigo, vista_csv, vista_markdown, EstadoUi, Paleta};
+use crate::{breadcrumbs, statusbar, vista_codigo, vista_csv, vista_markdown, EstadoUi, Paleta};
 
 /// Cómo se divide un panel (`Ctrl+\`/`Ctrl+K Ctrl+\`, PLAN.md §4): en
 /// paneles lado a lado (una línea divisoria vertical entre ellos) o
@@ -379,6 +379,23 @@ impl Layout {
     }
 }
 
+/// Las franjas de una fila que van arriba del contenido de un panel
+/// (código, tabla o preview), recortadas del área en este único lugar:
+/// por ahora solo los breadcrumbs (BACKLOG.md P3 #10). Una franja nueva
+/// (p. ej. una barra de pestañas) se apila acá mismo con otro `split`,
+/// sin que las vistas de abajo se enteren. Un panel de una sola fila de
+/// alto no reserva nada: el contenido tiene prioridad.
+fn franjas_superiores(area: Rect, interfaz: &ConfigInterfaz) -> (Option<Rect>, Rect) {
+    if !interfaz.mostrar_breadcrumbs || area.height < 2 {
+        return (None, area);
+    }
+    let partes = ratatui::layout::Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
+    (Some(partes[0]), partes[1])
+}
+
 #[allow(clippy::too_many_arguments)]
 fn dibujar_panel(
     frame: &mut Frame,
@@ -413,6 +430,7 @@ fn dibujar_panel(
             } else {
                 (area, None)
             };
+            let (area_breadcrumbs, area_contenido) = franjas_superiores(area_contenido, interfaz);
             let partes = [area_contenido];
 
             // La búsqueda opera solo sobre el buffer del panel activo: los
@@ -428,7 +446,23 @@ fn dibujar_panel(
             // `panel_busqueda::dibujar`), no en el código.
             let mostrar_cursor = es_activo && !estado_busqueda.activa();
 
-            if panel_editor.es_csv() && panel_editor.modo_csv == ModoCsv::Tabla {
+            let es_tabla_csv = panel_editor.es_csv() && panel_editor.modo_csv == ModoCsv::Tabla;
+            if let Some(area_breadcrumbs) = area_breadcrumbs {
+                breadcrumbs::dibujar(
+                    frame,
+                    area_breadcrumbs,
+                    &panel_editor.editor,
+                    &panel_editor.ruta_mostrada,
+                    &mut panel_editor.estado_ui.breadcrumbs,
+                    resaltador,
+                    paleta,
+                    // En la tabla CSV la posición del cursor en el texto
+                    // no es la celda seleccionada: solo la ruta.
+                    !es_tabla_csv,
+                );
+            }
+
+            if es_tabla_csv {
                 let tabla = panel_editor.tabla_csv();
                 // Un `Ctrl+Z` (global, no pasa por la vista) o un filtro
                 // que dejó menos filas pueden dejar la selección fuera de

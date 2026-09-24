@@ -10,6 +10,7 @@ use tree_sitter::{
 
 use crate::lenguaje::Lenguaje;
 use crate::plegado::{rangos_de_arbol, rangos_por_indentacion, RangoPlegable};
+use crate::simbolos::{simbolos_en, Simbolo};
 
 /// Nombres de token canónicos, en el mismo vocabulario que
 /// `tcode_config::TemaSintaxis` (PLAN.md §7: keyword, string, number,
@@ -154,6 +155,12 @@ struct Documento {
     /// que pase [`REINTENTO_TRAS_CANCELAR`] desde ese momento.
     parseo_cancelado: Option<Instant>,
     ultimo_uso: u64,
+    /// Última consulta de [`Resaltador::simbolos_en`] (posición y
+    /// resultado) sobre ESTE árbol: los breadcrumbs la piden en cada
+    /// frame, y mientras no cambien ni el texto ni la posición del cursor
+    /// no hace falta volver a recorrer ancestros. Un `Documento` nuevo
+    /// (el texto cambió) arranca sin ella.
+    simbolos: Option<(Point, Vec<Simbolo>)>,
 }
 
 struct EntradaCache {
@@ -437,6 +444,42 @@ impl Resaltador {
         rangos_de_arbol(&self.documentos[clave].arbol, lenguaje, fuente)
     }
 
+    /// Jerarquía de símbolos (funciones, clases, `impl`...) que contienen
+    /// la posición `fila`/`columna` (columna en BYTES dentro de la línea,
+    /// como las cuenta tree-sitter) en el documento `clave`, del más
+    /// externo al más interno — para los breadcrumbs de arriba del código
+    /// (BACKLOG.md P3 #10, ver `crate::simbolos`). Usa el mismo árbol
+    /// incremental que el resaltado, con el mismo criterio de `revision`
+    /// que [`Resaltador::resaltar_documento_tramos_versionado`]: con la
+    /// revisión sin cambios no pide el texto ni parsea, y si además la
+    /// posición es la de la consulta anterior devuelve el resultado
+    /// guardado sin recorrer el árbol. Si el parseo falla, sin símbolos.
+    pub fn simbolos_en(
+        &mut self,
+        clave: &str,
+        lenguaje: Lenguaje,
+        revision: Option<u64>,
+        obtener_fuente: impl FnOnce() -> String,
+        fila: usize,
+        columna: usize,
+    ) -> Vec<Simbolo> {
+        let punto = Point { row: fila, column: columna };
+        if self.actualizar_documento(clave, lenguaje, revision, obtener_fuente).is_err() {
+            return Vec::new();
+        }
+        let Some(documento) = self.documentos.get_mut(clave) else {
+            return Vec::new();
+        };
+        if let Some((guardado, simbolos)) = &documento.simbolos {
+            if *guardado == punto {
+                return simbolos.clone();
+            }
+        }
+        let simbolos = simbolos_en(&documento.arbol, lenguaje, &documento.fuente, punto);
+        documento.simbolos = Some((punto, simbolos.clone()));
+        simbolos
+    }
+
     /// Deja en `self.documentos[clave]` el árbol del texto actual. Con
     /// `revision` igual a la de la llamada anterior no hace nada (ni pide
     /// el texto). Si no, pide el texto (`obtener_fuente`): la primera vez
@@ -482,7 +525,7 @@ impl Resaltador {
                         revision,
                     ),
                 };
-                Documento { lenguaje, fuente, arbol, revision, parseo_cancelado, ultimo_uso: 0 }
+                Documento { lenguaje, fuente, arbol, revision, parseo_cancelado, ultimo_uso: 0, simbolos: None }
             }
         };
 

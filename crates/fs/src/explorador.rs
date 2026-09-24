@@ -350,6 +350,38 @@ pub fn raiz_por_defecto(ruta_archivo: Option<&str>) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Las partes (carpetas y nombre del archivo) de `ruta` relativa a la
+/// raíz de su proyecto, para los breadcrumbs de arriba del código
+/// (BACKLOG.md P3 #10): `crates/core/src/editor.rs` ->
+/// `["crates", "core", "src", "editor.rs"]`. La raíz es la del repo git
+/// que la contiene (la primera carpeta hacia arriba con un `.git`, mismo
+/// criterio que la config de proyecto); fuera de un repo, el directorio
+/// de trabajo si la contiene; si tampoco, la ruta absoluta entera (la UI
+/// elide las carpetas del medio si no entra). Toca el disco (sube
+/// buscando `.git`): la UI lo llama solo cuando cambia la ruta del panel,
+/// nunca en cada frame.
+pub fn partes_ruta_en_proyecto(ruta: &Path) -> Vec<String> {
+    let cwd = std::env::current_dir().ok();
+    let absoluta = match &cwd {
+        Some(cwd) if ruta.is_relative() => cwd.join(ruta),
+        _ => ruta.to_path_buf(),
+    };
+    let absoluta = std::fs::canonicalize(&absoluta).unwrap_or(absoluta);
+    let raiz_git = absoluta.ancestors().skip(1).find(|dir| dir.join(".git").exists());
+    let cwd = cwd.map(|c| std::fs::canonicalize(&c).unwrap_or(c));
+    let relativa = raiz_git
+        .and_then(|raiz| absoluta.strip_prefix(raiz).ok())
+        .or_else(|| cwd.as_deref().and_then(|c| absoluta.strip_prefix(c).ok()))
+        .unwrap_or(&absoluta);
+    relativa
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(parte) => Some(parte.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,6 +450,25 @@ mod tests {
     fn raiz_por_defecto_usa_la_carpeta_padre_del_archivo() {
         let raiz = raiz_por_defecto(Some("/tmp/proyecto/archivo.rs"));
         assert_eq!(raiz, PathBuf::from("/tmp/proyecto"));
+    }
+
+    #[test]
+    fn partes_ruta_en_proyecto_son_relativas_a_la_raiz_del_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("crates/core")).unwrap();
+        let archivo = repo.join("crates/core/editor.rs");
+        std::fs::write(&archivo, "").unwrap();
+        assert_eq!(partes_ruta_en_proyecto(&archivo), ["crates", "core", "editor.rs"]);
+    }
+
+    #[test]
+    fn partes_ruta_en_proyecto_fuera_de_un_repo_usa_la_ruta_entera() {
+        // Ruta inexistente fuera del cwd y sin `.git` arriba: no se
+        // puede recortar nada, quedan todas las partes (sin la raíz `/`).
+        let ruta = Path::new("/no-existe-tcode/a/b.txt");
+        assert_eq!(partes_ruta_en_proyecto(ruta), ["no-existe-tcode", "a", "b.txt"]);
     }
 
     #[test]

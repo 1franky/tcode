@@ -3,6 +3,7 @@
 //! activo y el resaltado de sintaxis de `tcode-syntax`; no modifica el
 //! `core` (ver PLAN.md §3).
 
+mod breadcrumbs;
 mod editor_tema;
 mod overlay;
 mod paleta;
@@ -84,6 +85,9 @@ pub struct EstadoUi {
     /// frame (BACKLOG.md P1 #14, `vista_codigo::ajustar_scroll_con_ajuste`).
     /// Sin ajuste vale siempre 0.
     subfila_scroll: usize,
+    /// Partes de la ruta ya resueltas para el breadcrumb del panel
+    /// (BACKLOG.md P3 #10, ver `breadcrumbs::CacheRuta`).
+    breadcrumbs: breadcrumbs::CacheRuta,
 }
 
 /// Dibuja un frame completo. El panel de administración (`Ctrl+,`,
