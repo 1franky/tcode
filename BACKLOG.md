@@ -44,15 +44,34 @@ Cuatro niveles:
 
 ## P0 — Gaps sorprendentes
 
-Ninguno pendiente por ahora — el último (pegar texto grande / teclas
-repetidas lento) se cerró, ver "Hecho recientemente".
+### 15. Copiar y cortar al portapapeles del sistema
+
+Encontrado el 2026-09-24 revisando el código: no existen `Ctrl+C`/`Ctrl+X`
+ni ningún comando de copiar/cortar. Pegar funciona solo porque lo hace la
+terminal (bracketed paste), pero no hay forma de llevar una selección de
+tcode a otra app; en modo VIM `y` copia a un registro interno. Alcance:
+OSC 52 (funciona también por SSH) + respaldo con `pbcopy`/`wl-copy`/
+`xclip`/`clip.exe`; `Ctrl+C`/`Ctrl+X` sobre la selección (o la línea
+actual si no hay), `Ctrl+V` interno como alternativa al pegado de la
+terminal; integrar con el registro del modo VIM.
 
 ---
 
 ## P1 — Gaps reales de alcance acotado
 
-Ninguno pendiente — los que había (#14 rendimiento con archivos grandes,
-#2 logs del LSP en vivo) se cerraron, ver "Hecho recientemente".
+### 16. Búsqueda (y reemplazo) en todo el proyecto
+
+`Ctrl+F`/`Ctrl+H` buscan solo en el archivo abierto y `Ctrl+P` solo
+nombres de archivo. Falta buscar texto en todos los archivos del proyecto
+(estilo `grep`/`ripgrep`, respetando `.gitignore`), con una lista de
+resultados navegable que salte a cada coincidencia, y reemplazo en varios
+archivos con vista previa.
+
+### 17. Funciones de LSP más allá de diagnósticos y formateo
+
+El cliente LSP solo usa diagnósticos (`publishDiagnostics`) y
+`textDocument/formatting`. Faltan: ir a definición, autocompletado,
+hover (tipo y documentación), buscar referencias y renombrar símbolo.
 
 ---
 
