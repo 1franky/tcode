@@ -80,6 +80,7 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "plegar.actual", descripcion: "Plegado: Plegar el bloque del cursor" },
         Comando { id: "plegar.desplegar", descripcion: "Plegado: Desplegar el bloque del cursor" },
         Comando { id: "plegar.todo", descripcion: "Plegado: Plegar todo" },
+        Comando { id: "buscar.en_proyecto", descripcion: "Buscar: En todo el proyecto (y reemplazar)" },
         Comando { id: "simbolos.ir_a", descripcion: "Ir: Símbolo del archivo (funciones, clases...)" },
         Comando { id: "lsp.ir_a_definicion", descripcion: "LSP: Ir a la definición" },
         Comando { id: "lsp.volver", descripcion: "LSP: Volver a donde se estaba antes de saltar" },

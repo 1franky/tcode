@@ -318,6 +318,28 @@ mod tests {
         );
     }
 
+    /// `desde_crudo` junta todas las secciones en un solo mapa: si el mismo
+    /// atajo aparece en dos secciones, el de la última pisa al otro SIN
+    /// avisar (pasó con `Ctrl+K B`, asignado a la vez a "buscar en el
+    /// proyecto" y a "volver" del LSP — el primero dejó de andar). El test
+    /// de conflictos de arriba solo mira prefijos, no repetidos exactos.
+    #[test]
+    fn el_keymap_por_defecto_no_repite_atajos_entre_secciones() {
+        let crudo: KeymapCrudo = toml::from_str(KEYMAP_POR_DEFECTO).unwrap();
+        let mut vistos: HashMap<Vec<Combinacion>, String> = HashMap::new();
+        let mut repetidos = Vec::new();
+        let secciones = [("global", &crudo.global), ("editor", &crudo.editor), ("markdown", &crudo.markdown), ("csv", &crudo.csv)];
+        for (seccion, atajos) in secciones {
+            for (texto, comando) in atajos {
+                let secuencia = parsear_atajo(texto).unwrap();
+                if let Some(anterior) = vistos.insert(secuencia, format!("[{seccion}] {comando}")) {
+                    repetidos.push(format!("'{texto}': {anterior} y [{seccion}] {comando}"));
+                }
+            }
+        }
+        assert!(repetidos.is_empty(), "atajos repetidos entre secciones: {repetidos:?}");
+    }
+
     #[test]
     fn detecta_un_conflicto_de_prefijo() {
         let crudo: KeymapCrudo = toml::from_str(

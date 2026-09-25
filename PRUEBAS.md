@@ -970,6 +970,27 @@ config real. **Estas pruebas pisan tu portapapeles real**: guardalo antes
   - `"a` avisa "Registro no soportado".
 - [ ] **Modo VIM, con "VIM: registro = portapapeles".** `yy`/`dd`/`x` van al portapapeles del sistema sin aviso, y `p` pega lo copiado en otra app (por líneas si termina en salto de línea).
 
+## Buscar (y reemplazar) en todo el proyecto (`Ctrl+Shift+F`/`Ctrl+K B`)
+
+Probar sobre un proyecto grande de verdad (p. ej. una copia de este repo
+con miles de archivos más en una carpeta, fuera del repo) y con `HOME`
+apuntando a una carpeta temporal.
+
+- [ ] `Ctrl+K B` (y `Ctrl+Shift+F` con protocolo Kitty; en la paleta, "Buscar: En todo el proyecto") abre la vista con los campos Buscar/Reemplazar/Archivos y "Escribí para buscar".
+- [ ] Escribir `fn main`: los primeros resultados aparecen casi al instante con "(buscando...)", la lista crece y al final dice "N coincidencias en M archivos (K archivos revisados)". Agrupados por archivo, ordenados por ruta, con número de línea y la coincidencia resaltada.
+- [ ] Mientras busca (una consulta de una letra en el proyecto grande): `Tab`, escribir en Reemplazar, `↓`: todo responde al instante; la búsqueda llega al tope y lo avisa ("tope de 5000").
+- [ ] Un archivo listado en `.gitignore`, uno oculto, uno en `target/`, un binario y uno de más de 4 MB con el texto buscado: ninguno aparece.
+- [ ] `Alt+R` con `fn abrir_\w+`: busca como regex (marca `[.*]`); un regex inválido (`(`) muestra el error en rojo. `Alt+C` y `Alt+W` igual que en `Ctrl+F`.
+- [ ] Archivos `crates/**/*.rs`: solo resultados de ahí; `!*.md`: todo menos Markdown; un glob inválido (`a[`) muestra el error.
+- [ ] `↓` hasta un resultado de otro archivo y `Enter`: se abre en una pestaña nueva con el cursor en la línea y columna de la coincidencia (también en un archivo con CRLF). `Ctrl+K B` de nuevo: la misma lista con la misma selección.
+- [ ] Con la lista más larga que la pantalla, `PageDown`: la selección baja de a 10 y arriba se ve siempre de qué archivo son las coincidencias.
+- [ ] Un archivo abierto con cambios sin guardar que agregan el texto buscado: aparece con "[abierto]" y las coincidencias del buffer, no las del disco.
+- [ ] Con texto en Reemplazar, `Alt+Enter`: pide confirmación con el total; `n` (o cualquier tecla que no sea `y`) cancela sin tocar nada.
+- [ ] `Alt+Enter` y `y`: "Reemplazadas N coincidencias en M archivos"; los cerrados cambiaron en disco (un CRLF sigue siendo CRLF, sin temporales `.tcode-*.tmp` sueltos en la carpeta) y los abiertos quedan modificados (`*`) sin guardar; en uno de ellos, un `Ctrl+Z` deshace todo su reemplazo de una vez.
+- [ ] `Alt+Enter` mientras todavía busca, o con la búsqueda cortada en el tope: no reemplaza y explica por qué.
+- [ ] Pegar texto (bracketed paste) con la vista abierta: se escribe en el campo activo, no en el archivo.
+- [ ] `Esc` con la búsqueda en curso: cierra, y la CPU vuelve a reposo enseguida.
+
 ## Ir a definición, autocompletado, hover, referencias y renombrar (LSP)
 
 Con un proyecto Cargo de 2-3 módulos (`rust-analyzer` configurado como
@@ -979,7 +1000,7 @@ proyecto y con `HOME` temporal. Si `HOME` es temporal, `rust-analyzer`
 (el de rustup) necesita `RUSTUP_HOME`/`CARGO_HOME` apuntando a los reales.
 
 - [ ] `F12` sobre una función/clase definida en otro archivo: se abre en una pestaña nueva con el cursor sobre el nombre (ruta relativa en la pestaña). Otra vez `F12` sobre algo de un archivo ya abierto: activa esa pestaña, no abre otra.
-- [ ] `Alt+←` (o `Ctrl+K B`) vuelve al lugar de antes del salto; varias veces seguidas deshacen varios saltos; sin saltos: "No hay a dónde volver".
+- [ ] `Alt+←` (o `Ctrl+K H`) vuelve al lugar de antes del salto; varias veces seguidas deshacen varios saltos; sin saltos: "No hay a dónde volver".
 - [ ] `F12` sobre algo sin definición (un número, un espacio): "No se encontró la definición".
 - [ ] `c.` en Python (con `c` una instancia) o `p.` en Rust: tras un instante aparece la lista de métodos/campos bajo el cursor, con tipo y firma. Seguir escribiendo filtra (letras coincidentes en negrita); una letra que no coincide con nada la cierra.
 - [ ] `↑`/`↓` recorren la lista (dando la vuelta), `Tab` o `Enter` aceptan: se reemplaza lo escrito de la palabra; `Ctrl+Z` deshace la aceptación entera en un paso. `Esc` cierra sin tocar nada.
