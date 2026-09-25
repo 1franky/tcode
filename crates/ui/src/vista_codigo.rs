@@ -245,6 +245,7 @@ pub fn dibujar(
     columna_regla: Option<usize>,
     marcas_git: Option<&[Option<MarcaGit>]>,
 ) {
+    estado.posicion_cursor = None;
     let buffer = editor.buffer();
     let (area_gutter, area) = dividir_gutter(area, buffer.num_lineas(), mostrar_numeros, marcas_git.is_some());
 
@@ -471,6 +472,7 @@ pub fn dibujar(
         let columna = area.x + columna_local as u16;
         let fila_pantalla = area.y + fila_cursor_en_pantalla as u16;
         frame.set_cursor_position((columna, fila_pantalla));
+        estado.posicion_cursor = Some((columna, fila_pantalla));
     }
 }
 

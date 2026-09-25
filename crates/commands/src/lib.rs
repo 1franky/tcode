@@ -3,12 +3,15 @@
 //! filtra con `tcode-fuzzy` mientras se escribe. No sabe nada de
 //! terminal/`ratatui` — el crate `ui` la dibuja, `app` decide qué hacer
 //! con el id de comando que devuelve. También el selector de símbolos
-//! del archivo (`Ctrl+K .`), que es la misma forma de lista filtrable.
+//! del archivo (`Ctrl+K .`) y la lista de ubicaciones del LSP
+//! (definiciones, referencias), que son la misma forma de lista filtrable.
 
+mod lista_ubicaciones;
 mod paleta;
 mod registro;
 mod selector_simbolos;
 
+pub use lista_ubicaciones::{EntradaUbicacion, EstadoListaUbicaciones};
 pub use paleta::{EstadoPaleta, ResultadoPaleta};
 pub use registro::{comandos_disponibles, Comando};
 pub use selector_simbolos::{EntradaSimbolo, EstadoSelectorSimbolos, ResultadoSimbolo};
