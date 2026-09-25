@@ -17,7 +17,7 @@ pub mod plegado;
 pub mod vim;
 
 pub use buffer::{Buffer, Eol};
-pub use busqueda::{buscar_coincidencias, Coincidencia, OpcionesBusqueda};
+pub use busqueda::{buscar_coincidencias, compilar_patron, Coincidencia, OpcionesBusqueda};
 pub use csv::{
     analizar as analizar_csv, delimitador_por_extension, filas_visibles as filas_visibles_csv,
     serializar_fila as serializar_fila_csv, EdicionCsv, FilaCsv, FiltroCsv, TablaCsv,

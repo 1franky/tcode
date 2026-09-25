@@ -943,6 +943,27 @@ con `HOME` apuntando a una carpeta temporal para no tocar el estado real.
 - [ ] Un `pliegues.toml` corrupto (texto cualquiera) o sin permiso de escritura: tcode abre y cierra normal, sin errores visibles (solo no recuerda nada).
 - [ ] Abrir un archivo sin nada guardado: abre igual de rápido que antes (no se calcula la huella si no hay entrada).
 
+## Buscar (y reemplazar) en todo el proyecto (`Ctrl+Shift+F`/`Ctrl+K B`)
+
+Probar sobre un proyecto grande de verdad (p. ej. una copia de este repo
+con miles de archivos más en una carpeta, fuera del repo) y con `HOME`
+apuntando a una carpeta temporal.
+
+- [ ] `Ctrl+K B` (y `Ctrl+Shift+F` con protocolo Kitty; en la paleta, "Buscar: En todo el proyecto") abre la vista con los campos Buscar/Reemplazar/Archivos y "Escribí para buscar".
+- [ ] Escribir `fn main`: los primeros resultados aparecen casi al instante con "(buscando...)", la lista crece y al final dice "N coincidencias en M archivos (K archivos revisados)". Agrupados por archivo, ordenados por ruta, con número de línea y la coincidencia resaltada.
+- [ ] Mientras busca (una consulta de una letra en el proyecto grande): `Tab`, escribir en Reemplazar, `↓`: todo responde al instante; la búsqueda llega al tope y lo avisa ("tope de 5000").
+- [ ] Un archivo listado en `.gitignore`, uno oculto, uno en `target/`, un binario y uno de más de 4 MB con el texto buscado: ninguno aparece.
+- [ ] `Alt+R` con `fn abrir_\w+`: busca como regex (marca `[.*]`); un regex inválido (`(`) muestra el error en rojo. `Alt+C` y `Alt+W` igual que en `Ctrl+F`.
+- [ ] Archivos `crates/**/*.rs`: solo resultados de ahí; `!*.md`: todo menos Markdown; un glob inválido (`a[`) muestra el error.
+- [ ] `↓` hasta un resultado de otro archivo y `Enter`: se abre en una pestaña nueva con el cursor en la línea y columna de la coincidencia (también en un archivo con CRLF). `Ctrl+K B` de nuevo: la misma lista con la misma selección.
+- [ ] Con la lista más larga que la pantalla, `PageDown`: la selección baja de a 10 y arriba se ve siempre de qué archivo son las coincidencias.
+- [ ] Un archivo abierto con cambios sin guardar que agregan el texto buscado: aparece con "[abierto]" y las coincidencias del buffer, no las del disco.
+- [ ] Con texto en Reemplazar, `Alt+Enter`: pide confirmación con el total; `n` (o cualquier tecla que no sea `y`) cancela sin tocar nada.
+- [ ] `Alt+Enter` y `y`: "Reemplazadas N coincidencias en M archivos"; los cerrados cambiaron en disco (un CRLF sigue siendo CRLF, sin temporales `.tcode-*.tmp` sueltos en la carpeta) y los abiertos quedan modificados (`*`) sin guardar; en uno de ellos, un `Ctrl+Z` deshace todo su reemplazo de una vez.
+- [ ] `Alt+Enter` mientras todavía busca, o con la búsqueda cortada en el tope: no reemplaza y explica por qué.
+- [ ] Pegar texto (bracketed paste) con la vista abierta: se escribe en el campo activo, no en el archivo.
+- [ ] `Esc` con la búsqueda en curso: cierra, y la CPU vuelve a reposo enseguida.
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).

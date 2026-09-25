@@ -10,6 +10,9 @@ description = "Explorador de archivos de tcode: árbol de directorios navegable,
 [dependencies]
 anyhow.workspace = true
 tcode-fuzzy.workspace = true
+tcode-core.workspace = true
+ignore.workspace = true
+regex.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

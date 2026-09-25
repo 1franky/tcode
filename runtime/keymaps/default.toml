@@ -135,6 +135,12 @@
 "Ctrl+K Z"      = "vista.modo_zen"
 "Ctrl+F"        = "buscar.en_archivo"
 "Ctrl+H"        = "buscar.reemplazar"
+# Búsqueda (y reemplazo) en todo el proyecto (BACKLOG.md P1 #16).
+# Ctrl+Shift+F llega como Ctrl+F en terminales sin protocolo Kitty (abre
+# la búsqueda en el archivo): la alternativa es "Ctrl+K B" ("Buscar") —
+# "Ctrl+K F" ya es cerrar panel.
+"Ctrl+Shift+F"  = "buscar.en_proyecto"
+"Ctrl+K B"      = "buscar.en_proyecto"
 # F3/Shift+F3 y Alt+R/C/W funcionan tanto con la barra abierta (capturados
 # directo en el bucle de eventos, como la paleta de comandos) como con la
 # barra cerrada, repitiendo la última búsqueda (estilo VSCode) — de ahí
