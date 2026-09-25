@@ -904,6 +904,7 @@ dependencies = [
  "lsp-types",
  "serde",
  "serde_json",
+ "tcode-fuzzy",
  "tcode-syntax",
  "tokio",
 ]
