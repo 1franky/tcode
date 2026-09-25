@@ -44,8 +44,21 @@ Cuatro niveles:
 
 ## P0 — Gaps sorprendentes
 
-Ninguno pendiente — el último (#15, portapapeles) se cerró, ver "Hecho
-recientemente".
+Encontrados el 2026-09-25 revisando comandos y atajos: cosas que casi
+cualquier editor tiene y tcode no.
+
+### 18. Soporte de mouse
+
+No hay ningún manejo de mouse (`EnableMouseCapture` nunca se activa).
+Clic para ubicar el cursor, arrastrar para seleccionar, rueda para
+scroll, clic en pestañas / explorador / resultados de listas.
+
+### 19. Edición básica que falta
+
+- Comentar/descomentar (`Ctrl+/`), según el lenguaje.
+- Mover línea arriba/abajo (`Alt+↑`/`Alt+↓`) y duplicar línea.
+- Seleccionar todo (`Ctrl+A`).
+- Ir a línea (`Ctrl+G`) fuera del modo VIM (hoy solo `:{n}`).
 
 ---
 
@@ -108,6 +121,36 @@ son gaps nuevos, anotadas para no redescubrirlas):
   muchos errores de sintaxis el re-parseo tiene un tope de 250 ms: los
   colores de lo recién editado quedan aproximados hasta el reintento.
 
+### 20. Restaurar la sesión anterior
+
+Reabrir pestañas, splits y posición de los cursores de la última vez
+(por proyecto).
+
+### 21. Recuperación ante cierres inesperados
+
+Copias de respaldo periódicas de los buffers con cambios sin guardar
+(fuera del proyecto) y ofrecer recuperarlas al reabrir.
+
+### 22. Panel de problemas
+
+Lista de todos los diagnósticos del LSP de todos los documentos abiertos,
+con salto a cada uno.
+
+### 23. Más funciones de LSP
+
+Acciones rápidas (`textDocument/codeAction`: quick fixes, imports),
+ayuda de firma (`signatureHelp`), inlay hints.
+
+### 24. Snippets con saltos entre campos
+
+Propios por lenguaje y los que manda el LSP (hoy se insertan como texto
+plano, sin placeholders).
+
+### 25. Git más completo
+
+Ver el diff de un bloque contra `HEAD`, revertir un bloque, blame en
+línea.
+
 ---
 
 ## P3 — Bloqueado o reconsiderar si debería estar en el plan
@@ -142,6 +185,20 @@ Limitaciones conocidas de estas piezas (no son gaps nuevos):
   ignoran; un tema que hereda de uno incluido en Helix pero ausente
   localmente se completa con el Oscuro/Claro de tcode; los nombres ANSI
   usan valores fijos de xterm, no la paleta de la terminal.
+
+Candidatos grandes, a decidir si entran en el plan:
+
+### 26. Terminal integrada
+
+Un panel con una shell (PTY), como el de VSCode.
+
+### 27. Depurador (DAP)
+
+Breakpoints, paso a paso, variables — vía Debug Adapter Protocol.
+
+### 28. Completar el modo VIM
+
+Búsqueda con `/`/`?`/`n`/`*`, macros, registros con nombre, `Ctrl+R`.
 
 ---
 
