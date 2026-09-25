@@ -49,8 +49,8 @@ use tcode_config::{
     EstadoSelectorTema, FocoPanelAdmin, GuardadoAutomatico, ModoEdicion, ResultadoDuplicarTema, Seccion,
 };
 use tcode_core::{
-    analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo,
-    EstadoVim, Modo, Pliegue,
+    analizar_csv, delimitador_por_extension, estilo_comentario_por_extension, interpretar_ir_a_linea, serializar_fila_csv,
+    CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo, EstadoIrALinea, EstadoVim, Modo, Pliegue,
 };
 use tcode_fs::{
     BuscadorArchivos, EstadoBusquedaProyecto, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador,
@@ -354,6 +354,8 @@ struct EstadoApp {
     busqueda_proyecto: EstadoBusquedaProyecto,
     estado_busqueda: EstadoBusqueda,
     guardar_como: EstadoGuardarComo,
+    /// Prompt "Ir a línea" (`Ctrl+G`, BACKLOG.md P0 #19).
+    ir_a_linea: EstadoIrALinea,
     selector_tema: EstadoSelectorTema,
     /// Selector de símbolos del archivo actual (`Ctrl+K .`, "Ir a
     /// símbolo"): otro overlay de lista filtrable, como la paleta.
@@ -493,6 +495,7 @@ async fn ejecutar(
         busqueda_proyecto: EstadoBusquedaProyecto::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
         estado_busqueda: EstadoBusqueda::nueva(),
         guardar_como: EstadoGuardarComo::nueva(),
+        ir_a_linea: EstadoIrALinea::nuevo(),
         selector_tema: EstadoSelectorTema::nueva(),
         selector_simbolos: EstadoSelectorSimbolos::nuevo(),
         panel_admin,
@@ -637,6 +640,13 @@ async fn ejecutar(
                     estado.modo_zen.is_some(),
                 );
                 tcode_ui::panel_linea_vim::dibujar(frame, frame.area(), &estado.vim.linea_comando, &estado.paleta);
+                tcode_ui::panel_ir_a_linea::dibujar(
+                    frame,
+                    frame.area(),
+                    &estado.ir_a_linea,
+                    layout.editor_activo().buffer().num_lineas(),
+                    &estado.paleta,
+                );
                 funciones_lsp::dibujar(frame, layout, &estado.funciones_lsp, &estado.paleta);
                 // Encima de todo, pero fuera de `tcode_ui::dibujar`: mientras
                 // está abierta captura el teclado, así que ningún otro
@@ -1157,6 +1167,22 @@ async fn ejecutar(
             continue;
         }
 
+        // Prompt "Ir a línea" (`Ctrl+G`, BACKLOG.md P0 #19): mismo
+        // patrón que "Guardar como". Un `Enter` con algo inválido deja el
+        // prompt abierto con el error, sin perder lo escrito.
+        if estado.ir_a_linea.activo() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => estado.ir_a_linea.cerrar(),
+                KeyCode::Backspace => estado.ir_a_linea.borrar(),
+                KeyCode::Enter => confirmar_ir_a_linea(layout, &mut estado.ir_a_linea),
+                KeyCode::Char(c) if sin_modificadores(key) => estado.ir_a_linea.escribir(c),
+                _ => {}
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+            continue;
+        }
+
         // Visor de logs del LSP activo (`Ctrl+K R`): se actualiza solo
         // con el tick del bucle (`procesar_tick`, BACKLOG.md P1 #2); acá
         // solo el filtro de texto, el scroll y `Esc` para cerrar.
@@ -1530,6 +1556,7 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
         || estado.selector_simbolos.activo()
         || estado.estado_busqueda.activa()
         || estado.guardar_como.activa()
+        || estado.ir_a_linea.activo()
         || estado.logs_lsp.activo()
         || estado.prompt_explorador.activo()
         || estado.funciones_lsp.captura_texto()
@@ -1656,6 +1683,20 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
                 estado.confirmar_salida = false;
                 usar_portapapeles(id, layout, estado);
+            }
+            Accion::Continuar
+        }
+        // Comentar e ir a línea (BACKLOG.md P0 #19): acá y no en
+        // `ejecutar_comando` porque necesitan la ruta del archivo (para
+        // elegir el comentario) o el estado del prompt. Solo sobre el
+        // código, igual que el portapapeles.
+        "editor.alternar_comentario" | "editor.ir_a_linea" => {
+            if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
+                if id == "editor.ir_a_linea" {
+                    estado.ir_a_linea.abrir();
+                } else {
+                    alternar_comentario(layout);
+                }
             }
             Accion::Continuar
         }
@@ -2069,9 +2110,54 @@ fn ejecutar_comando(
         "editor.borrar_adelante" => editor.borrar_adelante(),
         "editor.nueva_linea" => editor.insertar_char('\n'),
         "editor.indentar_o_autocompletar" => insertar_tabulacion(editor, config),
+        // Edición básica (BACKLOG.md P0 #19): cada una es un solo paso
+        // de deshacer y actúa sobre todos los cursores.
+        "editor.mover_lineas_arriba" => {
+            editor.mover_lineas_arriba();
+        }
+        "editor.mover_lineas_abajo" => {
+            editor.mover_lineas_abajo();
+        }
+        "editor.duplicar_lineas" => editor.duplicar_lineas(),
+        "editor.seleccionar_todo" => editor.seleccionar_todo(),
         _ => {}
     }
     Accion::Continuar
+}
+
+/// `Ctrl+/` (BACKLOG.md P0 #19): comenta/descomenta según la extensión
+/// del archivo activo (`estilo_comentario_por_extension`). Sin estilo
+/// conocido (texto plano, JSON, un buffer sin nombre) no toca nada y lo
+/// avisa en la barra de estado, en vez de adivinar un `#` o un `//`.
+fn alternar_comentario(layout: &mut PanelLayout) {
+    let panel = layout.panel_activo_mut();
+    let ruta = panel.editor.buffer().ruta().map(|r| r.display().to_string()).unwrap_or_default();
+    match estilo_comentario_por_extension(&ruta) {
+        Some(estilo) => {
+            panel.editor.alternar_comentario(estilo);
+        }
+        None => panel.mensaje_estado = Some("No se sabe cómo comentar este tipo de archivo".to_string()),
+    }
+}
+
+/// `Enter` en el prompt "Ir a línea": salta (una línea fuera de rango se
+/// recorta al principio/final del archivo) y cierra; vacío cierra sin
+/// moverse; algo que no es `n` ni `n:col` deja el prompt abierto con el
+/// error. En modo VIM Normal vuelve a recortar la columna, como `:{n}`.
+fn confirmar_ir_a_linea(layout: &mut PanelLayout, prompt: &mut EstadoIrALinea) {
+    let editor = layout.editor_activo_mut();
+    match interpretar_ir_a_linea(prompt.texto(), editor.buffer().num_lineas()) {
+        Ok(destino) => {
+            if let Some((linea, columna)) = destino {
+                editor.ir_a_linea(linea, columna);
+                if editor.modo() == Modo::Normal {
+                    editor.entrar_modo_normal();
+                }
+            }
+            prompt.cerrar();
+        }
+        Err(error) => prompt.establecer_error(error),
+    }
 }
 
 /// Comandos genéricos de navegación reinterpretados para el explorador:
