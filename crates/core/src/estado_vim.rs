@@ -16,6 +16,16 @@ pub struct EstadoVim {
     teclas: Vec<char>,
     registro: String,
     registro_lineal: bool,
+    /// Sube cada vez que cambia el registro (`fijar_registro`): así
+    /// `app` sabe, sin comparar textos, si un comando yanqueó o borró
+    /// algo que haya que mandar al portapapeles del sistema.
+    version_registro: u64,
+    /// Prefijo de registro `"` a medio escribir (falta el nombre).
+    pub esperando_registro: bool,
+    /// El próximo comando usa el portapapeles del sistema (`"+`/`"*`,
+    /// BACKLOG.md P0 #15): los únicos registros con nombre que se
+    /// soportan. Lo maneja `app` (acá no hay procesos ni terminal).
+    pub registro_portapapeles: bool,
     /// Última búsqueda `f`/`t`/`F`/`T`, que repiten `;` y `,`.
     pub ultima_busqueda: Option<BusquedaCaracter>,
     /// Extremo fijo de la selección del modo Visual (el otro es el
@@ -76,6 +86,11 @@ impl EstadoVim {
         }
         self.registro = texto;
         self.registro_lineal = lineal;
+        self.version_registro += 1;
+    }
+
+    pub fn version_registro(&self) -> u64 {
+        self.version_registro
     }
 
     /// Teclas de un comando a medio escribir (`['d']` tras un `d` suelto,
@@ -125,7 +140,9 @@ mod tests {
         assert!(vim.registro_lineal());
         vim.fijar_registro("sin salto".to_string(), true);
         assert_eq!(vim.registro(), "sin salto\n");
+        let version = vim.version_registro();
         vim.fijar_registro("abc".to_string(), false);
+        assert_eq!(vim.version_registro(), version + 1);
         assert_eq!(vim.registro(), "abc");
         assert!(!vim.registro_lineal());
     }

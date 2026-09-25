@@ -44,15 +44,29 @@ Cuatro niveles:
 
 ## P0 — Gaps sorprendentes
 
-Ninguno pendiente por ahora — el último (pegar texto grande / teclas
-repetidas lento) se cerró, ver "Hecho recientemente".
+Ninguno pendiente — el último (#15, portapapeles) se cerró, ver "Hecho
+recientemente".
 
 ---
 
 ## P1 — Gaps reales de alcance acotado
 
-Ninguno pendiente — los que había (#14 rendimiento con archivos grandes,
-#2 logs del LSP en vivo) se cerraron, ver "Hecho recientemente".
+Ninguno pendiente — #16 (búsqueda en el proyecto) y #17 (LSP avanzado) se
+cerraron, ver "Hecho recientemente". Limitaciones conocidas:
+
+- **Portapapeles (#15)**: Terminal.app ignora OSC 52 (se usa `pbcopy`);
+  tmux necesita `set -g set-clipboard on` para reenviar OSC 52; por SSH
+  `Ctrl+V` no puede leer el portapapeles local (pega lo copiado dentro de
+  tcode); con varios cursores se pega el texto entero en cada uno.
+- **Búsqueda en el proyecto (#16)**: la lista no se refresca sola tras
+  editar; reemplazo literal (sin `$1`); en archivos cerrados el reemplazo
+  se escribe a disco y no se puede deshacer (la confirmación lo avisa);
+  archivos de más de 4 MB o no UTF-8 no se buscan.
+- **LSP (#17)**: snippets sin saltos entre placeholders; completado solo
+  con un cursor (y en VIM solo en Insertar); renombrar sin
+  `prepareRename` ni operaciones sobre archivos; el hover no se desplaza.
+  Rust sigue sin comando LSP por defecto (hay que configurar
+  `rust-analyzer`).
 
 ---
 
@@ -132,6 +146,23 @@ Limitaciones conocidas de estas piezas (no son gaps nuevos):
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-24/25 — portapapeles, búsqueda en el proyecto y LSP avanzado**
+(3 agentes en paralelo, integrados de a uno con verificación
+independiente):
+- **P0 #15 Portapapeles del sistema** (PR #120): `Ctrl+C`/`Ctrl+X`/
+  `Ctrl+V` (sin selección, la línea); OSC 52 + `pbcopy`/`wl-copy`/
+  `xclip`/`clip.exe`; registros `"+`/`"*` en VIM.
+- **P1 #16 Búsqueda y reemplazo en el proyecto** (PR #121,
+  `Ctrl+Shift+F`/`Ctrl+K B`): crate `ignore` de ripgrep, en paralelo en
+  un hilo aparte, resultados incrementales; reemplazo deshacible en
+  buffers abiertos, escritura atómica en los cerrados.
+- **P1 #17 LSP avanzado** (PR #122): ir a definición (`F12`) y volver
+  (`Alt+←`/`Ctrl+K H`), autocompletado, hover (`Ctrl+K I`), referencias
+  (`Shift+F12`), renombrar (`F2`). Al integrar apareció `Ctrl+K B`
+  asignado dos veces (el keymap junta las secciones en un solo mapa y el
+  último pisaba al otro sin avisar): test nuevo
+  `el_keymap_por_defecto_no_repite_atajos_entre_secciones`.
 
 **2026-09-24 — limitaciones conocidas convertidas en features** (4 agentes
 en paralelo, integrados de a uno con verificación independiente):

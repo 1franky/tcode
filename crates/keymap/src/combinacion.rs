@@ -200,6 +200,9 @@ pub fn formatear_atajo(secuencia: &[Combinacion]) -> String {
 
 fn formatear_tecla(t: &Tecla) -> String {
     match t {
+        // Un espacio literal no se puede volver a parsear (`"Ctrl+ "` se
+        // recorta): se escribe con nombre, como lo acepta `parsear_tecla`.
+        Tecla::Caracter(' ') => "Space".to_string(),
         Tecla::Caracter(c) => c.to_uppercase().to_string(),
         Tecla::Flecha(Direccion::Arriba) => "Up".to_string(),
         Tecla::Flecha(Direccion::Abajo) => "Down".to_string(),
@@ -222,6 +225,14 @@ fn formatear_tecla(t: &Tecla) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn el_espacio_se_formatea_con_nombre_y_vuelve_a_parsear() {
+        let c = parsear_combinacion("Ctrl+Space").unwrap();
+        assert_eq!(c.tecla, Tecla::Caracter(' '));
+        assert_eq!(formatear_combinacion(&c), "Ctrl+Space");
+        assert_eq!(parsear_combinacion(&formatear_combinacion(&c)).unwrap(), c);
+    }
 
     #[test]
     fn parsea_combinacion_simple() {

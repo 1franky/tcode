@@ -13,10 +13,12 @@ mod panel_admin;
 mod panel_archivos;
 mod panel_buscador;
 mod panel_busqueda;
+pub mod panel_busqueda_proyecto;
 mod panel_confirmar_borrado;
 mod panel_guardar_como;
 pub mod panel_linea_vim;
 mod panel_logs_lsp;
+pub mod panel_lsp;
 mod panel_paleta;
 mod panel_prompt_explorador;
 mod panel_selector_simbolos;
@@ -91,6 +93,17 @@ pub struct EstadoUi {
     /// Partes de la ruta ya resueltas para el breadcrumb del panel
     /// (BACKLOG.md P3 #10, ver `breadcrumbs::CacheRuta`).
     breadcrumbs: breadcrumbs::CacheRuta,
+    /// Dónde quedó el cursor en pantalla (columna, fila) en el último
+    /// dibujo de `vista_codigo`, o `None` si no se dibujó cursor (vista de
+    /// tabla o preview, panel no activo). Lo usan los popups del LSP
+    /// (completado, hover — BACKLOG.md P1 #17) para aparecer justo debajo.
+    posicion_cursor: Option<(u16, u16)>,
+}
+
+impl EstadoUi {
+    pub fn posicion_cursor(&self) -> Option<(u16, u16)> {
+        self.posicion_cursor
+    }
 }
 
 /// Modo zen (`Ctrl+K Z`, BACKLOG.md P3 #12): punto ÚNICO que decide qué

@@ -26,13 +26,13 @@ use std::time::Duration;
 
 use anyhow::Result;
 use lsp_types::{
-    ClientCapabilities, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingClientCapabilities,
-    DocumentFormattingParams, FormattingOptions, InitializeParams, InitializedParams, TextDocumentClientCapabilities,
-    TextDocumentIdentifier, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
+    ClientCapabilities, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DocumentFormattingParams, FormattingOptions, InitializeParams, InitializedParams, Position, TextDocumentIdentifier,
+    TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
 };
 use serde_json::{json, Value};
 use tcode_config::Config;
-use tcode_lsp::{Cliente, EdicionTexto, MensajeEntrante, ModoSincronizacion};
+use tcode_lsp::{CapacidadesLsp, Cliente, EdicionTexto, MensajeEntrante, ModoSincronizacion};
 use tcode_syntax::Lenguaje;
 use tcode_ui::{Layout as PanelLayout, PanelEditor};
 
@@ -89,6 +89,10 @@ struct SesionLsp {
     /// mandar `textDocument/formatting`, para no esperar en vano una
     /// respuesta que va a ser un error "método no soportado".
     soporta_formateo: bool,
+    /// Qué funciones de navegación/edición anunció el servidor
+    /// (BACKLOG.md P1 #17) — todo `false` hasta que responde
+    /// `initialize`.
+    capacidades: CapacidadesLsp,
     /// Documentos de este lenguaje abiertos en alguna pestaña, uno por
     /// URI (el mismo archivo en dos paneles es un solo documento para el
     /// servidor).
@@ -269,19 +273,51 @@ async fn lanzar_sesion(lenguaje: Lenguaje, comando: ComandoLsp) -> std::result::
     let env_ref: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
     let mut cliente = Cliente::lanzar(programa, &args_ref, &env_ref).await.map_err(|e| format!("[tcode] {e:#}"))?;
 
-    // Lo único que se declara explícitamente es `formatting` (sin
-    // registro dinámico: `tcode` no responde `client/
-    // registerCapability`), para que un servidor que decide qué anunciar
-    // según lo que soporta el cliente anuncie `documentFormattingProvider`
-    // de forma estática.
-    let capabilities = ClientCapabilities {
-        text_document: Some(TextDocumentClientCapabilities {
-            formatting: Some(DocumentFormattingClientCapabilities { dynamic_registration: Some(false) }),
-            ..Default::default()
-        }),
+    // Lo que se declara explícitamente: `formatting` (BACKLOG.md P2 #5) y
+    // las funciones de navegación/edición de BACKLOG.md P1 #17
+    // (definición, referencias, hover, completado, renombrar), todo sin
+    // registro dinámico (`tcode` no responde `client/registerCapability`),
+    // para que un servidor que decide qué anunciar según lo que soporta
+    // el cliente lo anuncie de forma estática. El completado declara NO
+    // soportar snippets (el servidor manda texto plano, que es lo que
+    // `tcode` inserta) y el hover prefiere texto plano (el markdown igual
+    // se muestra como texto, `tcode_lsp::texto_hover`). Los cambios de
+    // un renombrado pueden venir como `documentChanges`, pero sin
+    // operaciones sobre archivos (crear/renombrar/borrar).
+    let capabilities: ClientCapabilities = serde_json::from_value(json!({
+        "textDocument": {
+            "formatting": { "dynamicRegistration": false },
+            "definition": { "dynamicRegistration": false, "linkSupport": true },
+            "references": { "dynamicRegistration": false },
+            "hover": { "dynamicRegistration": false, "contentFormat": ["plaintext", "markdown"] },
+            "completion": {
+                "dynamicRegistration": false,
+                "completionItem": { "snippetSupport": false, "insertReplaceSupport": true },
+                "contextSupport": true,
+            },
+            "rename": { "dynamicRegistration": false, "prepareSupport": false },
+        },
+        "workspace": { "workspaceEdit": { "documentChanges": true } },
+    }))
+    .unwrap_or_default();
+    // El directorio actual como carpeta del proyecto (BACKLOG.md P1
+    // #17): sin ninguna, pyright trata cada archivo abierto como suelto y
+    // renombrar solo toca el archivo actual (buscar referencias sí mira
+    // los demás abiertos). Si no se puede convertir, sin carpeta, como
+    // antes.
+    let carpeta = std::env::current_dir().ok().and_then(|dir| {
+        let uri = uri_de_archivo(&dir).ok()?;
+        let nombre = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        Some(lsp_types::WorkspaceFolder { uri, name: nombre })
+    });
+    #[allow(deprecated)] // `root_uri`: la spec lo reemplazó por `workspace_folders`, pero hay servidores que solo miran este.
+    let params = InitializeParams {
+        process_id: Some(std::process::id()),
+        capabilities,
+        root_uri: carpeta.as_ref().map(|c| c.uri.clone()),
+        workspace_folders: carpeta.map(|c| vec![c]),
         ..Default::default()
     };
-    let params = InitializeParams { process_id: Some(std::process::id()), capabilities, ..Default::default() };
     let Ok(id_initialize) = cliente.peticion("initialize", params).await else {
         cliente.matar().await;
         return Err(format!("[tcode] '{programa}' se cerró antes de recibir `initialize`"));
@@ -293,8 +329,70 @@ async fn lanzar_sesion(lenguaje: Lenguaje, comando: ComandoLsp) -> std::result::
         comando_usado: comando,
         fase: Fase::Iniciando { id_initialize },
         soporta_formateo: false,
+        capacidades: CapacidadesLsp::default(),
         documentos: Vec::new(),
     })
+}
+
+/// Las peticiones de navegación/edición (BACKLOG.md P1 #17). Cada una
+/// corresponde a un método de `textDocument/*` y a una capacidad del
+/// servidor (`CapacidadesLsp`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TipoPedido {
+    Definicion,
+    Referencias,
+    Hover,
+    Completado,
+    Renombrar,
+}
+
+impl TipoPedido {
+    fn metodo(self) -> &'static str {
+        match self {
+            TipoPedido::Definicion => "textDocument/definition",
+            TipoPedido::Referencias => "textDocument/references",
+            TipoPedido::Hover => "textDocument/hover",
+            TipoPedido::Completado => "textDocument/completion",
+            TipoPedido::Renombrar => "textDocument/rename",
+        }
+    }
+
+    fn soportado(self, capacidades: &CapacidadesLsp) -> bool {
+        match self {
+            TipoPedido::Definicion => capacidades.definicion,
+            TipoPedido::Referencias => capacidades.referencias,
+            TipoPedido::Hover => capacidades.hover,
+            TipoPedido::Completado => capacidades.completado,
+            TipoPedido::Renombrar => capacidades.renombrar,
+        }
+    }
+
+    /// Aviso para la barra de estado cuando el servidor no lo anuncia.
+    fn aviso_no_soportado(self) -> &'static str {
+        match self {
+            TipoPedido::Definicion => "el LSP no soporta ir a la definición",
+            TipoPedido::Referencias => "el LSP no soporta buscar referencias",
+            TipoPedido::Hover => "el LSP no soporta mostrar información (hover)",
+            TipoPedido::Completado => "el LSP no soporta autocompletar",
+            TipoPedido::Renombrar => "el LSP no soporta renombrar",
+        }
+    }
+}
+
+/// Una petición de [`TipoPedido`] en vuelo: se reconoce su respuesta por
+/// el lenguaje de la sesión y el id.
+struct Pendiente {
+    lenguaje: Lenguaje,
+    id: i64,
+    tipo: TipoPedido,
+}
+
+/// La respuesta (cruda) a una petición de [`TipoPedido`], o el motivo
+/// del error — `app` la interpreta con `tcode_lsp::parsear_*` contra el
+/// estado de la UI en el momento en que llega, no en el que se pidió.
+pub struct RespuestaLsp {
+    pub tipo: TipoPedido,
+    pub resultado: std::result::Result<Value, String>,
 }
 
 /// Estado LSP de la aplicación: una sesión por lenguaje con documentos
@@ -303,6 +401,17 @@ async fn lanzar_sesion(lenguaje: Lenguaje, comando: ComandoLsp) -> std::result::
 pub struct EstadoLsp {
     sesiones: Vec<SesionLsp>,
     fallos: Vec<Fallo>,
+    /// Peticiones de navegación/edición en vuelo (BACKLOG.md P1 #17), a
+    /// lo sumo una por tipo: pedir otra del mismo tipo cancela la
+    /// anterior (`$/cancelRequest`) — el completado se vuelve a pedir en
+    /// cada pausa al tipear, y solo importa la última.
+    pendientes: Vec<Pendiente>,
+    /// Respuestas a esas peticiones ya llegadas, en orden, hasta que
+    /// `app` las toma (`tomar_respuestas`). Una cola en vez de
+    /// devolverlas desde `procesar_mensaje` porque también las procesa
+    /// la espera de `pedir_formateo`, que no sabría qué hacer con ellas:
+    /// así ninguna se pierde.
+    respuestas: Vec<RespuestaLsp>,
     /// Ruta mostrada → URI, calculado una sola vez por ruta (`uri_de_
     /// archivo` pregunta el directorio actual y codifica la ruta entera:
     /// no es algo para hacer por pestaña en cada frame). `None` si la
@@ -469,10 +578,19 @@ impl EstadoLsp {
 
         match mensaje {
             MensajeEntrante::Respuesta { id, resultado } => {
+                if let Some(posicion) = self.pendientes.iter().position(|p| p.lenguaje == lenguaje && p.id == id) {
+                    let pendiente = self.pendientes.remove(posicion);
+                    let resultado = resultado.map_err(|error| {
+                        error["message"].as_str().unwrap_or("error sin mensaje").lines().next().unwrap_or("").to_string()
+                    });
+                    self.respuestas.push(RespuestaLsp { tipo: pendiente.tipo, resultado });
+                    return;
+                }
                 if let Fase::Iniciando { id_initialize } = sesion.fase {
                     if let (true, Ok(resultado)) = (id == id_initialize, &resultado) {
                         let modo = ModoSincronizacion::desde_initialize(resultado);
                         sesion.soporta_formateo = tcode_lsp::soporta_formateo(resultado);
+                        sesion.capacidades = CapacidadesLsp::desde_initialize(resultado);
                         let _ = sesion.cliente.notificacion("initialized", InitializedParams {}).await;
                         for indice in 0..sesion.documentos.len() {
                             sesion.enviar_did_open(indice).await;
@@ -513,6 +631,11 @@ impl EstadoLsp {
     /// recoge el proceso en segundo plano para que no quede como zombi.
     fn marcar_caida(&mut self, indice: usize) {
         let sesion = self.sesiones.remove(indice);
+        let lenguaje = sesion.lenguaje;
+        for pendiente in self.pendientes.iter().filter(|p| p.lenguaje == lenguaje) {
+            self.respuestas.push(RespuestaLsp { tipo: pendiente.tipo, resultado: Err("el LSP se cerró".to_string()) });
+        }
+        self.pendientes.retain(|p| p.lenguaje != lenguaje);
         let (mut logs, mut total_logs) = sesion.cliente.logs_con_total();
         logs.push(format!("[tcode] el servidor '{}' se cerró inesperadamente", sesion.comando_usado.0));
         total_logs += 1;
@@ -606,6 +729,81 @@ impl EstadoLsp {
                 Ok(Some(otro)) => self.procesar_mensaje(lenguaje, Some(otro), layout).await,
             }
         }
+    }
+
+    /// Capacidades anunciadas por la sesión del lenguaje de `ruta`, si
+    /// hay una con el handshake completo — lo mira `app` al tipear, para
+    /// saber si un carácter es de disparo del completado. Barato: no toca
+    /// el texto de nada.
+    pub fn capacidades(&self, ruta: &str) -> Option<&CapacidadesLsp> {
+        let lenguaje = Lenguaje::detectar_por_extension(ruta)?;
+        let sesion = self.sesiones.iter().find(|s| s.lenguaje == lenguaje)?;
+        matches!(sesion.fase, Fase::Listo { .. }).then_some(&sesion.capacidades)
+    }
+
+    /// Manda una petición de [`TipoPedido`] sobre el archivo `ruta` en
+    /// `posicion` (coordenadas LSP) a la sesión de su lenguaje, SIN
+    /// esperar la respuesta: llega más tarde por el `select!` del bucle
+    /// de `ejecutar` (`procesar_mensaje` la encola) y `app` la toma con
+    /// [`Self::tomar_respuestas`]. `extra` se agrega a los parámetros
+    /// (`context` del completado y de las referencias, `newName` del
+    /// renombrado). Si ya había una del mismo tipo en vuelo se cancela.
+    ///
+    /// Quien llama tiene que haber sincronizado antes (`sincronizar_lsp`):
+    /// la posición se refiere al texto actual del buffer, que tiene que
+    /// ser el que tiene el servidor. El error es un aviso corto para la
+    /// barra de estado (sin sesión, iniciando, no soportado...).
+    pub async fn pedir(
+        &mut self,
+        tipo: TipoPedido,
+        ruta: &str,
+        posicion: Position,
+        extra: Value,
+    ) -> std::result::Result<(), &'static str> {
+        let Some(lenguaje) = Lenguaje::detectar_por_extension(ruta) else { return Err("sin LSP para este archivo") };
+        let Some(sesion) = self.sesiones.iter_mut().find(|s| s.lenguaje == lenguaje) else {
+            return Err(if self.fallos.iter().any(|f| f.lenguaje == lenguaje) {
+                "el LSP no arrancó o se cerró"
+            } else {
+                "sin LSP activo"
+            });
+        };
+        let Fase::Listo { .. } = sesion.fase else { return Err("el LSP todavía está iniciando") };
+        if !tipo.soportado(&sesion.capacidades) {
+            return Err(tipo.aviso_no_soportado());
+        }
+        let Some(uri) = self.uris.get(ruta).cloned().flatten() else { return Err("sin LSP para este archivo") };
+        if sesion.indice_documento(uri.as_str()).is_none() {
+            return Err("el documento no está abierto en el LSP");
+        }
+
+        let mut params = json!({ "textDocument": { "uri": uri.as_str() }, "position": posicion });
+        if let (Some(params), Value::Object(extra)) = (params.as_object_mut(), extra) {
+            params.extend(extra);
+        }
+        if let Some(indice) = self.pendientes.iter().position(|p| p.tipo == tipo) {
+            let anterior = self.pendientes.remove(indice);
+            if let Some(sesion) = self.sesiones.iter_mut().find(|s| s.lenguaje == anterior.lenguaje) {
+                let _ = sesion.cliente.notificacion("$/cancelRequest", json!({ "id": anterior.id })).await;
+            }
+        }
+        let Some(sesion) = self.sesiones.iter_mut().find(|s| s.lenguaje == lenguaje) else { return Err("sin LSP activo") };
+        let Ok(id) = sesion.cliente.peticion(tipo.metodo(), params).await else {
+            return Err("no se pudo hablar con el LSP");
+        };
+        self.pendientes.push(Pendiente { lenguaje, id, tipo });
+        Ok(())
+    }
+
+    /// Las respuestas a [`Self::pedir`] llegadas desde la última vez, en
+    /// orden de llegada. Vacío casi siempre: no cuesta nada llamarlo en
+    /// cada vuelta del bucle.
+    pub fn hay_respuestas(&self) -> bool {
+        !self.respuestas.is_empty()
+    }
+
+    pub fn tomar_respuestas(&mut self) -> Vec<RespuestaLsp> {
+        std::mem::take(&mut self.respuestas)
     }
 
     /// Líneas de stderr acumuladas por la sesión del lenguaje del

@@ -943,6 +943,81 @@ con `HOME` apuntando a una carpeta temporal para no tocar el estado real.
 - [ ] Un `pliegues.toml` corrupto (texto cualquiera) o sin permiso de escritura: tcode abre y cierra normal, sin errores visibles (solo no recuerda nada).
 - [ ] Abrir un archivo sin nada guardado: abre igual de rápido que antes (no se calcula la huella si no hay entrada).
 
+## Copiar, cortar y pegar con el portapapeles del sistema (`Ctrl+C`/`Ctrl+X`/`Ctrl+V`)
+
+Probar con `HOME` apuntando a una carpeta temporal, para no tocar la
+config real. **Estas pruebas pisan tu portapapeles real**: guardalo antes
+(`pbpaste > /tmp/porta.bak` en macOS) y restauralo al final
+(`pbcopy < /tmp/porta.bak`).
+
+- [ ] **Línea sin selección.** Con el cursor en una línea, sin selección, `Ctrl+C`: la barra dice "Copiado: 1 línea" y `pbpaste` (o `wl-paste`/`xclip -o`) devuelve la línea con su salto. `Ctrl+V` la duplica **arriba**, y el cursor queda en su línea.
+- [ ] **Selección.** Seleccionar una parte con `Shift+→` y `Ctrl+C`: se copia solo eso. `Ctrl+V` en otro lugar lo inserta ahí; con algo seleccionado, lo reemplaza.
+- [ ] **Multi-cursor.** Con `Ctrl+D` sobre tres ocurrencias, `Ctrl+C`: el portapapeles tiene las tres, una por línea. Con tres cursores sin selección (`Ctrl+Alt+↓`), copia las tres líneas.
+- [ ] **Cortar la línea.** `Ctrl+X` sin selección se lleva la línea entera ("Cortado: 1 línea"). En la última línea, sin salto final, no queda una línea vacía colgando. Un `Ctrl+Z` la devuelve.
+- [ ] **Cortar varias selecciones.** `Ctrl+X` con varias selecciones las borra todas, y un solo `Ctrl+Z` las restaura todas.
+- [ ] **Pegar desde otra app.** Copiar algo en otra app y `Ctrl+V` en tcode: se pega. Lo mismo dentro de tmux, sin `set-clipboard`.
+- [ ] **El pegado de la terminal sigue andando.** `Cmd+V` / `Ctrl+Shift+V` (bracketed paste) sigue pegando como antes, en un solo paso de deshacer.
+- [ ] **Explorador y CSV.** Con el foco en el explorador o en la vista de tabla de un CSV, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` no hacen nada.
+- [ ] **Modos del portapapeles.** En `Ctrl+,` → Editor → "Portapapeles del sistema", `←`/`→` rota entre Automático → Solo OSC 52 → Solo sistema → Desactivado, y `config.toml` guarda `portapapeles = "..."`.
+  - Con **Desactivado**: `Ctrl+C` dice "(solo dentro de tcode)", `pbpaste` no cambia, y `Ctrl+V` pega lo copiado en tcode.
+  - Con **Solo OSC 52**: `pbpaste` no cambia en Terminal.app, pero sí en una terminal con OSC 52 (iTerm2 con acceso al portapapeles habilitado, kitty, WezTerm...).
+- [ ] **OSC 52 en tmux.** Con `set -g set-clipboard on` y "Solo OSC 52", `Ctrl+C` llena el buffer de tmux (`tmux show-buffer`) y el portapapeles de la terminal de afuera.
+- [ ] **Por SSH.** A un servidor sin `DISPLAY` y en modo Automático, `Ctrl+C` llega al portapapeles de la máquina local vía OSC 52. `Ctrl+V` pega lo copiado en tcode.
+- [ ] **Acentos.** Copiar texto con acentos y emojis (`ñandú 😀`): llega bien a `pbpaste` y vuelve bien con `Ctrl+V`.
+- [ ] **Modo VIM, sin sincronizar (por defecto).** `yy` no toca el portapapeles del sistema, y `p` pega el registro interno.
+  - `"+yy` copia la línea al portapapeles ("Copiado: 1 línea").
+  - `"+p` pega lo que haya en el portapapeles, y después `p` sigue pegando el registro sin nombre de antes.
+  - `"a` avisa "Registro no soportado".
+- [ ] **Modo VIM, con "VIM: registro = portapapeles".** `yy`/`dd`/`x` van al portapapeles del sistema sin aviso, y `p` pega lo copiado en otra app (por líneas si termina en salto de línea).
+
+## Buscar (y reemplazar) en todo el proyecto (`Ctrl+Shift+F`/`Ctrl+K B`)
+
+Probar sobre un proyecto grande de verdad (p. ej. una copia de este repo
+con miles de archivos más en una carpeta, fuera del repo) y con `HOME`
+apuntando a una carpeta temporal.
+
+- [ ] `Ctrl+K B` (y `Ctrl+Shift+F` con protocolo Kitty; en la paleta, "Buscar: En todo el proyecto") abre la vista con los campos Buscar/Reemplazar/Archivos y "Escribí para buscar".
+- [ ] Escribir `fn main`: los primeros resultados aparecen casi al instante con "(buscando...)", la lista crece y al final dice "N coincidencias en M archivos (K archivos revisados)". Agrupados por archivo, ordenados por ruta, con número de línea y la coincidencia resaltada.
+- [ ] Mientras busca (una consulta de una letra en el proyecto grande): `Tab`, escribir en Reemplazar, `↓`: todo responde al instante; la búsqueda llega al tope y lo avisa ("tope de 5000").
+- [ ] Un archivo listado en `.gitignore`, uno oculto, uno en `target/`, un binario y uno de más de 4 MB con el texto buscado: ninguno aparece.
+- [ ] `Alt+R` con `fn abrir_\w+`: busca como regex (marca `[.*]`); un regex inválido (`(`) muestra el error en rojo. `Alt+C` y `Alt+W` igual que en `Ctrl+F`.
+- [ ] Archivos `crates/**/*.rs`: solo resultados de ahí; `!*.md`: todo menos Markdown; un glob inválido (`a[`) muestra el error.
+- [ ] `↓` hasta un resultado de otro archivo y `Enter`: se abre en una pestaña nueva con el cursor en la línea y columna de la coincidencia (también en un archivo con CRLF). `Ctrl+K B` de nuevo: la misma lista con la misma selección.
+- [ ] Con la lista más larga que la pantalla, `PageDown`: la selección baja de a 10 y arriba se ve siempre de qué archivo son las coincidencias.
+- [ ] Un archivo abierto con cambios sin guardar que agregan el texto buscado: aparece con "[abierto]" y las coincidencias del buffer, no las del disco.
+- [ ] Con texto en Reemplazar, `Alt+Enter`: pide confirmación con el total; `n` (o cualquier tecla que no sea `y`) cancela sin tocar nada.
+- [ ] `Alt+Enter` y `y`: "Reemplazadas N coincidencias en M archivos"; los cerrados cambiaron en disco (un CRLF sigue siendo CRLF, sin temporales `.tcode-*.tmp` sueltos en la carpeta) y los abiertos quedan modificados (`*`) sin guardar; en uno de ellos, un `Ctrl+Z` deshace todo su reemplazo de una vez.
+- [ ] `Alt+Enter` mientras todavía busca, o con la búsqueda cortada en el tope: no reemplaza y explica por qué.
+- [ ] Pegar texto (bracketed paste) con la vista abierta: se escribe en el campo activo, no en el archivo.
+- [ ] `Esc` con la búsqueda en curso: cierra, y la CPU vuelve a reposo enseguida.
+
+## Ir a definición, autocompletado, hover, referencias y renombrar (LSP)
+
+Con un proyecto Cargo de 2-3 módulos (`rust-analyzer` configurado como
+comando de Rust en "Lenguajes / LSP") y uno Python de 2 archivos (uno
+importando una clase del otro), lanzando `tcode` desde la carpeta del
+proyecto y con `HOME` temporal. Si `HOME` es temporal, `rust-analyzer`
+(el de rustup) necesita `RUSTUP_HOME`/`CARGO_HOME` apuntando a los reales.
+
+- [ ] `F12` sobre una función/clase definida en otro archivo: se abre en una pestaña nueva con el cursor sobre el nombre (ruta relativa en la pestaña). Otra vez `F12` sobre algo de un archivo ya abierto: activa esa pestaña, no abre otra.
+- [ ] `Alt+←` (o `Ctrl+K H`) vuelve al lugar de antes del salto; varias veces seguidas deshacen varios saltos; sin saltos: "No hay a dónde volver".
+- [ ] `F12` sobre algo sin definición (un número, un espacio): "No se encontró la definición".
+- [ ] `c.` en Python (con `c` una instancia) o `p.` en Rust: tras un instante aparece la lista de métodos/campos bajo el cursor, con tipo y firma. Seguir escribiendo filtra (letras coincidentes en negrita); una letra que no coincide con nada la cierra.
+- [ ] `↑`/`↓` recorren la lista (dando la vuelta), `Tab` o `Enter` aceptan: se reemplaza lo escrito de la palabra; `Ctrl+Z` deshace la aceptación entera en un paso. `Esc` cierra sin tocar nada.
+- [ ] Sin lista abierta, `Tab` indenta como siempre; `Enter` inserta salto de línea.
+- [ ] Escribir un nombre a medias y esperar: aparece la lista sola. Tipear de corrido (sin pausas) no la abre en cada letra.
+- [ ] `Ctrl+Espacio` (o `Ctrl+K Espacio`) la abre a mano; en un lugar sin sugerencias dice "Sin sugerencias".
+- [ ] Con multi-cursor, o en modo Normal de VIM, no aparece la lista.
+- [ ] `Ctrl+K I` sobre un método: recuadro con la firma y la documentación en texto plano (sin ``` ni `\_`); cualquier tecla lo cierra (y hace lo suyo, salvo `Esc`). Sobre nada: "Sin información para mostrar".
+- [ ] `Shift+F12` (o `Ctrl+K U`) sobre un método usado en dos archivos: "Referencias (N)" con `archivo:línea  código`, incluida la definición; escribir filtra; `Enter` salta (y `Alt+←` vuelve).
+- [ ] `F2` sobre un método usado en otro archivo NO abierto, nombre nuevo, `Enter`: cambia en el actual y en el otro, que se abre en una pestaña con `*` (sin guardar). La barra dice "Renombrado: N cambios en M archivo(s), K abierto(s) en pestañas sin guardar". El archivo en disco no cambió hasta guardarlo.
+- [ ] `Ctrl+Z` en cada archivo deshace su parte del renombrado en un paso.
+- [ ] Renombrar una variable con acentos (`ñandú`) en una línea con emoji o acentos antes: todas las apariciones cambian exactas, sin correrse.
+- [ ] `F2` sin LSP (un `.txt`) o con un servidor que no renombra: aviso en la barra, no abre el prompt. `F2` en la vista de tabla de un CSV sigue editando la celda.
+- [ ] Con pyright, `Ctrl+K I`/`F12` antes de que termine de arrancar: "el LSP todavía está iniciando".
+- [ ] En la paleta (`F1`), "LSP: ..." lista las seis funciones.
+- [ ] Velocidad: en un `.py` de ~4500 líneas, pegar por tmux una ráfaga de ~500 caracteres (`send-keys` en tandas) tarda lo mismo que en `develop` (medido: ~390 ms las dos).
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).

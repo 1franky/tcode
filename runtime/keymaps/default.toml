@@ -135,6 +135,12 @@
 "Ctrl+K Z"      = "vista.modo_zen"
 "Ctrl+F"        = "buscar.en_archivo"
 "Ctrl+H"        = "buscar.reemplazar"
+# Búsqueda (y reemplazo) en todo el proyecto (BACKLOG.md P1 #16).
+# Ctrl+Shift+F llega como Ctrl+F en terminales sin protocolo Kitty (abre
+# la búsqueda en el archivo): la alternativa es "Ctrl+K B" ("Buscar") —
+# "Ctrl+K F" ya es cerrar panel.
+"Ctrl+Shift+F"  = "buscar.en_proyecto"
+"Ctrl+K B"      = "buscar.en_proyecto"
 # F3/Shift+F3 y Alt+R/C/W funcionan tanto con la barra abierta (capturados
 # directo en el bucle de eventos, como la paleta de comandos) como con la
 # barra cerrada, repitiendo la última búsqueda (estilo VSCode) — de ahí
@@ -150,6 +156,17 @@
 # terminales sin protocolo Kitty (confirmado repetidas veces en tmux a lo
 # largo de este proyecto) — chord con Ctrl+K, sin esa ambigüedad.
 "Ctrl+K L"      = "cursor.seleccionar_todas_ocurrencias"
+# Portapapeles del sistema (BACKLOG.md P0 #15). Los tres tienen código de
+# control propio y tcode corre en modo raw, así que llegan como teclas en
+# cualquier terminal (Ctrl+C no se convierte en SIGINT). Ctrl+V además de
+# lo que pegue la terminal por su lado (bracketed paste, Cmd+V en macOS o
+# Ctrl+Shift+V en Linux): lee el portapapeles del sistema directamente, lo
+# que sirve cuando la terminal no hace bracketed paste o dentro de tmux.
+# Ctrl+Shift+V (vista Markdown) no choca: con protocolo Kitty llega
+# distinto; sin él la terminal suele quedárselo para pegar.
+"Ctrl+C"        = "editor.copiar"
+"Ctrl+X"        = "editor.cortar"
+"Ctrl+V"        = "editor.pegar"
 "Ctrl+Alt+Up"   = "cursor.agregar_arriba"
 "Ctrl+Alt+Down" = "cursor.agregar_abajo"
 
@@ -168,6 +185,25 @@
 "Ctrl+K ["      = "plegar.actual"
 "Ctrl+K ]"      = "plegar.desplegar"
 "Ctrl+K 0"      = "plegar.todo"
+# Navegación y edición con LSP (BACKLOG.md P1 #17): solo hacen algo si la
+# sesión LSP del archivo activo anuncia la capacidad (si no, un aviso en
+# la barra de estado). F12/Shift+F12/F2 como en VSCode; F2 en la vista de
+# tabla CSV sigue editando la celda (se reinterpreta ahí). Ctrl+Espacio
+# llega en casi cualquier terminal (código de control NUL), pero algunas
+# (y macOS, que lo usa para cambiar de idioma) se lo quedan: el chord con
+# Ctrl+K no depende de eso. Alt+Left llega en xterm/tmux; en macOS la
+# terminal tiene que mandar Option como Meta.
+"F12"            = "lsp.ir_a_definicion"
+"Ctrl+K D"       = "lsp.ir_a_definicion"
+"Alt+Left"       = "lsp.volver"
+"Ctrl+K H"       = "lsp.volver"
+"Shift+F12"      = "lsp.referencias"
+"Ctrl+K U"       = "lsp.referencias"
+"Ctrl+K I"       = "lsp.hover"
+"Ctrl+Space"     = "lsp.completar"
+"Ctrl+K Space"   = "lsp.completar"
+"F2"             = "lsp.renombrar"
+"Ctrl+K Shift+R" = "lsp.renombrar"
 
 [markdown]
 # Ctrl+Shift+V no está en [global] a propósito: es Ctrl+V con Shift, una
@@ -180,7 +216,8 @@
 
 [csv]
 "Ctrl+K T" = "csv.alternar_vista_tabla"
-"F2"       = "csv.editar_celda"
+# F2 edita la celda: está en [editor] como "lsp.renombrar", que la vista
+# de tabla reinterpreta (igual que Enter).
 # Funciones de la tabla (BACKLOG.md P2 #9): solo hacen algo en la vista de
 # tabla (en cualquier otro lado el comando no hace nada). Todas son chords
 # con Ctrl+K: PLAN.md §9 pedía Ctrl+Shift+S/Ctrl+Shift+F, pero además de

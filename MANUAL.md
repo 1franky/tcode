@@ -8,6 +8,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Primeros pasos](#primeros-pasos)
 - [Atajos esenciales](#atajos-esenciales)
 - [Multi-cursor y selección](#multi-cursor-y-selección)
+- [Copiar, cortar y pegar](#copiar-cortar-y-pegar)
 - [Búsqueda y reemplazo](#búsqueda-y-reemplazo)
 - [Plegado de bloques](#plegado-de-bloques)
 - [Paneles divididos (splits)](#paneles-divididos-splits)
@@ -47,6 +48,7 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+S` | Guardar (si el buffer no tiene nombre todavía, abre "Guardar como") |
 | `Ctrl+Shift+S` (o `Ctrl+K S`) | Guardar como... — elegir/cambiar la ruta del archivo |
 | `Ctrl+Z` / `Ctrl+Y` | Deshacer / Rehacer |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copiar / cortar (la selección, o la línea si no hay) / pegar, con el portapapeles del sistema (ver [Copiar, cortar y pegar](#copiar-cortar-y-pegar)) |
 | `Ctrl+Q` | Salir |
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Pestaña siguiente / anterior (ver [Pestañas](#pestañas-de-archivos-abiertos)) |
 | `Ctrl+W` | Cerrar la pestaña activa |
@@ -57,8 +59,14 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+K .` o `Ctrl+Shift+O` | Ir a un símbolo del archivo (funciones, clases...; ver [Breadcrumbs](#breadcrumbs)) |
 | `Ctrl+Shift+P` o `F1` | Paleta de comandos (buscar cualquier acción por nombre) |
 | `Ctrl+F` / `Ctrl+H` | Buscar / Buscar y reemplazar en el archivo |
+| `Ctrl+Shift+F` (o `Ctrl+K B`) | Buscar (y reemplazar) en todo el proyecto (ver [Buscar en todo el proyecto](#buscar-en-todo-el-proyecto)) |
 | `Ctrl+,` o `Ctrl+K A` | Panel de administración |
 | `Ctrl+K R` | Ver logs del LSP del lenguaje del archivo activo |
+| `F12` (o `Ctrl+K D`) / `Alt+←` (o `Ctrl+K H`) | Ir a la definición / volver (ver [LSP](#navegación-autocompletado-y-renombrar)) |
+| `Shift+F12` (o `Ctrl+K U`) | Buscar referencias |
+| `Ctrl+K I` | Tipo y documentación del símbolo bajo el cursor (hover) |
+| `Ctrl+Espacio` (o `Ctrl+K Espacio`) | Autocompletar |
+| `F2` (o `Ctrl+K Shift+R`) | Renombrar símbolo (en la tabla de un CSV, `F2` edita la celda) |
 | `Ctrl+K Ctrl+T` | Selector de temas (con preview en vivo) |
 | `Ctrl+K Ctrl+L` | Recargar `config.toml`/`keymap.toml` sin reiniciar |
 
@@ -94,6 +102,70 @@ cada uno extendiendo su propia selección de forma independiente.
 Con varios cursores activos, escribir/borrar/mover el cursor afecta a
 todos a la vez — igual que en VSCode o Sublime Text.
 
+## Copiar, cortar y pegar
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+C` | Copia la selección al portapapeles del sistema. Sin selección, copia la línea entera |
+| `Ctrl+X` | Igual que `Ctrl+C`, y además borra lo copiado (un solo `Ctrl+Z` lo devuelve) |
+| `Ctrl+V` | Pega desde el portapapeles del sistema |
+
+- **Con varios cursores**: se copian las selecciones de todos, en orden y
+  unidas por saltos de línea. Si ninguno tiene selección, se copia la
+  línea de cada cursor.
+- **Líneas enteras, como en VSCode**: lo copiado sin selección, pegado
+  con `Ctrl+V`, se inserta **arriba** de la línea del cursor, no en el
+  medio.
+- **La barra de estado avisa** cuántas líneas se copiaron o cortaron
+  ("Copiado: 3 líneas"). Si agrega "(solo dentro de tcode)", lo copiado
+  no salió de tcode: el portapapeles está desactivado, o no hubo manera
+  de llegar al del sistema.
+- **Pegar desde la terminal sigue funcionando**: `Cmd+V` en macOS,
+  `Ctrl+Shift+V` en la mayoría de las terminales de Linux, o el clic del
+  medio. En esos casos es la terminal la que manda el texto
+  (bracketed paste). `Ctrl+V` es útil cuando la terminal no hace
+  bracketed paste, o dentro de tmux sin configurar. Si no puede leer el
+  portapapeles del sistema, pega lo último que se copió dentro de tcode.
+- También están en la paleta de comandos ("Editor: Copiar al
+  portapapeles", etc.).
+
+**Cómo llega al portapapeles del sistema.** tcode usa dos caminos a la
+vez, y se puede elegir en `Ctrl+,` → Editor → "Portapapeles del sistema"
+(`portapapeles` en `[editor]`):
+
+| Modo | Al copiar | Al pegar con `Ctrl+V` |
+|---|---|---|
+| Automático (por defecto, `automatico`) | OSC 52 + herramienta del sistema | Herramienta del sistema |
+| Solo OSC 52 (`solo_osc52`) | OSC 52 | Lo último copiado en tcode |
+| Solo sistema (`solo_sistema`) | Herramienta del sistema | Herramienta del sistema |
+| Desactivado (`desactivado`) | Nada (solo queda dentro de tcode) | Lo último copiado en tcode |
+
+- **OSC 52** es una secuencia de escape que le pide a la *terminal* que
+  guarde el texto en su portapapeles.
+  - Funciona también **por SSH**: se llena el portapapeles de tu máquina,
+    no el del servidor.
+  - La soportan casi todas las terminales modernas: kitty, WezTerm,
+    Alacritty, iTerm2 (hay que habilitar "Applications in terminal may
+    access clipboard"), Windows Terminal, foot y Ghostty.
+  - **Terminal.app de macOS no la soporta.** Ahí se usa `pbcopy`.
+  - Los textos de más de ~75 KB no se mandan por OSC 52.
+- **Herramientas del sistema**: en macOS, `pbcopy`/`pbpaste`; en Wayland,
+  `wl-copy`/`wl-paste`; en X11, `xclip` o `xsel`; en Windows y WSL,
+  `clip.exe` y PowerShell `Get-Clipboard`. Se usa la primera que esté
+  instalada. Si alguna se cuelga, tcode la corta en medio segundo, así
+  que no congela el editor.
+- **Dentro de tmux**, para que OSC 52 llegue a la terminal de afuera,
+  hace falta esta línea en `~/.tmux.conf`:
+
+  ```
+  set -g set-clipboard on
+  ```
+
+  Sin ella, en la misma máquina igual funciona por `pbcopy`/`wl-copy`/
+  `xclip`. Por SSH + tmux, en cambio, hace falta.
+- **La lectura por OSC 52 no se usa.** La mayoría de las terminales la
+  bloquean por seguridad.
+
 ## Búsqueda y reemplazo
 
 `Ctrl+F` abre la barra de búsqueda; `Ctrl+H` abre además el campo de
@@ -109,6 +181,57 @@ reemplazo. Con la barra abierta:
 
 `F3`/`Shift+F3` también funcionan con la barra cerrada, repitiendo la
 última búsqueda — igual que en VSCode.
+
+### Buscar en todo el proyecto
+
+`Ctrl+Shift+F` (o `Ctrl+K B`, "Buscar", en terminales sin el protocolo de
+teclado de Kitty, donde `Ctrl+Shift+F` llega como `Ctrl+F`; también en la
+paleta: "Buscar: En todo el proyecto") abre una vista casi a pantalla
+completa con tres campos — **Buscar**, **Reemplazar** y **Archivos** — y
+la lista de resultados agrupada por archivo, con el número de línea y la
+coincidencia resaltada. Busca mientras escribís: los resultados van
+apareciendo a medida que se encuentran (la búsqueda corre de fondo, el
+editor nunca se congela) y cada tecla nueva cancela la búsqueda anterior.
+
+| Tecla | Acción |
+|---|---|
+| `Tab` | Pasar al campo siguiente (Buscar -> Reemplazar -> Archivos) |
+| `↑` / `↓`, `PageUp` / `PageDown` | Moverse por los resultados |
+| `Enter` | Abrir el archivo del resultado (en una pestaña) con el cursor en la coincidencia |
+| `Alt+R` / `Alt+C` / `Alt+W` | Regex / mayúsculas / palabra completa (las mismas de `Ctrl+F`) |
+| `Alt+Enter` (o `Ctrl+Alt+Enter`) | Reemplazar todo (pide confirmación con `y`) |
+| `Esc` | Cerrar (cancela la búsqueda si seguía) |
+
+- **Qué se busca**: los archivos del proyecto (la carpeta de `Ctrl+P`),
+  respetando `.gitignore` y `.ignore` (aunque la carpeta no sea un repo
+  git), sin archivos ni carpetas ocultos, sin `target/` ni
+  `node_modules/`. Se saltean los binarios, los que no son UTF-8 y los de
+  más de 4 MB. Los archivos que tenés abiertos se buscan sobre lo que ves
+  en el editor (con los cambios sin guardar), no sobre el disco.
+- **Archivos**: globs separados por coma, con la sintaxis de
+  `.gitignore`: `*.rs` o `src/**` solo buscan ahí; con `!` adelante
+  excluyen (`!tests, !*.md`).
+- **Tope**: a las 5000 coincidencias la búsqueda se corta y lo avisa;
+  afiná la consulta o el filtro.
+- `Enter` esconde la vista sin perderla: `Ctrl+Shift+F` de nuevo vuelve a
+  la misma lista con la misma selección, para ir al siguiente resultado.
+  La lista no se actualiza sola si después editás: cualquier cambio en
+  la consulta, el filtro o las opciones vuelve a buscar.
+- **Reemplazar todo** usa el texto del campo Reemplazar tal cual (igual
+  que `Ctrl+H`: `$1` no se expande). Antes de hacer nada muestra cuántas
+  coincidencias en cuántos archivos y espera `y` (cualquier otra tecla
+  cancela). Solo se puede con la búsqueda terminada y sin haber llegado
+  al tope. Cada archivo se vuelve a buscar en el momento de reemplazar,
+  así que un archivo que cambió después de la búsqueda no se rompe.
+  Después:
+  - los archivos **abiertos** en alguna pestaña se cambian en el editor,
+    sin guardar: se revisan y se guardan con `Ctrl+S`, y un `Ctrl+Z` en
+    esa pestaña deshace todo el reemplazo de ese archivo;
+  - los archivos **cerrados** se escriben directo a disco, de forma
+    segura (a un temporal en la misma carpeta y después se reemplaza el
+    original: nunca queda a medio escribir; los finales de línea CRLF se
+    conservan). Esto **no** se deshace con `Ctrl+Z` — si el proyecto está
+    en git, `git diff`/`git checkout` son la red de seguridad.
 
 ## Plegado de bloques
 
@@ -399,8 +522,24 @@ Como en VIM real, en modo Normal el cursor nunca queda "después" del
 último carácter de una línea no vacía (`$`/`l` se detienen sobre él), y
 al salir de Insertar vuelve un lugar a la izquierda.
 
-Sin registros con nombre, marcas, macros ni búsqueda con `/` (para buscar,
-`Ctrl+F` sigue funcionando); `.` no repite operaciones hechas en Visual.
+**Portapapeles del sistema en modo VIM.** `y`/`d`/`c`/`x` y `p` siguen
+usando el registro interno, así que yanquear no pisa lo que tenías
+copiado de otra app. Tres maneras de usar el portapapeles del sistema:
+
+- **`"+` (o `"*`) delante de un comando**: `"+yy` y `"+y` en Visual
+  copian al portapapeles. `"+p`/`"+P` pegan desde el portapapeles, sin
+  tocar el registro sin nombre.
+- **Sincronizar siempre**: prendiendo `Ctrl+,` → Editor → "VIM: registro
+  = portapapeles" (`vim_sincronizar_portapapeles = true`), todo lo que
+  yanqueás o borrás va al portapapeles, y `p` pega desde ahí. Equivale
+  al `clipboard=unnamedplus` de Neovim.
+- **`Ctrl+C`/`Ctrl+X`/`Ctrl+V`**, que andan igual en cualquier modo.
+
+El texto que llega de otra app se pega por líneas si termina en salto
+de línea.
+
+No hay otros registros con nombre (`"a`, etc.; tcode avisa), ni marcas,
+macros o búsqueda con `/` (para buscar, `Ctrl+F` sigue funcionando); `.` no repite operaciones hechas en Visual.
 Ver PRUEBAS.md para la lista completa de limitaciones.
 
 ## Paleta de comandos y buscador de archivos
@@ -511,7 +650,7 @@ opción por nombre):
 | **Atajos de teclado** | Ver/rebindear cualquier atajo (`Enter` sobre un comando y presionar la nueva combinación), con detección de conflictos resaltada en rojo. `Backspace` restablece uno solo al valor por defecto; hay una fila para restablecer todos. También exportar/importar el `keymap.toml` activo a/desde un archivo fijo (ver [Personalizar atajos](#personalizar-atajos)). |
 | **Temas** | Elegir tema (abre el selector con preview) y duplicar el activo para editarlo. |
 | **Lenguajes / LSP** | Habilitar/deshabilitar el servidor LSP de cada lenguaje, ver si el binario está en el `PATH` y el estado de la sesión de cada lenguaje (Conectado/Iniciando/Error/Inactivo). `c` sobre una fila edita el comando+argumentos a mano (ver [LSP](#lsp-autocompletado-y-diagnósticos)); `Backspace` quita ese override. |
-| **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, indicadores de git, modo VIM, regla vertical, guardado automático. |
+| **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, indicadores de git, modo VIM, regla vertical, guardado automático, portapapeles del sistema (ver [Copiar, cortar y pegar](#copiar-cortar-y-pegar)). |
 | **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo), la barra de pestañas y los [breadcrumbs](#breadcrumbs) de arriba del código. |
 
 Todos los cambios se aplican y persisten al instante en `config.toml`, sin
@@ -645,6 +784,53 @@ incluidas.
 Si el servidor lo soporta (pyright, por ejemplo), `tcode` le manda solo
 lo que cambió en cada edición en vez del archivo entero — con archivos
 de miles de líneas, tipear no se frena por el LSP.
+
+### Navegación, autocompletado y renombrar
+
+Si el servidor del lenguaje lo soporta (lo anuncia al arrancar; si no,
+el atajo solo deja un aviso corto en la barra de estado, como "el LSP no
+soporta renombrar"):
+
+| Atajo | Acción |
+|---|---|
+| `F12` o `Ctrl+K D` | **Ir a la definición** del símbolo bajo el cursor. Si está en otro archivo, se abre en una pestaña nueva (o se activa la que ya lo tenía). Con varias definiciones, lista para elegir (se filtra escribiendo, `Enter` salta). |
+| `Alt+←` o `Ctrl+K H` | **Volver** a donde estaba el cursor antes del último salto (se recuerdan los últimos 50; también cuenta saltar desde las referencias). En macOS, `Alt+←` necesita que la terminal mande Option como Meta. |
+| `Shift+F12` o `Ctrl+K U` | **Buscar referencias**: lista de `archivo:línea  código` (incluida la declaración), filtrable, `Enter` salta. |
+| `Ctrl+K I` | **Hover**: tipo y documentación del símbolo bajo el cursor en un recuadro debajo (el markdown se muestra como texto, hasta 20 líneas). Se cierra con cualquier tecla. |
+| `Ctrl+Espacio` o `Ctrl+K Espacio` | **Autocompletar** a mano. |
+| `F2` o `Ctrl+K Shift+R` | **Renombrar símbolo**: pide el nombre nuevo (precargado con el actual), `Enter` confirma. |
+
+**Autocompletado**: además de a mano, la lista aparece sola al tipear un
+carácter de disparo del servidor (el `.` de un método, `::` en Rust) o
+al hacer una pausa corta en medio de un nombre. Sale debajo del cursor
+con el nombre, el tipo (`fn`, `método`, `var`, `clase`...) y la firma;
+seguir escribiendo la filtra, `↑`/`↓` eligen, `Tab` o `Enter` aceptan y
+`Esc` la cierra (cualquier otra tecla que no sea parte del nombre
+también). Aceptar reemplaza lo escrito de la palabra por el item (más un
+`use`/`import` si el servidor lo agrega) en un solo paso: un `Ctrl+Z` lo
+deshace entero. Sin la lista abierta, `Tab` indenta como siempre. Los
+snippets se insertan como texto plano: `tcode` no tiene saltos entre
+placeholders, así que `foo(${1:a})` queda `foo(a)` y el cursor al final
+(igual, `tcode` le pide al servidor texto sin snippets, y rust-analyzer y
+pyright lo respetan). Solo con un cursor (no con multi-cursor) y, en modo
+VIM, en modo Insertar. Pedir la lista nunca frena el tipeo: se pide en
+segundo plano y, si llega cuando ya se siguió escribiendo otra cosa, se
+descarta.
+
+**Renombrar** aplica los cambios del servidor en todos los archivos que
+toque: los que ya están abiertos (en cualquier pestaña o panel) se editan
+ahí, un paso de deshacer por archivo; los que no, **se abren en pestañas
+nuevas con los cambios sin guardar** — `tcode` nunca escribe al disco un
+renombrado sin que se vea: revisalos y guardá (o deshacé) cada uno. La
+barra de estado dice cuántos cambios hubo y cuántos archivos se abrieron.
+Si el servidor pide además crear, renombrar o borrar archivos (renombrar
+un módulo, por ejemplo), no se aplica nada. Si el archivo cambió mientras
+se esperaba la respuesta, tampoco: hay que pedirlo de nuevo.
+
+Todas están también en la paleta de comandos (categoría "LSP"). El
+servidor recibe como carpeta del proyecto el directorio desde el que se
+lanzó `tcode` (pyright, por ejemplo, la necesita para renombrar en más de
+un archivo).
 
 ### Formatear al guardar
 

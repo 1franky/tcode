@@ -16,8 +16,10 @@
 //! (`lsp.rs`) sin bloquear ninguno de los dos.
 
 mod formateador;
+mod funciones_lsp;
 mod lsp;
 mod pliegues;
+mod portapapeles;
 mod vim;
 
 use std::collections::VecDeque;
@@ -50,7 +52,10 @@ use tcode_core::{
     analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo,
     EstadoVim, Modo, Pliegue,
 };
-use tcode_fs::{BuscadorArchivos, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador, ModoPromptExplorador};
+use tcode_fs::{
+    BuscadorArchivos, EstadoBusquedaProyecto, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador,
+    ModoPromptExplorador,
+};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_lsp::EstadoLogsLsp;
 use tcode_syntax::{Lenguaje, Resaltador};
@@ -343,6 +348,10 @@ struct EstadoApp {
     cierre_armado: Option<String>,
     paleta_comandos: EstadoPaleta,
     buscador_archivos: BuscadorArchivos,
+    /// Búsqueda (y reemplazo) en todo el proyecto (`Ctrl+Shift+F`/`Ctrl+K
+    /// B`, BACKLOG.md P1 #16): vista casi a pantalla completa, con la
+    /// búsqueda corriendo en un hilo aparte (ver `buscar_en_proyecto`).
+    busqueda_proyecto: EstadoBusquedaProyecto,
     estado_busqueda: EstadoBusqueda,
     guardar_como: EstadoGuardarComo,
     selector_tema: EstadoSelectorTema,
@@ -360,6 +369,10 @@ struct EstadoApp {
     /// solo en lo que se ve en el panel.
     keymap: Keymap,
     lsp: lsp::EstadoLsp,
+    /// Ir a definición, completado, hover, referencias y renombrar
+    /// (BACKLOG.md P1 #17, `funciones_lsp.rs`): peticiones por mandar,
+    /// popups y listas.
+    funciones_lsp: funciones_lsp::EstadoFuncionesLsp,
     /// Registro sin nombre + comando de dos teclas pendiente del modo VIM
     /// (`config.editor.modo_vim`, M5) — uno solo para toda la app, no por
     /// panel (ver `tcode_core::EstadoVim`). Sin efecto mientras ningún
@@ -404,6 +417,10 @@ struct EstadoApp {
     /// solo se saltea esas partes al dibujar (`tcode_ui::dibujar`, ver
     /// `Cromo` ahí). Ver `alternar_modo_zen`.
     modo_zen: Option<Foco>,
+    /// Portapapeles del sistema (`Ctrl+C`/`Ctrl+X`/`Ctrl+V`, BACKLOG.md
+    /// P0 #15) + la copia interna de lo último copiado. Ver
+    /// `portapapeles.rs`.
+    portapapeles: portapapeles::Portapapeles,
 }
 
 /// Entra o sale del modo zen (ver `EstadoApp::modo_zen`). Al entrar, el
@@ -473,6 +490,7 @@ async fn ejecutar(
         cierre_armado: None,
         paleta_comandos: EstadoPaleta::nueva(),
         buscador_archivos: BuscadorArchivos::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
+        busqueda_proyecto: EstadoBusquedaProyecto::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
         estado_busqueda: EstadoBusqueda::nueva(),
         guardar_como: EstadoGuardarComo::nueva(),
         selector_tema: EstadoSelectorTema::nueva(),
@@ -481,6 +499,7 @@ async fn ejecutar(
         editor_tema: EstadoEditorTema::nueva(),
         keymap,
         lsp: lsp::EstadoLsp::nuevo(),
+        funciones_lsp: Default::default(),
         vim: EstadoVim::nuevo(),
         logs_lsp: EstadoLogsLsp::nuevo(),
         prompt_explorador: EstadoPromptExplorador::nuevo(),
@@ -489,6 +508,7 @@ async fn ejecutar(
         guardado_pendiente: false,
         resaltador: Resaltador::nuevo(),
         modo_zen: None,
+        portapapeles: portapapeles::Portapapeles::nuevo(),
     };
     if let Some(aviso) = aviso_proyecto_no_confiable(&estado.capas_config) {
         layout.panel_activo_mut().mensaje_estado = Some(aviso);
@@ -521,6 +541,9 @@ async fn ejecutar(
     // la pantalla entera 4 veces por segundo aunque el LSP estuviera
     // callado.
     let mut omitir_dibujo = false;
+    // La vuelta actual viene de un mensaje LSP que era la respuesta a una
+    // petición de `funciones_lsp` (ver la rama del `select!`).
+    let mut solo_respuestas_lsp = false;
 
     // Revisión periódica de `HEAD` (indicadores de git, ver
     // `tcode_fs::VigiaHead`): un commit o checkout hecho desde otra
@@ -542,6 +565,15 @@ async fn ejecutar(
     loop {
         if std::mem::take(&mut estado.guardado_pendiente) {
             let _ = guardar_archivo_activo(layout, &mut estado).await;
+        }
+        // Funciones de LSP (BACKLOG.md P1 #17): la petición que dejó un
+        // comando o la pausa al tipear, y las respuestas ya llegadas —
+        // ninguna de las dos cosas espera al servidor.
+        if estado.funciones_lsp.pedido.is_some() {
+            funciones_lsp::enviar_pedido(layout, &mut estado).await;
+        }
+        if !funciones_lsp::procesar_respuestas(layout, &mut estado) && std::mem::take(&mut solo_respuestas_lsp) {
+            omitir_dibujo = true;
         }
         let foco_actual = firma_foco(layout, &estado);
         if foco_actual != ultimo_foco {
@@ -605,11 +637,24 @@ async fn ejecutar(
                     estado.modo_zen.is_some(),
                 );
                 tcode_ui::panel_linea_vim::dibujar(frame, frame.area(), &estado.vim.linea_comando, &estado.paleta);
+                funciones_lsp::dibujar(frame, layout, &estado.funciones_lsp, &estado.paleta);
+                // Encima de todo, pero fuera de `tcode_ui::dibujar`: mientras
+                // está abierta captura el teclado, así que ningún otro
+                // overlay puede abrirse a la vez.
+                if estado.busqueda_proyecto.activo() {
+                    tcode_ui::panel_busqueda_proyecto::dibujar(
+                        frame,
+                        frame.area(),
+                        &estado.busqueda_proyecto,
+                        &estado.paleta,
+                    );
+                }
             })?;
             ultimo_dibujo = Instant::now();
         }
 
         let firma_antes = firma_estructural(layout, &estado);
+        let completado_programado = estado.funciones_lsp.completado_programado;
 
         let evento = match teclas_sinteticas.pop_front() {
             Some(key) => Event::Key(key),
@@ -625,6 +670,10 @@ async fn ejecutar(
                 // que lo mandó; `None` si ese servidor se murió.
                 (lenguaje, mensaje) = estado.lsp.siguiente_mensaje() => {
                     estado.lsp.procesar_mensaje(lenguaje, mensaje, layout).await;
+                    // Si fue una respuesta a una función de LSP, en la
+                    // próxima vuelta solo se redibuja si cambió algo
+                    // (`funciones_lsp::procesar_respuestas`).
+                    solo_respuestas_lsp = estado.lsp.hay_respuestas();
                     continue;
                 }
                 // Indicadores de git (BACKLOG.md P2 #6): mientras algún
@@ -635,6 +684,25 @@ async fn ejecutar(
                 // solas al abrir un archivo o al dejar de tipear. Sin nada
                 // pendiente esta rama ni se arma: cero costo en reposo.
                 _ = tokio::time::sleep(INTERVALO_SONDEO_GIT), if layout.cargas_git_pendientes() => continue,
+                // Pausa al tipear antes de pedir completado
+                // (`funciones_lsp::despues_de_tecla`): sin nada programado
+                // esta rama ni se arma.
+                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(completado_programado.unwrap_or_else(Instant::now))),
+                    if completado_programado.is_some() =>
+                {
+                    funciones_lsp::pausa_vencida(&mut estado);
+                    omitir_dibujo = true;
+                    continue;
+                }
+                // Búsqueda en el proyecto (BACKLOG.md P1 #16): mientras el
+                // hilo de búsqueda trabaja, se juntan sus resultados cada
+                // tanto y se redibuja solo si llegó algo — la lista crece
+                // mientras busca y el teclado nunca espera. Sin búsqueda en
+                // curso esta rama ni se arma.
+                _ = tokio::time::sleep(INTERVALO_SONDEO_BUSQUEDA), if estado.busqueda_proyecto.buscando() => {
+                    omitir_dibujo = !estado.busqueda_proyecto.recibir();
+                    continue;
+                }
                 _ = tick.tick(), if necesita_tick(&estado) => {
                     omitir_dibujo = !procesar_tick(layout, &mut estado);
                     continue;
@@ -952,6 +1020,17 @@ async fn ejecutar(
             continue;
         }
 
+        // Búsqueda en el proyecto (`Ctrl+Shift+F`/`Ctrl+K B`, BACKLOG.md
+        // P1 #16): captura el teclado como la barra de `Ctrl+F`, con las
+        // mismas teclas para las opciones (`Alt+R/C/W`) y "reemplazar
+        // todo" (`Alt+Enter`), que acá pide confirmación con `y`.
+        if estado.busqueda_proyecto.activo() {
+            estado.confirmar_salida = false;
+            tecla_busqueda_proyecto(key, layout, &mut estado);
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+            continue;
+        }
+
         if estado.buscador_archivos.activo() {
             estado.confirmar_salida = false;
             match key.code {
@@ -1201,6 +1280,15 @@ async fn ejecutar(
             continue;
         }
 
+        // Lista de ubicaciones, prompt de renombrar y popups de hover y
+        // completado del LSP (BACKLOG.md P1 #17): ver
+        // `funciones_lsp::manejar_tecla`.
+        if funciones_lsp::manejar_tecla(key, layout, &mut estado) {
+            estado.confirmar_salida = false;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+            continue;
+        }
+
         // Modo VIM (`config.editor.modo_vim`, M5, apagado por defecto —
         // ninguno de estos dos bloques hace nada si `editor.modo()` nunca
         // llegó a `Normal`, y a eso solo se llega si la config lo prende,
@@ -1249,7 +1337,7 @@ async fn ejecutar(
                     true
                 }
                 KeyCode::Char(c) if sin_modificadores(key) => {
-                    vim::ejecutar_tecla_normal(c, layout, &mut estado.vim, &estado.config);
+                    vim::ejecutar_tecla_normal(c, layout, &mut estado.vim, &estado.config, &mut estado.portapapeles);
                     // `:` abre la línea de comandos: una confirmación de
                     // `:q` armada sigue armada (ver `vim::tecla_linea_comando`).
                     if estado.vim.linea_comando.activa() {
@@ -1273,8 +1361,14 @@ async fn ejecutar(
             estado.confirmar_salida = false;
         }
 
+        // Qué le pasó al texto con esta tecla, para el completado del LSP
+        // (`funciones_lsp::despues_de_tecla`).
+        let mut tecleo = funciones_lsp::Tecleo::Otro;
         match resolucion {
             Resolucion::Comando(nombre) => {
+                if nombre == "editor.borrar_atras" {
+                    tecleo = funciones_lsp::Tecleo::Borrar;
+                }
                 if let Accion::Salir = procesar_comando(&nombre, layout, &mut estado, &mut resolvedor) {
                     break;
                 }
@@ -1294,11 +1388,13 @@ async fn ejecutar(
                     if let KeyCode::Char(c) = key.code {
                         if sin_modificadores(key) {
                             layout.editor_activo_mut().insertar_char(c);
+                            tecleo = funciones_lsp::Tecleo::Caracter(c);
                         }
                     }
                 }
             }
         }
+        funciones_lsp::despues_de_tecla(tecleo, layout, &mut estado);
 
         necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
     }
@@ -1317,6 +1413,12 @@ const INTERVALO_MAXIMO_SIN_DIBUJAR: Duration = Duration::from_millis(50);
 /// correspondiente del `select!` en `ejecutar`. `git cat-file` suele
 /// tardar pocos ms, así que casi siempre alcanza con una vuelta.
 const INTERVALO_SONDEO_GIT: Duration = Duration::from_millis(30);
+
+/// Cada cuánto se juntan los resultados de una búsqueda en el proyecto en
+/// curso (ver la rama correspondiente del `select!` en `ejecutar`): lo
+/// bastante seguido para que la lista se vea crecer, sin redibujar por
+/// cada archivo encontrado.
+const INTERVALO_SONDEO_BUSQUEDA: Duration = Duration::from_millis(40);
 
 /// Período del tick del bucle principal (ver `necesita_tick`): lo que
 /// tarda como mucho una línea nueva de stderr del LSP en aparecer en el
@@ -1423,12 +1525,14 @@ fn guardar_panel(panel: &mut PanelEditor) -> Result<()> {
 /// acción, no texto.
 fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, teclas: &mut VecDeque<KeyEvent>) {
     let prompt_de_texto = estado.paleta_comandos.activa()
+        || (estado.busqueda_proyecto.activo() && !estado.busqueda_proyecto.confirmando())
         || estado.buscador_archivos.activo()
         || estado.selector_simbolos.activo()
         || estado.estado_busqueda.activa()
         || estado.guardar_como.activa()
         || estado.logs_lsp.activo()
         || estado.prompt_explorador.activo()
+        || estado.funciones_lsp.captura_texto()
         || layout.panel_activo().estado_csv.editando()
         || layout.panel_activo().estado_csv.prompt_filtro().is_some()
         || (estado.panel_admin.activo() && estado.panel_admin.editando_comando_lsp().is_some());
@@ -1443,6 +1547,7 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
     }
 
     let otro_modal = estado.editor_tema.activo()
+        || estado.busqueda_proyecto.activo()
         || estado.panel_admin.activo()
         || estado.selector_tema.activa()
         || estado.confirmar_borrado.activo()
@@ -1451,6 +1556,7 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
         return;
     }
     estado.confirmar_salida = false;
+    estado.funciones_lsp.completado.cerrar();
     layout.editor_activo_mut().insertar_texto(texto);
 }
 
@@ -1525,6 +1631,13 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             estado.buscador_archivos.abrir();
             Accion::Continuar
         }
+        // Reabrir conserva la búsqueda anterior y sus resultados (ver
+        // `EstadoBusquedaProyecto`), así se puede ir de un resultado al
+        // siguiente.
+        "buscar.en_proyecto" => {
+            estado.busqueda_proyecto.abrir();
+            Accion::Continuar
+        }
         // Breadcrumbs navegables: el esquema del archivo entero sale del
         // mismo árbol de tree-sitter que el resaltado (recorrerlo es
         // O(archivo), pero solo al abrir el selector, no por frame). Sin
@@ -1533,6 +1646,16 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
                 let (simbolos, byte_cursor) = esquema_del_activo(layout, &mut estado.resaltador);
                 estado.selector_simbolos.abrir(simbolos, byte_cursor);
+            }
+            Accion::Continuar
+        }
+        // Portapapeles (BACKLOG.md P0 #15): solo con el foco en el código
+        // (ni el explorador ni la vista de tabla CSV tienen un texto
+        // seleccionable que copiar o donde pegar).
+        "editor.copiar" | "editor.cortar" | "editor.pegar" => {
+            if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
+                estado.confirmar_salida = false;
+                usar_portapapeles(id, layout, estado);
             }
             Accion::Continuar
         }
@@ -1714,6 +1837,10 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             }
             Accion::Continuar
         }
+        // Funciones de LSP (BACKLOG.md P1 #17). `lsp.renombrar` (`F2`) en
+        // la vista de tabla CSV no aplica y sigue hasta
+        // `ejecutar_comando_csv`, que lo reinterpreta como editar celda.
+        _ if id.starts_with("lsp.") && funciones_lsp::comando(id, layout, estado) => Accion::Continuar,
         _ if id.starts_with("pestana.ir_a_") => {
             if let Ok(numero) = id["pestana.ir_a_".len()..].parse::<usize>() {
                 layout.ir_a_pestana(numero.saturating_sub(1));
@@ -1728,6 +1855,47 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             &mut estado.foco,
             &mut estado.confirmar_salida,
         ),
+    }
+}
+
+/// `Ctrl+C`/`Ctrl+X`/`Ctrl+V` sobre el editor activo. Copiar sin
+/// selección toma la línea entera (como VSCode); cortar es UNA edición
+/// (un `Ctrl+Z` la devuelve). Pegar lee el portapapeles del sistema (útil
+/// cuando la terminal no hace bracketed paste, o dentro de tmux); si no
+/// se puede, pega lo último copiado dentro de tcode — el pegado de la
+/// terminal (`Event::Paste`) sigue andando igual, por su lado. El aviso
+/// queda en la barra de estado.
+fn usar_portapapeles(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let modo = estado.config.editor.portapapeles;
+    let editor = layout.editor_activo_mut();
+    let mensaje = match id {
+        "editor.pegar" => match estado.portapapeles.leer(modo) {
+            Some(copiado) if !copiado.texto.is_empty() => {
+                let hay_seleccion = editor.cursores().iter().any(|c| c.tiene_seleccion());
+                if copiado.lineal && !hay_seleccion {
+                    editor.pegar_lineas(&copiado.texto);
+                } else {
+                    editor.insertar_texto(&copiado.texto);
+                }
+                None
+            }
+            _ => Some("Portapapeles vacío".to_string()),
+        },
+        _ => {
+            let cortar = id == "editor.cortar";
+            let copiado = if cortar { editor.cortar() } else { editor.texto_para_copiar() };
+            let lineas = portapapeles::describir_lineas(&copiado);
+            let resultado = estado.portapapeles.copiar(copiado, modo);
+            let verbo = if cortar { "Cortado" } else { "Copiado" };
+            Some(if resultado.salio_de_tcode() {
+                format!("{verbo}: {lineas}")
+            } else {
+                format!("{verbo}: {lineas} (solo dentro de tcode)")
+            })
+        }
+    };
+    if mensaje.is_some() {
+        layout.panel_activo_mut().mensaje_estado = mensaje;
     }
 }
 
@@ -1994,7 +2162,7 @@ fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
         "cursor.derecha" => panel.estado_csv.mover_derecha(num_columnas),
         "editor.indentar_o_autocompletar" => panel.estado_csv.tab(num_filas, num_columnas),
         "editor.desindentar" => panel.estado_csv.shift_tab(num_columnas),
-        "editor.nueva_linea" | "csv.editar_celda" => {
+        "editor.nueva_linea" | "csv.editar_celda" | "lsp.renombrar" => {
             let valor_actual =
                 panel.estado_csv.fila_real(&tabla).and_then(|r| tabla.filas[r].celdas.get(columna));
             panel.estado_csv.iniciar_edicion(valor_actual.map(String::as_str).unwrap_or(""));
@@ -2838,6 +3006,211 @@ fn esquema_del_activo(layout: &PanelLayout, resaltador: &mut Resaltador) -> (Vec
         })
         .collect();
     (simbolos, byte_cursor)
+}
+
+/// Una tecla con la vista "Buscar en el proyecto" abierta (BACKLOG.md
+/// P1 #16). Con "reemplazar todo" pidiendo confirmación, solo `y`
+/// reemplaza — cualquier otra tecla cancela, como la confirmación de
+/// borrado del explorador: es una acción sobre muchos archivos a la vez.
+/// Todo lo que cambia consulta, filtro u opciones vuelve a buscar (y
+/// cancela la búsqueda anterior si seguía corriendo).
+fn tecla_busqueda_proyecto(key: KeyEvent, layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let busqueda = &mut estado.busqueda_proyecto;
+    busqueda.nueva_tecla();
+    if busqueda.confirmando() {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') if sin_modificadores(key) => reemplazar_en_proyecto(layout, estado),
+            _ => busqueda.cancelar_confirmacion(),
+        }
+        return;
+    }
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let rebuscar = match key.code {
+        KeyCode::Esc => {
+            busqueda.cerrar();
+            false
+        }
+        KeyCode::Tab => {
+            busqueda.alternar_campo();
+            false
+        }
+        KeyCode::Up => {
+            busqueda.mover_arriba(1);
+            false
+        }
+        KeyCode::Down => {
+            busqueda.mover_abajo(1);
+            false
+        }
+        KeyCode::PageUp => {
+            busqueda.mover_arriba(FILAS_POR_PAGINA_RESULTADOS);
+            false
+        }
+        KeyCode::PageDown => {
+            busqueda.mover_abajo(FILAS_POR_PAGINA_RESULTADOS);
+            false
+        }
+        KeyCode::Backspace => busqueda.borrar(),
+        KeyCode::Char('r') if alt => {
+            busqueda.alternar_regex();
+            true
+        }
+        KeyCode::Char('c') if alt => {
+            busqueda.alternar_mayusculas();
+            true
+        }
+        KeyCode::Char('w') if alt => {
+            busqueda.alternar_palabra();
+            true
+        }
+        // Mismo atajo que "reemplazar todo" de `Ctrl+H` (ahí también
+        // vale `Ctrl+Alt+Enter`, que incluye `Alt`).
+        KeyCode::Enter if alt => {
+            busqueda.pedir_reemplazo();
+            false
+        }
+        KeyCode::Enter => {
+            abrir_resultado_proyecto(layout, estado);
+            false
+        }
+        KeyCode::Char(c) if sin_modificadores(key) => busqueda.escribir(c),
+        _ => false,
+    };
+    if rebuscar {
+        let buffers = buffers_abiertos(layout);
+        estado.busqueda_proyecto.buscar(buffers);
+    }
+}
+
+/// `PageUp`/`PageDown` en la lista de resultados de la búsqueda en el
+/// proyecto: un salto fijo, sin depender del alto real de la lista (que
+/// solo conoce la UI al dibujar).
+const FILAS_POR_PAGINA_RESULTADOS: usize = 10;
+
+/// El texto de cada documento abierto con ruta, por ruta canónica: la
+/// búsqueda en el proyecto busca sobre esto en vez del disco, así los
+/// cambios sin guardar cuentan (BACKLOG.md P1 #16). Un `canonicalize`
+/// y un `a_texto` por pestaña, solo al lanzar una búsqueda.
+fn buffers_abiertos(layout: &PanelLayout) -> std::collections::HashMap<PathBuf, String> {
+    layout
+        .documentos()
+        .into_iter()
+        .filter_map(|panel| {
+            let ruta = std::fs::canonicalize(panel.editor.buffer().ruta()?).ok()?;
+            Some((ruta, panel.editor.buffer().a_texto()))
+        })
+        .collect()
+}
+
+/// `Enter` en la búsqueda en el proyecto: abre el archivo del resultado
+/// seleccionado como pestaña (o activa la que ya tenía) y salta a la
+/// coincidencia. La vista se oculta sin cancelar nada (`ocultar`, no
+/// `cerrar`): reabrirla vuelve a la misma lista y selección. El salto es
+/// por línea y columna, no por offset absoluto — el buffer normaliza
+/// CRLF y sus offsets no coinciden con los del disco.
+fn abrir_resultado_proyecto(layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let Some((archivo, coincidencia)) = estado.busqueda_proyecto.seleccionada() else {
+        return;
+    };
+    let ruta = archivo.ruta.clone();
+    let (linea, columna) = (coincidencia.linea, coincidencia.columna_byte);
+    estado.busqueda_proyecto.ocultar();
+    abrir_ruta_desde_explorador(layout, &mut estado.foco, ruta.clone(), &estado.config.editor);
+    let abierto = layout
+        .editor_activo()
+        .buffer()
+        .ruta()
+        .and_then(|r| std::fs::canonicalize(r).ok())
+        .is_some_and(|r| r == ruta);
+    if !abierto {
+        layout.panel_activo_mut().mensaje_estado = Some(format!("No se pudo abrir {}", ruta.display()));
+        return;
+    }
+    let editor = layout.editor_activo_mut();
+    let buffer = editor.buffer();
+    // El archivo pudo cambiar desde que se buscó: la posición se recorta
+    // a lo que haya ahora en vez de caer fuera del texto.
+    let linea = linea.min(buffer.num_lineas().saturating_sub(1));
+    let texto_linea = buffer.linea_texto(linea);
+    let mut columna = columna.min(texto_linea.trim_end_matches(['\n', '\r']).len());
+    while !texto_linea.is_char_boundary(columna) {
+        columna -= 1;
+    }
+    let byte = buffer.inicio_byte_linea(linea) + columna;
+    editor.mover_cursor_a_byte(byte);
+}
+
+/// "Reemplazar todo" de la búsqueda en el proyecto, ya confirmado con
+/// `y`. Sobre cada archivo de la lista de resultados:
+///
+/// - si está abierto en alguna pestaña (de cualquier panel), se
+///   reemplaza en el buffer con `Editor::aplicar_ediciones` — un solo
+///   paso de deshacer por documento, y queda SIN guardar: se revisa y se
+///   guarda con `Ctrl+S` como cualquier otro cambio;
+/// - si está cerrado, se vuelve a leer del disco, se vuelve a buscar en
+///   ese momento (los resultados mostrados pueden haber quedado viejos)
+///   y se escribe de forma atómica (`tcode_fs::reemplazar_en_archivo`:
+///   temporal + `rename`, nunca a medio escribir). Eso no se puede
+///   deshacer con `Ctrl+Z` — la confirmación lo dice. Abrir cada archivo
+///   en una pestaña sería deshacible, pero con decenas de archivos llena
+///   la barra de pestañas y le abre un documento a cada servidor LSP.
+///
+/// Al terminar vuelve a buscar, para que la lista refleje lo que quedó.
+fn reemplazar_en_proyecto(layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let Some(re) = estado.busqueda_proyecto.patron() else {
+        estado.busqueda_proyecto.terminar_reemplazo("Consulta inválida: no se reemplazó nada".to_string());
+        return;
+    };
+    let reemplazo = estado.busqueda_proyecto.reemplazo().to_string();
+    let rutas: Vec<PathBuf> = estado.busqueda_proyecto.archivos().iter().map(|a| a.ruta.clone()).collect();
+    // Rutas canónicas de los documentos abiertos, en el mismo orden que
+    // `paneles_mut` (una sola vez, no por archivo de la lista).
+    let abiertos: Vec<Option<PathBuf>> = layout
+        .documentos()
+        .into_iter()
+        .map(|p| p.editor.buffer().ruta().and_then(|r| std::fs::canonicalize(r).ok()))
+        .collect();
+
+    let (mut total, mut archivos, mut en_buffers, mut fallidos) = (0, 0, 0, 0);
+    let mut paneles = layout.paneles_mut();
+    for ruta in &rutas {
+        let mut abierto = false;
+        let mut reemplazadas = 0;
+        // El mismo archivo puede estar abierto en más de un panel (cada
+        // uno con su propio buffer): se reemplaza en todos.
+        for (panel, ruta_abierta) in paneles.iter_mut().zip(&abiertos) {
+            if ruta_abierta.as_ref() != Some(ruta) {
+                continue;
+            }
+            abierto = true;
+            let ediciones = tcode_fs::ediciones_de_reemplazo(&panel.editor.buffer().a_texto(), &re, &reemplazo);
+            if panel.editor.aplicar_ediciones(&ediciones) {
+                reemplazadas = reemplazadas.max(ediciones.len());
+            }
+        }
+        if abierto {
+            en_buffers += usize::from(reemplazadas > 0);
+        } else {
+            match tcode_fs::reemplazar_en_archivo(ruta, &re, &reemplazo) {
+                Ok(n) => reemplazadas = n,
+                Err(_) => fallidos += 1,
+            }
+        }
+        total += reemplazadas;
+        archivos += usize::from(reemplazadas > 0);
+    }
+    drop(paneles);
+
+    let mut aviso = format!("Reemplazadas {total} coincidencias en {archivos} archivos");
+    if en_buffers > 0 {
+        aviso.push_str(&format!(" ({en_buffers} abiertos quedaron sin guardar: Ctrl+S guarda, Ctrl+Z deshace)"));
+    }
+    if fallidos > 0 {
+        aviso.push_str(&format!("; {fallidos} no se pudieron escribir"));
+    }
+    let buffers = buffers_abiertos(layout);
+    estado.busqueda_proyecto.buscar(buffers);
+    estado.busqueda_proyecto.terminar_reemplazo(aviso);
 }
 
 /// Mueve el cursor del editor activo a la coincidencia de búsqueda

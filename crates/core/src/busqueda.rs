@@ -22,7 +22,11 @@ pub struct Coincidencia {
     pub fin: usize,
 }
 
-fn compilar_patron(patron: &str, opciones: OpcionesBusqueda) -> Result<Regex> {
+/// El regex interno que usan todas las búsquedas: la del archivo
+/// (`Ctrl+F`) y la de todo el proyecto (`tcode_fs::busqueda_proyecto`,
+/// BACKLOG.md P1 #16), que lo compila una vez y lo reusa en cada archivo
+/// — así las dos interpretan igual las mismas opciones.
+pub fn compilar_patron(patron: &str, opciones: OpcionesBusqueda) -> Result<Regex> {
     let base = if opciones.regex { patron.to_string() } else { regex::escape(patron) };
     let con_palabra = if opciones.palabra_completa { format!(r"\b{base}\b") } else { base };
     let con_flags = if opciones.sensible_mayusculas { con_palabra } else { format!("(?i){con_palabra}") };

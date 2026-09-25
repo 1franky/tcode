@@ -17,14 +17,14 @@ pub mod plegado;
 pub mod vim;
 
 pub use buffer::{Buffer, Eol};
-pub use busqueda::{buscar_coincidencias, Coincidencia, OpcionesBusqueda};
+pub use busqueda::{buscar_coincidencias, compilar_patron, Coincidencia, OpcionesBusqueda};
 pub use csv::{
     analizar as analizar_csv, delimitador_por_extension, filas_visibles as filas_visibles_csv,
     serializar_fila as serializar_fila_csv, EdicionCsv, FilaCsv, FiltroCsv, TablaCsv,
 };
 pub use cursor::{Cursor, CursorMultiple};
 pub use diff::ediciones_minimas;
-pub use editor::{Editor, Modo};
+pub use editor::{Editor, Modo, TextoCopiado};
 pub use estado_busqueda::{CampoBusqueda, EstadoBusqueda};
 pub use estado_csv::EstadoCsv;
 pub use estado_guardar_como::EstadoGuardarComo;
