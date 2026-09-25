@@ -65,6 +65,66 @@ pub struct ConfigEditor {
     /// recuerde aunque se cambie de modo y se vuelva. Ignorado en los
     /// otros dos modos.
     pub segundos_guardado_automatico: u64,
+    /// Cómo llegan `Ctrl+C`/`Ctrl+X` al portapapeles del sistema y de
+    /// dónde lee `Ctrl+V` (BACKLOG.md P0 #15). `Automatico` por defecto:
+    /// secuencia OSC 52 a la terminal (anda también por SSH) y además la
+    /// herramienta del sistema si hay una (`pbcopy`, `wl-copy`...). Con
+    /// `Desactivado` lo copiado queda solo dentro de tcode.
+    pub portapapeles: ModoPortapapeles,
+    /// Modo VIM: el registro sin nombre (`y`/`d`/`c`/`x`/`p`) se
+    /// sincroniza con el portapapeles del sistema, como
+    /// `clipboard=unnamedplus` de Neovim. Apagado por defecto, igual que
+    /// en Neovim: yanquear no pisa lo que el usuario tenía copiado de
+    /// otra app. `"+y`/`"+p` usan el portapapeles igual, prendido o no.
+    pub vim_sincronizar_portapapeles: bool,
+}
+
+/// Modos del portapapeles del sistema (BACKLOG.md P0 #15). Este crate
+/// solo guarda la elección; la escritura/lectura real (secuencia OSC 52,
+/// procesos `pbcopy`/`wl-copy`/`xclip`...) vive en `app`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModoPortapapeles {
+    /// OSC 52 + herramienta del sistema al copiar; herramienta del
+    /// sistema al pegar con `Ctrl+V`.
+    #[default]
+    Automatico,
+    /// Solo la secuencia OSC 52 (útil por SSH, donde la herramienta del
+    /// sistema sería la de la máquina remota). `Ctrl+V` no puede leer el
+    /// portapapeles así: pega lo último copiado dentro de tcode.
+    SoloOsc52,
+    /// Solo la herramienta del sistema (para terminales que muestran un
+    /// aviso o fallan con OSC 52).
+    SoloSistema,
+    /// Nada sale de tcode: copiar/cortar/pegar usan un portapapeles
+    /// interno.
+    Desactivado,
+}
+
+impl ModoPortapapeles {
+    pub const TODOS: [ModoPortapapeles; 4] = [
+        ModoPortapapeles::Automatico,
+        ModoPortapapeles::SoloOsc52,
+        ModoPortapapeles::SoloSistema,
+        ModoPortapapeles::Desactivado,
+    ];
+
+    /// Mismo criterio que `GuardadoAutomatico::rotar`.
+    pub fn rotar(self, delta: i32) -> Self {
+        let total = Self::TODOS.len() as i32;
+        let actual = Self::TODOS.iter().position(|m| *m == self).unwrap_or(0) as i32;
+        Self::TODOS[(actual + delta).rem_euclid(total) as usize]
+    }
+
+    /// Si al copiar se manda la secuencia OSC 52 a la terminal.
+    pub fn usa_osc52(self) -> bool {
+        matches!(self, ModoPortapapeles::Automatico | ModoPortapapeles::SoloOsc52)
+    }
+
+    /// Si se usan las herramientas del sistema (para copiar y para leer).
+    pub fn usa_sistema(self) -> bool {
+        matches!(self, ModoPortapapeles::Automatico | ModoPortapapeles::SoloSistema)
+    }
 }
 
 /// Modos de guardado automático de PLAN.md §5.4 ("nunca / al perder foco
@@ -113,6 +173,8 @@ impl Default for ConfigEditor {
             columna_regla: None,
             guardado_automatico: GuardadoAutomatico::Nunca,
             segundos_guardado_automatico: SEGUNDOS_GUARDADO_AUTOMATICO_POR_DEFECTO,
+            portapapeles: ModoPortapapeles::Automatico,
+            vim_sincronizar_portapapeles: false,
         }
     }
 }
@@ -422,6 +484,8 @@ mod tests {
                 columna_regla: Some(80),
                 guardado_automatico: GuardadoAutomatico::CadaNSegundos,
                 segundos_guardado_automatico: 10,
+                portapapeles: ModoPortapapeles::SoloSistema,
+                vim_sincronizar_portapapeles: true,
             },
             interfaz: ConfigInterfaz {
                 tema: "claro".into(),
@@ -493,10 +557,24 @@ mod tests {
     }
 
     #[test]
+    fn portapapeles_arranca_en_automatico_y_se_lee_en_snake_case() {
+        let viejo: Config = toml::from_str("[editor]\ntamano_tabulacion = 2\n").unwrap();
+        assert_eq!(viejo.editor.portapapeles, ModoPortapapeles::Automatico);
+        assert!(!viejo.editor.vim_sincronizar_portapapeles);
+        let config: Config = toml::from_str("[editor]\nportapapeles = \"solo_osc52\"\n").unwrap();
+        assert_eq!(config.editor.portapapeles, ModoPortapapeles::SoloOsc52);
+        assert!(config.editor.portapapeles.usa_osc52() && !config.editor.portapapeles.usa_sistema());
+        let config: Config = toml::from_str("[editor]\nportapapeles = \"desactivado\"\n").unwrap();
+        assert!(!config.editor.portapapeles.usa_osc52() && !config.editor.portapapeles.usa_sistema());
+    }
+
+    #[test]
     fn rotar_guardado_automatico_da_la_vuelta_en_ambos_sentidos() {
         assert_eq!(GuardadoAutomatico::Nunca.rotar(1), GuardadoAutomatico::AlPerderFoco);
         assert_eq!(GuardadoAutomatico::CadaNSegundos.rotar(1), GuardadoAutomatico::Nunca);
         assert_eq!(GuardadoAutomatico::Nunca.rotar(-1), GuardadoAutomatico::CadaNSegundos);
+        assert_eq!(ModoPortapapeles::Automatico.rotar(-1), ModoPortapapeles::Desactivado);
+        assert_eq!(ModoPortapapeles::Desactivado.rotar(1), ModoPortapapeles::Automatico);
     }
 
     #[test]

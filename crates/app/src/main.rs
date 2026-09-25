@@ -18,6 +18,7 @@
 mod formateador;
 mod lsp;
 mod pliegues;
+mod portapapeles;
 mod vim;
 
 use std::collections::VecDeque;
@@ -404,6 +405,10 @@ struct EstadoApp {
     /// solo se saltea esas partes al dibujar (`tcode_ui::dibujar`, ver
     /// `Cromo` ahí). Ver `alternar_modo_zen`.
     modo_zen: Option<Foco>,
+    /// Portapapeles del sistema (`Ctrl+C`/`Ctrl+X`/`Ctrl+V`, BACKLOG.md
+    /// P0 #15) + la copia interna de lo último copiado. Ver
+    /// `portapapeles.rs`.
+    portapapeles: portapapeles::Portapapeles,
 }
 
 /// Entra o sale del modo zen (ver `EstadoApp::modo_zen`). Al entrar, el
@@ -489,6 +494,7 @@ async fn ejecutar(
         guardado_pendiente: false,
         resaltador: Resaltador::nuevo(),
         modo_zen: None,
+        portapapeles: portapapeles::Portapapeles::nuevo(),
     };
     if let Some(aviso) = aviso_proyecto_no_confiable(&estado.capas_config) {
         layout.panel_activo_mut().mensaje_estado = Some(aviso);
@@ -1249,7 +1255,7 @@ async fn ejecutar(
                     true
                 }
                 KeyCode::Char(c) if sin_modificadores(key) => {
-                    vim::ejecutar_tecla_normal(c, layout, &mut estado.vim, &estado.config);
+                    vim::ejecutar_tecla_normal(c, layout, &mut estado.vim, &estado.config, &mut estado.portapapeles);
                     // `:` abre la línea de comandos: una confirmación de
                     // `:q` armada sigue armada (ver `vim::tecla_linea_comando`).
                     if estado.vim.linea_comando.activa() {
@@ -1536,6 +1542,16 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             }
             Accion::Continuar
         }
+        // Portapapeles (BACKLOG.md P0 #15): solo con el foco en el código
+        // (ni el explorador ni la vista de tabla CSV tienen un texto
+        // seleccionable que copiar o donde pegar).
+        "editor.copiar" | "editor.cortar" | "editor.pegar" => {
+            if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
+                estado.confirmar_salida = false;
+                usar_portapapeles(id, layout, estado);
+            }
+            Accion::Continuar
+        }
         "tema.seleccionar" => {
             estado.selector_tema.abrir(&estado.config.interfaz.tema);
             Accion::Continuar
@@ -1728,6 +1744,47 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             &mut estado.foco,
             &mut estado.confirmar_salida,
         ),
+    }
+}
+
+/// `Ctrl+C`/`Ctrl+X`/`Ctrl+V` sobre el editor activo. Copiar sin
+/// selección toma la línea entera (como VSCode); cortar es UNA edición
+/// (un `Ctrl+Z` la devuelve). Pegar lee el portapapeles del sistema (útil
+/// cuando la terminal no hace bracketed paste, o dentro de tmux); si no
+/// se puede, pega lo último copiado dentro de tcode — el pegado de la
+/// terminal (`Event::Paste`) sigue andando igual, por su lado. El aviso
+/// queda en la barra de estado.
+fn usar_portapapeles(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let modo = estado.config.editor.portapapeles;
+    let editor = layout.editor_activo_mut();
+    let mensaje = match id {
+        "editor.pegar" => match estado.portapapeles.leer(modo) {
+            Some(copiado) if !copiado.texto.is_empty() => {
+                let hay_seleccion = editor.cursores().iter().any(|c| c.tiene_seleccion());
+                if copiado.lineal && !hay_seleccion {
+                    editor.pegar_lineas(&copiado.texto);
+                } else {
+                    editor.insertar_texto(&copiado.texto);
+                }
+                None
+            }
+            _ => Some("Portapapeles vacío".to_string()),
+        },
+        _ => {
+            let cortar = id == "editor.cortar";
+            let copiado = if cortar { editor.cortar() } else { editor.texto_para_copiar() };
+            let lineas = portapapeles::describir_lineas(&copiado);
+            let resultado = estado.portapapeles.copiar(copiado, modo);
+            let verbo = if cortar { "Cortado" } else { "Copiado" };
+            Some(if resultado.salio_de_tcode() {
+                format!("{verbo}: {lineas}")
+            } else {
+                format!("{verbo}: {lineas} (solo dentro de tcode)")
+            })
+        }
+    };
+    if mensaje.is_some() {
+        layout.panel_activo_mut().mensaje_estado = mensaje;
     }
 }
 

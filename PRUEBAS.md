@@ -943,6 +943,33 @@ con `HOME` apuntando a una carpeta temporal para no tocar el estado real.
 - [ ] Un `pliegues.toml` corrupto (texto cualquiera) o sin permiso de escritura: tcode abre y cierra normal, sin errores visibles (solo no recuerda nada).
 - [ ] Abrir un archivo sin nada guardado: abre igual de rápido que antes (no se calcula la huella si no hay entrada).
 
+## Copiar, cortar y pegar con el portapapeles del sistema (`Ctrl+C`/`Ctrl+X`/`Ctrl+V`)
+
+Probar con `HOME` apuntando a una carpeta temporal, para no tocar la
+config real. **Estas pruebas pisan tu portapapeles real**: guardalo antes
+(`pbpaste > /tmp/porta.bak` en macOS) y restauralo al final
+(`pbcopy < /tmp/porta.bak`).
+
+- [ ] **Línea sin selección.** Con el cursor en una línea, sin selección, `Ctrl+C`: la barra dice "Copiado: 1 línea" y `pbpaste` (o `wl-paste`/`xclip -o`) devuelve la línea con su salto. `Ctrl+V` la duplica **arriba**, y el cursor queda en su línea.
+- [ ] **Selección.** Seleccionar una parte con `Shift+→` y `Ctrl+C`: se copia solo eso. `Ctrl+V` en otro lugar lo inserta ahí; con algo seleccionado, lo reemplaza.
+- [ ] **Multi-cursor.** Con `Ctrl+D` sobre tres ocurrencias, `Ctrl+C`: el portapapeles tiene las tres, una por línea. Con tres cursores sin selección (`Ctrl+Alt+↓`), copia las tres líneas.
+- [ ] **Cortar la línea.** `Ctrl+X` sin selección se lleva la línea entera ("Cortado: 1 línea"). En la última línea, sin salto final, no queda una línea vacía colgando. Un `Ctrl+Z` la devuelve.
+- [ ] **Cortar varias selecciones.** `Ctrl+X` con varias selecciones las borra todas, y un solo `Ctrl+Z` las restaura todas.
+- [ ] **Pegar desde otra app.** Copiar algo en otra app y `Ctrl+V` en tcode: se pega. Lo mismo dentro de tmux, sin `set-clipboard`.
+- [ ] **El pegado de la terminal sigue andando.** `Cmd+V` / `Ctrl+Shift+V` (bracketed paste) sigue pegando como antes, en un solo paso de deshacer.
+- [ ] **Explorador y CSV.** Con el foco en el explorador o en la vista de tabla de un CSV, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` no hacen nada.
+- [ ] **Modos del portapapeles.** En `Ctrl+,` → Editor → "Portapapeles del sistema", `←`/`→` rota entre Automático → Solo OSC 52 → Solo sistema → Desactivado, y `config.toml` guarda `portapapeles = "..."`.
+  - Con **Desactivado**: `Ctrl+C` dice "(solo dentro de tcode)", `pbpaste` no cambia, y `Ctrl+V` pega lo copiado en tcode.
+  - Con **Solo OSC 52**: `pbpaste` no cambia en Terminal.app, pero sí en una terminal con OSC 52 (iTerm2 con acceso al portapapeles habilitado, kitty, WezTerm...).
+- [ ] **OSC 52 en tmux.** Con `set -g set-clipboard on` y "Solo OSC 52", `Ctrl+C` llena el buffer de tmux (`tmux show-buffer`) y el portapapeles de la terminal de afuera.
+- [ ] **Por SSH.** A un servidor sin `DISPLAY` y en modo Automático, `Ctrl+C` llega al portapapeles de la máquina local vía OSC 52. `Ctrl+V` pega lo copiado en tcode.
+- [ ] **Acentos.** Copiar texto con acentos y emojis (`ñandú 😀`): llega bien a `pbpaste` y vuelve bien con `Ctrl+V`.
+- [ ] **Modo VIM, sin sincronizar (por defecto).** `yy` no toca el portapapeles del sistema, y `p` pega el registro interno.
+  - `"+yy` copia la línea al portapapeles ("Copiado: 1 línea").
+  - `"+p` pega lo que haya en el portapapeles, y después `p` sigue pegando el registro sin nombre de antes.
+  - `"a` avisa "Registro no soportado".
+- [ ] **Modo VIM, con "VIM: registro = portapapeles".** `yy`/`dd`/`x` van al portapapeles del sistema sin aviso, y `p` pega lo copiado en otra app (por líneas si termina en salto de línea).
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).
