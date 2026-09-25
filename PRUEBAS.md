@@ -1018,6 +1018,27 @@ proyecto y con `HOME` temporal. Si `HOME` es temporal, `rust-analyzer`
 - [ ] En la paleta (`F1`), "LSP: ..." lista las seis funciones.
 - [ ] Velocidad: en un `.py` de ~4500 líneas, pegar por tmux una ráfaga de ~500 caracteres (`send-keys` en tandas) tarda lo mismo que en `develop` (medido: ~390 ms las dos).
 
+## Edición de líneas: comentar, mover, duplicar, seleccionar todo, ir a línea (BACKLOG.md P0 #19)
+
+Con `HOME` apuntando a una carpeta temporal, en tmux (sin protocolo
+Kitty) y, si se puede, también en una terminal con Kitty (kitty, WezTerm,
+Ghostty).
+
+- [ ] **Comentar en Rust.** En un `.rs`, `Ctrl+/` sobre una línea indentada: queda `    // código` y el cursor sigue sobre el mismo texto. Otra vez: vuelve como estaba. En tmux (`Ctrl+/` llega como `Ctrl+7`) funciona igual; `Ctrl+K Ctrl+C` también.
+- [ ] **Bloque con sangrías distintas.** Seleccionar con `Shift+↓` tres líneas de distinta sangría con una en blanco al medio: los `//` quedan alineados a la sangría menor, la línea en blanco intacta; la línea donde quedó el cursor (columna 0) no se comenta. Un solo `Ctrl+Z` lo deshace todo.
+- [ ] **Mezcla.** Con una línea comentada y otra no, `Ctrl+/` comenta las dos (la que ya estaba queda `// // ...`).
+- [ ] **Otros lenguajes.** `.py`/`.toml`/`Makefile` usan `#`; `.sql`/`.lua` `--`; `.html`/`.md` envuelven cada línea en `<!-- -->`; `.css` en `/* */`. Descomentar los devuelve exactos.
+- [ ] **Sin lenguaje.** En un `.txt`, `.json` o "[Sin nombre]", `Ctrl+/` no cambia nada y la barra dice "No se sabe cómo comentar este tipo de archivo".
+- [ ] **Multi-cursor.** Con tres cursores (`Ctrl+Alt+↓`), `Ctrl+/` comenta las tres líneas; `Alt+↓` las baja juntas; `Shift+Alt+↓` las duplica.
+- [ ] **Mover.** `Alt+↑`/`Alt+↓` (o `Ctrl+K Shift+↑`/`Ctrl+K Shift+↓`) mueven la línea con el cursor en la misma columna; con una selección de varias líneas se mueven todas y la selección las acompaña. En la primera línea `Alt+↑` y en la última `Alt+↓` no hacen nada. En un archivo sin `\n` final, subir la última línea no agrega ni quita saltos de línea.
+- [ ] **Mover y plegado.** Plegar una función (`Ctrl+K [`), pararse en la línea de arriba y `Alt+↓`: salta la función entera, que sigue plegada. Pararse sobre la cabecera plegada y `Alt+↑`: sube la función entera, plegada.
+- [ ] **Duplicar.** `Shift+Alt+↓` (o `Ctrl+K Ctrl+D`; `Ctrl+Shift+D` solo con protocolo Kitty — en tmux llega como `Ctrl+D`) duplica la línea debajo con el cursor en la copia; con selección duplica las líneas enteras. `Ctrl+Z` en un paso.
+- [ ] **Seleccionar todo.** `Ctrl+A` selecciona todo el archivo (con varios cursores, queda uno); `Ctrl+C` copia el archivo entero.
+- [ ] **Ir a línea.** `Ctrl+G` abre "Ir a línea (1-N)". `12` + `Enter` va a la línea 12; `12:5` a la columna 5; `99999` a la última; `abc` muestra el error sin cerrar; `Esc` cancela; `Enter` vacío cierra sin moverse. Saltar a una línea dentro de un bloque plegado lo despliega. Pegar texto con el prompt abierto lo escribe en el prompt.
+- [ ] **Paleta.** En `F1`, "Editor: Comentar/descomentar líneas", "Editor: Mover línea(s) arriba/abajo", "Editor: Duplicar línea(s)", "Selección: Seleccionar todo" e "Ir: A la línea..." hacen lo mismo que los atajos.
+- [ ] **Modo VIM.** Con el modo VIM prendido, en Normal: `Ctrl+/`, `Alt+↑/↓`, `Shift+Alt+↓`, `Ctrl+A` y `Ctrl+G` funcionan igual; después de `Ctrl+G` se sigue en Normal.
+- [ ] **Explorador y CSV.** Con el foco en el explorador o en la vista de tabla de un CSV, ninguno de estos atajos toca el archivo (`Ctrl+K ↑/↓` sigue insertando filas en la tabla).
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).

@@ -8,6 +8,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Primeros pasos](#primeros-pasos)
 - [Atajos esenciales](#atajos-esenciales)
 - [Multi-cursor y selección](#multi-cursor-y-selección)
+- [Edición de líneas](#edición-de-líneas)
 - [Copiar, cortar y pegar](#copiar-cortar-y-pegar)
 - [Búsqueda y reemplazo](#búsqueda-y-reemplazo)
 - [Plegado de bloques](#plegado-de-bloques)
@@ -53,6 +54,11 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Pestaña siguiente / anterior (ver [Pestañas](#pestañas-de-archivos-abiertos)) |
 | `Ctrl+W` | Cerrar la pestaña activa |
 | `Tab` / `Shift+Tab` | Indentar / desindentar |
+| `Ctrl+A` | Seleccionar todo |
+| `Ctrl+G` | Ir a línea (`n` o `n:col`) |
+| `Ctrl+/` (o `Ctrl+K Ctrl+C`) | Comentar/descomentar las líneas del cursor o la selección (ver [Edición de líneas](#edición-de-líneas)) |
+| `Alt+↑` / `Alt+↓` | Mover la línea (o las de la selección) arriba/abajo |
+| `Shift+Alt+↓` (o `Ctrl+Shift+D`, `Ctrl+K Ctrl+D`) | Duplicar la línea (o las de la selección) debajo |
 | `Ctrl+B` | Mostrar/ocultar el explorador de archivos lateral |
 | `Ctrl+K J` | Salto rápido en el explorador (etiquetas de una tecla) |
 | `Ctrl+P` | Buscar archivo por nombre (difuso) |
@@ -101,6 +107,45 @@ cada uno extendiendo su propia selección de forma independiente.
 
 Con varios cursores activos, escribir/borrar/mover el cursor afecta a
 todos a la vez — igual que en VSCode o Sublime Text.
+
+## Edición de líneas
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+/` (o `Ctrl+K Ctrl+C`) | Comentar / descomentar |
+| `Alt+↑` / `Alt+↓` (o `Ctrl+K Shift+↑` / `Ctrl+K Shift+↓`) | Mover línea(s) arriba / abajo |
+| `Shift+Alt+↓` (o `Ctrl+Shift+D`, `Ctrl+K Ctrl+D`) | Duplicar línea(s) debajo |
+| `Ctrl+A` | Seleccionar todo |
+| `Ctrl+G` | Ir a línea: escribir `42` o `42:7` (línea:columna) y `Enter` |
+
+- **Sobre qué líneas actúan**: la del cursor, o todas las que toca la
+  selección. Si la selección termina al principio de una línea (lo que
+  deja `Shift+↓`), esa línea no cuenta. Con varios cursores, cada uno
+  actúa sobre las suyas, y todo se deshace con un solo `Ctrl+Z`.
+- **Comentar** usa el comentario del lenguaje según la extensión: `//`
+  (Rust, JS/TS, Go, C/C++, Java...), `#` (Python, Ruby, shell, TOML,
+  YAML, `Makefile`...), `--` (SQL, Lua), `;`, `%`... El prefijo se
+  alinea a la sangría mínima del bloque. Si todas las líneas ya están
+  comentadas, las descomenta; si no, las comenta todas. Las líneas en
+  blanco no se tocan. HTML, Markdown y XML usan `<!-- ... -->` y CSS
+  `/* ... */`, envolviendo **cada línea** por separado. En texto plano,
+  JSON o un archivo sin nombre no hace nada y lo avisa en la barra.
+- **Mover líneas** respeta el plegado: pasar sobre un bloque plegado lo
+  salta entero, y mover la cabecera de un bloque plegado mueve el bloque
+  completo, que sigue plegado. En la primera o la última línea no hace
+  nada.
+- **Duplicar** deja el cursor (y la selección) en la copia de abajo, así
+  que repetirlo sigue duplicando.
+- **Ir a línea** muestra el rango válido en el título; un número mayor
+  va a la última línea, y una columna más allá del final va al final de
+  esa línea.
+- **Terminales sin protocolo Kitty**: `Ctrl+/` suele llegar como
+  `Ctrl+7` o `Ctrl+_`, y las tres funcionan. `Ctrl+Shift+D` llega como
+  `Ctrl+D` (agregar ocurrencia): usá `Shift+Alt+↓` o `Ctrl+K Ctrl+D`.
+  En macOS, `Alt+↑/↓` necesitan que la terminal mande Option como Meta;
+  si no, están los chords con `Ctrl+K` y la paleta ("Editor: ...").
+- En modo VIM, los atajos con `Ctrl`/`Alt` funcionan igual en modo
+  Normal.
 
 ## Copiar, cortar y pegar
 

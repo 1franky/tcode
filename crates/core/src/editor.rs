@@ -5,6 +5,7 @@ use anyhow::Result;
 
 use crate::buffer::Buffer;
 use crate::busqueda::{buscar_coincidencias, OpcionesBusqueda};
+use crate::comentarios::EstiloComentario;
 use crate::cursor::{Cursor, CursorMultiple};
 use crate::history::Historia;
 use crate::plegado::{tramo_que_oculta, Plegado, Pliegue};
@@ -670,6 +671,250 @@ impl Editor {
         lineas
     }
 
+    /// Tramos de líneas enteras sobre los que actúan comentar, mover y
+    /// duplicar líneas (BACKLOG.md P0 #19): el de cada cursor (su línea,
+    /// o todas las que toca su selección), ordenados y fusionados cuando
+    /// se solapan o se tocan — dos cursores en líneas vecinas se mueven
+    /// juntos, como un solo bloque. Con `extender_pliegues`, una última
+    /// línea que es la cabecera de un bloque plegado arrastra todo lo que
+    /// oculta: lo que en pantalla se ve como una línea se mueve o duplica
+    /// entero.
+    fn bloques_de_lineas(&self, extender_pliegues: bool) -> Vec<Range<usize>> {
+        let mut bloques: Vec<Range<usize>> = self.cursores.iter().map(lineas_de_cursor).collect();
+        if extender_pliegues && !self.plegado.esta_vacio() {
+            let tramos = self.plegado.tramos_ocultos();
+            for bloque in &mut bloques {
+                if let Some(tramo) = tramos.iter().find(|t| t.start == bloque.end) {
+                    bloque.end = tramo.end;
+                }
+            }
+        }
+        bloques.sort_by_key(|b| (b.start, b.end));
+        let mut fusionados: Vec<Range<usize>> = Vec::with_capacity(bloques.len());
+        for bloque in bloques {
+            match fusionados.last_mut() {
+                Some(anterior) if bloque.start <= anterior.end => anterior.end = anterior.end.max(bloque.end),
+                _ => fusionados.push(bloque),
+            }
+        }
+        fusionados
+    }
+
+    /// `Ctrl+/` (BACKLOG.md P0 #19): comenta o descomenta las líneas de
+    /// cada cursor/selección, como UNA sola edición (un `Ctrl+Z`). Si
+    /// TODAS las líneas no vacías de todos los cursores ya están
+    /// comentadas, las descomenta; si no, las comenta todas (así una
+    /// mezcla queda uniforme en vez de invertirse línea por línea, igual
+    /// que VSCode). Las líneas en blanco no cuentan ni se tocan.
+    ///
+    /// Con comentario de línea, el prefijo va alineado a la sangría
+    /// mínima de cada bloque (`// ` con un espacio), así el bloque
+    /// comentado sigue viéndose indentado; al descomentar se quita el
+    /// prefijo y un espacio después, si lo hay. Con comentario de bloque
+    /// (HTML, CSS) se envuelve cada línea por separado (ver
+    /// [`EstiloComentario::Bloque`]). Devuelve si cambió algo (`false`
+    /// si solo había líneas en blanco).
+    pub fn alternar_comentario(&mut self, estilo: EstiloComentario) -> bool {
+        let bloques: Vec<Vec<(usize, String)>> = self
+            .bloques_de_lineas(false)
+            .into_iter()
+            .map(|bloque| {
+                bloque
+                    .filter_map(|linea| {
+                        let texto = self.buffer.linea_texto(linea);
+                        (!texto.trim().is_empty()).then_some((linea, texto))
+                    })
+                    .collect()
+            })
+            .collect();
+        if bloques.iter().all(Vec::is_empty) {
+            return false;
+        }
+        let descomentar = bloques.iter().flatten().all(|(_, texto)| esta_comentada(texto, estilo));
+
+        let mut ediciones: Vec<(Range<usize>, String)> = Vec::new();
+        for bloque in &bloques {
+            let sangria = bloque.iter().map(|(_, t)| t.chars().take_while(|c| c.is_whitespace()).count()).min();
+            for (linea, texto) in bloque {
+                let base = self.buffer.inicio_byte_linea(*linea);
+                // Principio y fin (bytes) del texto sin los espacios de
+                // los costados.
+                let inicio = texto.len() - texto.trim_start().len();
+                let fin = texto.trim_end().len();
+                match (estilo, descomentar) {
+                    (EstiloComentario::Linea(prefijo), true) => {
+                        let mut hasta = inicio + prefijo.len();
+                        if texto[hasta..].starts_with(' ') {
+                            hasta += 1;
+                        }
+                        ediciones.push((base + inicio..base + hasta, String::new()));
+                    }
+                    (EstiloComentario::Bloque(apertura, cierre), true) => {
+                        let mut hasta = inicio + apertura.len();
+                        let mut desde = fin - cierre.len();
+                        if hasta < desde && texto[hasta..].starts_with(' ') {
+                            hasta += 1;
+                        }
+                        if desde > hasta && texto[..desde].ends_with(' ') {
+                            desde -= 1;
+                        }
+                        ediciones.push((base + inicio..base + hasta, String::new()));
+                        ediciones.push((base + desde..base + fin, String::new()));
+                    }
+                    (_, false) => {
+                        let columna = sangria.unwrap_or(0);
+                        let en = texto.char_indices().nth(columna).map_or(texto.len(), |(i, _)| i);
+                        let (apertura, cierre) = match estilo {
+                            EstiloComentario::Linea(prefijo) => (prefijo, None),
+                            EstiloComentario::Bloque(apertura, cierre) => (apertura, Some(cierre)),
+                        };
+                        ediciones.push((base + en..base + en, format!("{apertura} ")));
+                        if let Some(cierre) = cierre {
+                            ediciones.push((base + fin..base + fin, format!(" {cierre}")));
+                        }
+                    }
+                }
+            }
+        }
+        self.aplicar_ediciones(&ediciones)
+    }
+
+    /// `Alt+↑` (BACKLOG.md P0 #19): sube una línea la línea de cada
+    /// cursor (o las de su selección), con el cursor y la selección
+    /// acompañándola. Ver `mover_lineas`.
+    pub fn mover_lineas_arriba(&mut self) -> bool {
+        self.mover_lineas(false)
+    }
+
+    /// `Alt+↓`: igual que `mover_lineas_arriba`, hacia abajo.
+    pub fn mover_lineas_abajo(&mut self) -> bool {
+        self.mover_lineas(true)
+    }
+
+    /// Intercambia cada bloque de líneas (`bloques_de_lineas`, con los
+    /// pliegues extendidos) con la línea VISIBLE de al lado: si esa línea
+    /// es la cabecera de un bloque plegado, el bloque movido salta el
+    /// bloque plegado entero en vez de meterse adentro; y un bloque
+    /// plegado que se mueve sigue plegado (`Plegado::intercambiar`). Es
+    /// UNA edición (un `Ctrl+Z`). Si algún bloque ya está en el borde (la
+    /// primera línea hacia arriba, la última hacia abajo) no se mueve
+    /// ninguno — mover solo algunos desarmaría la forma de un
+    /// multi-cursor. Devuelve si movió algo.
+    ///
+    /// No pasa por `reemplazar_y_ajustar_pliegues`: esa despliega todo
+    /// pliegue que la edición toca, y acá justamente el contenido de las
+    /// líneas no cambia, solo se reordena — los pliegues se ajustan con
+    /// `Plegado::intercambiar`.
+    fn mover_lineas(&mut self, abajo: bool) -> bool {
+        let bloques = self.bloques_de_lineas(true);
+        let num_lineas = self.buffer.num_lineas();
+        let tramos = self.plegado.tramos_ocultos();
+        // Por bloque, los dos tramos contiguos a intercambiar (el de
+        // arriba primero).
+        let mut pares: Vec<(Range<usize>, Range<usize>)> = Vec::with_capacity(bloques.len());
+        for bloque in &bloques {
+            if abajo {
+                if bloque.end >= num_lineas {
+                    return false;
+                }
+                let fin = tramos.iter().find(|t| t.start == bloque.end + 1).map_or(bloque.end + 1, |t| t.end);
+                pares.push((bloque.clone(), bloque.end..fin));
+            } else {
+                if bloque.start == 0 {
+                    return false;
+                }
+                let inicio = tramo_que_oculta(&tramos, bloque.start - 1).map_or(bloque.start - 1, |t| t.start - 1);
+                pares.push((inicio..bloque.start, bloque.clone()));
+            }
+        }
+        if pares.windows(2).any(|par| par[0].1.end > par[1].0.start) {
+            return false;
+        }
+
+        self.registrar_snapshot();
+        // De abajo hacia arriba, aunque la cantidad de líneas no cambia:
+        // así los offsets de bytes de los pares que faltan siguen valiendo.
+        for (primero, segundo) in pares.iter().rev() {
+            let inicio = self.buffer.inicio_byte_linea(primero.start);
+            let hay_mas = segundo.end < num_lineas;
+            let fin = if hay_mas { self.buffer.inicio_byte_linea(segundo.end) } else { self.buffer.len_bytes() };
+            // Unidas por `\n` y con salto final solo si había más líneas
+            // después: la última línea de un archivo sin `\n` final sigue
+            // sin tenerlo, aunque ahora sea otra.
+            let lineas: Vec<String> = segundo.clone().chain(primero.clone()).map(|l| self.buffer.linea_texto(l)).collect();
+            let mut nuevo = lineas.join("\n");
+            if hay_mas {
+                nuevo.push('\n');
+            }
+            self.buffer.reemplazar_rango_bytes(inicio, fin, &nuevo);
+            self.plegado.intercambiar(primero.clone(), segundo.clone());
+        }
+
+        for c in &mut self.cursores {
+            let linea = lineas_de_cursor(c).start;
+            let Some(i) = bloques.iter().position(|b| b.contains(&linea)) else { continue };
+            let (primero, segundo) = &pares[i];
+            let delta = if abajo { segundo.len() as isize } else { -(primero.len() as isize) };
+            // Los dos extremos, incluido uno que queda en la columna 0 de
+            // la línea siguiente al bloque (fuera de él): sigue marcando
+            // "hasta el final del bloque" en su nueva posición.
+            c.ancla.linea = c.ancla.linea.saturating_add_signed(delta);
+            c.cursor.linea = c.cursor.linea.saturating_add_signed(delta);
+            c.recortar(&self.buffer);
+        }
+        self.revelar_cursores();
+        true
+    }
+
+    /// `Shift+Alt+↓` (BACKLOG.md P0 #19): duplica la línea de cada
+    /// cursor (o las líneas enteras que toca su selección, con los
+    /// bloques plegados completos) justo debajo, como UNA edición. El
+    /// cursor y la selección pasan a la copia de abajo, como en VSCode —
+    /// repetirlo sigue duplicando hacia abajo.
+    ///
+    /// La copia se inserta en realidad ARRIBA del original (idéntico en
+    /// el texto): así el original, con sus pliegues, solo se corre hacia
+    /// abajo (`reemplazar_y_ajustar_pliegues` con una inserción en la
+    /// columna 0), y la copia nueva queda desplegada.
+    pub fn duplicar_lineas(&mut self) {
+        let bloques = self.bloques_de_lineas(true);
+        self.registrar_snapshot();
+        for bloque in bloques.iter().rev() {
+            let mut copia = bloque.clone().map(|l| self.buffer.linea_texto(l)).collect::<Vec<_>>().join("\n");
+            copia.push('\n');
+            let inicio = self.buffer.inicio_byte_linea(bloque.start);
+            self.reemplazar_y_ajustar_pliegues(inicio..inicio, &copia);
+        }
+        for c in &mut self.cursores {
+            let linea = lineas_de_cursor(c).start;
+            let delta: usize = bloques.iter().filter(|b| b.start <= linea).map(|b| b.len()).sum();
+            c.ancla.linea += delta;
+            c.cursor.linea += delta;
+        }
+        self.revelar_cursores();
+    }
+
+    /// `Ctrl+A` (BACKLOG.md P0 #19): un solo cursor al final del
+    /// documento con la selección desde el principio. Si el final cae
+    /// dentro de un bloque plegado, ese bloque se despliega (igual que
+    /// cualquier otro salto del cursor).
+    pub fn seleccionar_todo(&mut self) {
+        let mut fin = Cursor::nuevo();
+        fin.fin_archivo(&self.buffer);
+        self.cursores = vec![CursorMultiple { ancla: Cursor::nuevo(), cursor: fin }];
+        self.revelar_cursores();
+    }
+
+    /// `Ctrl+G` (BACKLOG.md P0 #19): lleva el cursor (uno solo, sin
+    /// selección) a `linea`/`columna`, en base cero, recortadas al
+    /// documento y al largo de esa línea. Despliega lo que la oculte
+    /// (`mover_cursor_a_byte`).
+    pub fn ir_a_linea(&mut self, linea: usize, columna: usize) {
+        let linea = linea.min(self.buffer.num_lineas().saturating_sub(1));
+        let offset = self.buffer.offset_byte(linea, columna);
+        self.mover_cursor_a_byte(offset);
+    }
+
     /// `Ctrl+D` (PLAN.md §11 M3): si el cursor principal no tiene
     /// selección, selecciona la palabra bajo ese cursor (sin agregar
     /// ninguno nuevo todavía — la primera pulsación solo marca la
@@ -1003,6 +1248,33 @@ enum Salto {
 impl Default for Editor {
     fn default() -> Self {
         Self::nuevo()
+    }
+}
+
+/// Líneas enteras `[inicio, fin)` que toca un cursor: la suya sin
+/// selección, o todas las de la selección — salvo la última si la
+/// selección termina en su columna 0 (seleccionar líneas enteras con
+/// `Shift+↓` deja el cursor ahí, y esa línea no se ve seleccionada),
+/// igual que VSCode.
+fn lineas_de_cursor(c: &CursorMultiple) -> Range<usize> {
+    let (a, b) = if (c.ancla.linea, c.ancla.columna) <= (c.cursor.linea, c.cursor.columna) {
+        (c.ancla, c.cursor)
+    } else {
+        (c.cursor, c.ancla)
+    };
+    let fin = if b.linea > a.linea && b.columna == 0 { b.linea } else { b.linea + 1 };
+    a.linea..fin
+}
+
+/// Si `texto` (una línea no vacía) ya está comentada con `estilo`,
+/// ignorando la sangría y los espacios del final.
+fn esta_comentada(texto: &str, estilo: EstiloComentario) -> bool {
+    let texto = texto.trim();
+    match estilo {
+        EstiloComentario::Linea(prefijo) => texto.starts_with(prefijo),
+        EstiloComentario::Bloque(apertura, cierre) => {
+            texto.len() >= apertura.len() + cierre.len() && texto.starts_with(apertura) && texto.ends_with(cierre)
+        }
     }
 }
 
@@ -1664,5 +1936,224 @@ mod tests {
         editor.seleccionar_abajo();
         editor.borrar_atras();
         assert!(editor.plegado().esta_vacio());
+    }
+
+    // --- Edición básica (BACKLOG.md P0 #19) ---
+
+    const RUST: EstiloComentario = EstiloComentario::Linea("//");
+
+    #[test]
+    fn comentar_alinea_a_la_sangria_minima_y_descomentar_lo_revierte() {
+        let mut editor = editor_con("fn a() {\n    x\n\n        y\n}");
+        editor.fijar_seleccion(Cursor { linea: 1, columna: 2 }, Cursor { linea: 3, columna: 3 });
+        assert!(editor.alternar_comentario(RUST));
+        // La línea en blanco no se toca.
+        assert_eq!(editor.buffer().a_texto(), "fn a() {\n    // x\n\n    //     y\n}");
+        assert!(editor.alternar_comentario(RUST));
+        assert_eq!(editor.buffer().a_texto(), "fn a() {\n    x\n\n        y\n}");
+    }
+
+    #[test]
+    fn comentar_una_mezcla_comenta_todas_y_se_deshace_en_un_paso() {
+        let mut editor = editor_con("# ya\nno\n");
+        editor.fijar_seleccion(Cursor { linea: 0, columna: 0 }, Cursor { linea: 1, columna: 2 });
+        assert!(editor.alternar_comentario(EstiloComentario::Linea("#")));
+        assert_eq!(editor.buffer().a_texto(), "# # ya\n# no\n");
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "# ya\nno\n");
+    }
+
+    #[test]
+    fn comentar_sin_seleccion_mueve_el_cursor_con_el_texto() {
+        let mut editor = editor_con_cursor("  select 1;", 0, 4);
+        editor.alternar_comentario(EstiloComentario::Linea("--"));
+        assert_eq!(editor.buffer().a_texto(), "  -- select 1;");
+        assert_eq!(editor.cursor(), Cursor { linea: 0, columna: 7 });
+        // Descomentar sin espacio después del prefijo también anda.
+        let mut editor = editor_con(";sin espacio");
+        editor.alternar_comentario(EstiloComentario::Linea(";"));
+        assert_eq!(editor.buffer().a_texto(), "sin espacio");
+    }
+
+    #[test]
+    fn comentar_con_bloque_envuelve_cada_linea() {
+        let html = EstiloComentario::Bloque("<!--", "-->");
+        let mut editor = editor_con("<p>\n  <b>x</b>\n</p>");
+        editor.seleccionar_todo();
+        editor.alternar_comentario(html);
+        assert_eq!(editor.buffer().a_texto(), "<!-- <p> -->\n<!--   <b>x</b> -->\n<!-- </p> -->");
+        editor.seleccionar_todo();
+        editor.alternar_comentario(html);
+        assert_eq!(editor.buffer().a_texto(), "<p>\n  <b>x</b>\n</p>");
+        let mut editor = editor_con("/*a*/");
+        editor.alternar_comentario(EstiloComentario::Bloque("/*", "*/"));
+        assert_eq!(editor.buffer().a_texto(), "a");
+    }
+
+    #[test]
+    fn comentar_con_multicursor_y_seleccion_que_termina_en_columna_cero() {
+        let mut editor = editor_con("a\nb\nc\nd");
+        // Seleccionar "a" y "b" enteras con Shift+↓ deja el cursor en la
+        // columna 0 de "c": "c" no se comenta.
+        editor.seleccionar_abajo();
+        editor.seleccionar_abajo();
+        editor.alternar_comentario(RUST);
+        assert_eq!(editor.buffer().a_texto(), "// a\n// b\nc\nd");
+        let mut editor = editor_con("a\nb\nc\nd");
+        editor.agregar_cursor_abajo();
+        editor.agregar_cursor_abajo();
+        editor.agregar_cursor_abajo();
+        editor.alternar_comentario(RUST);
+        assert_eq!(editor.buffer().a_texto(), "// a\n// b\n// c\n// d");
+    }
+
+    #[test]
+    fn comentar_solo_lineas_en_blanco_no_hace_nada() {
+        let mut editor = editor_con("   \n");
+        assert!(!editor.alternar_comentario(RUST));
+        editor.deshacer();
+        // Nada que deshacer de más: solo quedaba el insertar_texto inicial.
+        assert_eq!(editor.buffer().a_texto(), "");
+    }
+
+    #[test]
+    fn mover_linea_abajo_y_arriba_con_el_cursor() {
+        let mut editor = editor_con_cursor("uno\ndos\ntres\n", 0, 2);
+        assert!(editor.mover_lineas_abajo());
+        assert_eq!(editor.buffer().a_texto(), "dos\nuno\ntres\n");
+        assert_eq!(editor.cursor(), Cursor { linea: 1, columna: 2 });
+        assert!(editor.mover_lineas_arriba());
+        assert_eq!(editor.buffer().a_texto(), "uno\ndos\ntres\n");
+        // Primera línea hacia arriba: no hace nada ni deja un paso vacío.
+        assert!(!editor.mover_lineas_arriba());
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "dos\nuno\ntres\n");
+    }
+
+    #[test]
+    fn mover_la_ultima_linea_de_un_archivo_sin_salto_final() {
+        let mut editor = editor_con_cursor("a\nb", 1, 1);
+        assert!(!editor.mover_lineas_abajo());
+        assert!(editor.mover_lineas_arriba());
+        assert_eq!(editor.buffer().a_texto(), "b\na");
+        assert_eq!(editor.cursor(), Cursor { linea: 0, columna: 1 });
+        assert!(editor.mover_lineas_abajo());
+        assert_eq!(editor.buffer().a_texto(), "a\nb");
+    }
+
+    #[test]
+    fn mover_una_seleccion_de_varias_lineas_la_conserva() {
+        let mut editor = editor_con("a\nb\nc\nd\n");
+        editor.fijar_seleccion(Cursor { linea: 0, columna: 0 }, Cursor { linea: 2, columna: 0 });
+        assert!(editor.mover_lineas_abajo());
+        assert_eq!(editor.buffer().a_texto(), "c\na\nb\nd\n");
+        assert_eq!(editor.cursores()[0].ancla, Cursor { linea: 1, columna: 0 });
+        assert_eq!(editor.cursores()[0].cursor, Cursor { linea: 3, columna: 0 });
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "a\nb\nc\nd\n");
+    }
+
+    #[test]
+    fn mover_con_multicursor_mueve_cada_bloque() {
+        let mut editor = editor_con("1\n2\n3\n4\n5");
+        let offset = editor.buffer().offset_byte(1, 0);
+        editor.mover_cursor_a_byte(offset);
+        editor.agregar_cursor_abajo(); // líneas 1 y 2: un solo bloque
+        assert!(editor.mover_lineas_abajo());
+        assert_eq!(editor.buffer().a_texto(), "1\n4\n2\n3\n5");
+        let lineas: Vec<usize> = editor.cursores().iter().map(|c| c.cursor.linea).collect();
+        assert_eq!(lineas, vec![2, 3]);
+        // Dos cursores separados: cada uno sube su línea.
+        let mut editor = editor_con("1\n2\n3\n4");
+        let offset = editor.buffer().offset_byte(1, 0);
+        editor.mover_cursor_a_byte(offset);
+        editor.agregar_cursor_abajo();
+        editor.agregar_cursor_abajo();
+        editor.cursores.remove(1); // quedan las líneas 1 y 3
+        assert!(editor.mover_lineas_arriba());
+        assert_eq!(editor.buffer().a_texto(), "2\n1\n4\n3");
+    }
+
+    #[test]
+    fn mover_sobre_un_bloque_plegado_lo_salta_entero_y_lo_deja_plegado() {
+        // 0: antes   1..=4: BLOQUE, con 1..=3 plegado   5: fin
+        let mut editor = editor_con(&format!("antes\n{BLOQUE}"));
+        let offset = editor.buffer().offset_byte(1, 0);
+        editor.mover_cursor_a_byte(offset);
+        editor.plegar_en_cursor(&[Pliegue { inicio: 1, fin: 3 }]);
+        editor.inicio_archivo();
+        assert!(editor.mover_lineas_abajo());
+        assert_eq!(editor.buffer().a_texto(), "fn a() {\n    x\n    y\nantes\n}\nfin");
+        assert_eq!(editor.plegado().pliegues(), &[Pliegue { inicio: 0, fin: 2 }]);
+        assert_eq!(editor.cursor().linea, 3);
+        // Mover la cabecera plegada mueve el bloque entero, plegado.
+        editor.inicio_archivo();
+        assert!(editor.mover_lineas_abajo());
+        assert_eq!(editor.buffer().a_texto(), "antes\nfn a() {\n    x\n    y\n}\nfin");
+        assert_eq!(editor.plegado().pliegues(), &[Pliegue { inicio: 1, fin: 3 }]);
+        assert_eq!(editor.cursor().linea, 1);
+    }
+
+    #[test]
+    fn duplicar_la_linea_deja_el_cursor_en_la_copia_de_abajo() {
+        let mut editor = editor_con_cursor("uno\ndos", 1, 2);
+        editor.duplicar_lineas();
+        assert_eq!(editor.buffer().a_texto(), "uno\ndos\ndos");
+        assert_eq!(editor.cursor(), Cursor { linea: 2, columna: 2 });
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "uno\ndos");
+    }
+
+    #[test]
+    fn duplicar_una_seleccion_y_con_multicursor() {
+        let mut editor = editor_con("a\nb\nc\n");
+        editor.fijar_seleccion(Cursor { linea: 0, columna: 0 }, Cursor { linea: 2, columna: 0 });
+        editor.duplicar_lineas();
+        assert_eq!(editor.buffer().a_texto(), "a\nb\na\nb\nc\n");
+        assert_eq!(editor.cursores()[0].ancla, Cursor { linea: 2, columna: 0 });
+        assert_eq!(editor.cursores()[0].cursor, Cursor { linea: 4, columna: 0 });
+        let mut editor = editor_con("a\nb\nc");
+        editor.agregar_cursor_abajo();
+        editor.agregar_cursor_abajo();
+        editor.cursores.remove(1); // líneas 0 y 2
+        editor.duplicar_lineas();
+        assert_eq!(editor.buffer().a_texto(), "a\na\nb\nc\nc");
+        let lineas: Vec<usize> = editor.cursores().iter().map(|c| c.cursor.linea).collect();
+        assert_eq!(lineas, vec![1, 4]);
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "a\nb\nc");
+    }
+
+    #[test]
+    fn duplicar_una_cabecera_plegada_duplica_el_bloque_y_conserva_el_pliegue() {
+        let mut editor = editor_con(BLOQUE);
+        editor.plegar_en_cursor(&[Pliegue { inicio: 0, fin: 3 }]);
+        editor.duplicar_lineas();
+        assert_eq!(editor.buffer().a_texto(), "fn a() {\n    x\n    y\n}\nfn a() {\n    x\n    y\n}\nfin");
+        assert_eq!(editor.plegado().pliegues(), &[Pliegue { inicio: 4, fin: 7 }]);
+        assert_eq!(editor.cursor().linea, 4);
+    }
+
+    #[test]
+    fn seleccionar_todo_colapsa_los_cursores() {
+        let mut editor = editor_con_cursor("uno\ndos", 1, 1);
+        editor.agregar_cursor_arriba();
+        editor.seleccionar_todo();
+        assert_eq!(editor.cursores().len(), 1);
+        assert_eq!(editor.texto_para_copiar().texto, "uno\ndos");
+        let mut vacio = Editor::nuevo();
+        vacio.seleccionar_todo();
+        assert!(!vacio.cursores()[0].tiene_seleccion());
+    }
+
+    #[test]
+    fn ir_a_linea_recorta_la_columna_y_despliega() {
+        let mut editor = editor_con(BLOQUE);
+        editor.plegar_en_cursor(&[Pliegue { inicio: 0, fin: 2 }]);
+        editor.ir_a_linea(1, 99);
+        assert_eq!(editor.cursor(), Cursor { linea: 1, columna: 5 });
+        assert!(editor.plegado().esta_vacio());
+        editor.ir_a_linea(500, 0);
+        assert_eq!(editor.cursor(), Cursor { linea: 4, columna: 0 });
     }
 }

@@ -169,6 +169,30 @@
 "Ctrl+V"        = "editor.pegar"
 "Ctrl+Alt+Up"   = "cursor.agregar_arriba"
 "Ctrl+Alt+Down" = "cursor.agregar_abajo"
+# Edición básica (BACKLOG.md P0 #19). Seleccionar todo e ir a línea
+# usan Ctrl+letra (código de control propio, andan en cualquier
+# terminal). Comentar: Ctrl+/ manda el byte 0x1F en terminales clásicos,
+# que crossterm entrega como Ctrl+7 (y algunos como Ctrl+_) — las tres
+# variantes van al mismo comando. "Ctrl+K /" ya es filtrar en la vista
+# CSV, así que la alternativa universal es "Ctrl+K Ctrl+C" (la de
+# VSCode para comentar). Alt+↑/↓ llegan en xterm/tmux (en macOS la
+# terminal tiene que mandar Option como Meta); Ctrl+Shift+D sin protocolo
+# Kitty llega como Ctrl+D (seleccionar ocurrencia) — por eso también
+# Shift+Alt+↓ y los chords "Ctrl+K Shift+↑/↓" (mover; "Ctrl+K ↑/↓" ya
+# insertan filas en el CSV) y "Ctrl+K Ctrl+D" (duplicar).
+"Ctrl+A"            = "editor.seleccionar_todo"
+"Ctrl+G"            = "editor.ir_a_linea"
+"Ctrl+/"            = "editor.alternar_comentario"
+"Ctrl+7"            = "editor.alternar_comentario"
+"Ctrl+_"            = "editor.alternar_comentario"
+"Ctrl+K Ctrl+C"     = "editor.alternar_comentario"
+"Alt+Up"            = "editor.mover_lineas_arriba"
+"Alt+Down"          = "editor.mover_lineas_abajo"
+"Ctrl+K Shift+Up"   = "editor.mover_lineas_arriba"
+"Ctrl+K Shift+Down" = "editor.mover_lineas_abajo"
+"Ctrl+Shift+D"      = "editor.duplicar_lineas"
+"Shift+Alt+Down"    = "editor.duplicar_lineas"
+"Ctrl+K Ctrl+D"     = "editor.duplicar_lineas"
 
 [editor]
 # Plegado de bloques (PLAN.md §4, BACKLOG.md P2 #7).

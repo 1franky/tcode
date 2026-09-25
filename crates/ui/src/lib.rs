@@ -16,6 +16,7 @@ mod panel_busqueda;
 pub mod panel_busqueda_proyecto;
 mod panel_confirmar_borrado;
 mod panel_guardar_como;
+pub mod panel_ir_a_linea;
 pub mod panel_linea_vim;
 mod panel_logs_lsp;
 pub mod panel_lsp;
