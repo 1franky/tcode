@@ -82,6 +82,12 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "plegar.todo", descripcion: "Plegado: Plegar todo" },
         Comando { id: "buscar.en_proyecto", descripcion: "Buscar: En todo el proyecto (y reemplazar)" },
         Comando { id: "simbolos.ir_a", descripcion: "Ir: Símbolo del archivo (funciones, clases...)" },
+        Comando { id: "lsp.ir_a_definicion", descripcion: "LSP: Ir a la definición" },
+        Comando { id: "lsp.volver", descripcion: "LSP: Volver a donde se estaba antes de saltar" },
+        Comando { id: "lsp.referencias", descripcion: "LSP: Buscar referencias" },
+        Comando { id: "lsp.hover", descripcion: "LSP: Mostrar tipo y documentación (hover)" },
+        Comando { id: "lsp.completar", descripcion: "LSP: Autocompletar" },
+        Comando { id: "lsp.renombrar", descripcion: "LSP: Renombrar símbolo" },
         Comando { id: "plegar.desplegar_todo", descripcion: "Plegado: Desplegar todo" },
     ]
 }

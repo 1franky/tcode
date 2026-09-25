@@ -62,6 +62,11 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+Shift+F` (o `Ctrl+K B`) | Buscar (y reemplazar) en todo el proyecto (ver [Buscar en todo el proyecto](#buscar-en-todo-el-proyecto)) |
 | `Ctrl+,` o `Ctrl+K A` | Panel de administración |
 | `Ctrl+K R` | Ver logs del LSP del lenguaje del archivo activo |
+| `F12` (o `Ctrl+K D`) / `Alt+←` (o `Ctrl+K H`) | Ir a la definición / volver (ver [LSP](#navegación-autocompletado-y-renombrar)) |
+| `Shift+F12` (o `Ctrl+K U`) | Buscar referencias |
+| `Ctrl+K I` | Tipo y documentación del símbolo bajo el cursor (hover) |
+| `Ctrl+Espacio` (o `Ctrl+K Espacio`) | Autocompletar |
+| `F2` (o `Ctrl+K Shift+R`) | Renombrar símbolo (en la tabla de un CSV, `F2` edita la celda) |
 | `Ctrl+K Ctrl+T` | Selector de temas (con preview en vivo) |
 | `Ctrl+K Ctrl+L` | Recargar `config.toml`/`keymap.toml` sin reiniciar |
 
@@ -779,6 +784,53 @@ incluidas.
 Si el servidor lo soporta (pyright, por ejemplo), `tcode` le manda solo
 lo que cambió en cada edición en vez del archivo entero — con archivos
 de miles de líneas, tipear no se frena por el LSP.
+
+### Navegación, autocompletado y renombrar
+
+Si el servidor del lenguaje lo soporta (lo anuncia al arrancar; si no,
+el atajo solo deja un aviso corto en la barra de estado, como "el LSP no
+soporta renombrar"):
+
+| Atajo | Acción |
+|---|---|
+| `F12` o `Ctrl+K D` | **Ir a la definición** del símbolo bajo el cursor. Si está en otro archivo, se abre en una pestaña nueva (o se activa la que ya lo tenía). Con varias definiciones, lista para elegir (se filtra escribiendo, `Enter` salta). |
+| `Alt+←` o `Ctrl+K H` | **Volver** a donde estaba el cursor antes del último salto (se recuerdan los últimos 50; también cuenta saltar desde las referencias). En macOS, `Alt+←` necesita que la terminal mande Option como Meta. |
+| `Shift+F12` o `Ctrl+K U` | **Buscar referencias**: lista de `archivo:línea  código` (incluida la declaración), filtrable, `Enter` salta. |
+| `Ctrl+K I` | **Hover**: tipo y documentación del símbolo bajo el cursor en un recuadro debajo (el markdown se muestra como texto, hasta 20 líneas). Se cierra con cualquier tecla. |
+| `Ctrl+Espacio` o `Ctrl+K Espacio` | **Autocompletar** a mano. |
+| `F2` o `Ctrl+K Shift+R` | **Renombrar símbolo**: pide el nombre nuevo (precargado con el actual), `Enter` confirma. |
+
+**Autocompletado**: además de a mano, la lista aparece sola al tipear un
+carácter de disparo del servidor (el `.` de un método, `::` en Rust) o
+al hacer una pausa corta en medio de un nombre. Sale debajo del cursor
+con el nombre, el tipo (`fn`, `método`, `var`, `clase`...) y la firma;
+seguir escribiendo la filtra, `↑`/`↓` eligen, `Tab` o `Enter` aceptan y
+`Esc` la cierra (cualquier otra tecla que no sea parte del nombre
+también). Aceptar reemplaza lo escrito de la palabra por el item (más un
+`use`/`import` si el servidor lo agrega) en un solo paso: un `Ctrl+Z` lo
+deshace entero. Sin la lista abierta, `Tab` indenta como siempre. Los
+snippets se insertan como texto plano: `tcode` no tiene saltos entre
+placeholders, así que `foo(${1:a})` queda `foo(a)` y el cursor al final
+(igual, `tcode` le pide al servidor texto sin snippets, y rust-analyzer y
+pyright lo respetan). Solo con un cursor (no con multi-cursor) y, en modo
+VIM, en modo Insertar. Pedir la lista nunca frena el tipeo: se pide en
+segundo plano y, si llega cuando ya se siguió escribiendo otra cosa, se
+descarta.
+
+**Renombrar** aplica los cambios del servidor en todos los archivos que
+toque: los que ya están abiertos (en cualquier pestaña o panel) se editan
+ahí, un paso de deshacer por archivo; los que no, **se abren en pestañas
+nuevas con los cambios sin guardar** — `tcode` nunca escribe al disco un
+renombrado sin que se vea: revisalos y guardá (o deshacé) cada uno. La
+barra de estado dice cuántos cambios hubo y cuántos archivos se abrieron.
+Si el servidor pide además crear, renombrar o borrar archivos (renombrar
+un módulo, por ejemplo), no se aplica nada. Si el archivo cambió mientras
+se esperaba la respuesta, tampoco: hay que pedirlo de nuevo.
+
+Todas están también en la paleta de comandos (categoría "LSP"). El
+servidor recibe como carpeta del proyecto el directorio desde el que se
+lanzó `tcode` (pyright, por ejemplo, la necesita para renombrar en más de
+un archivo).
 
 ### Formatear al guardar
 

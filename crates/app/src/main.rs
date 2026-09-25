@@ -16,6 +16,7 @@
 //! (`lsp.rs`) sin bloquear ninguno de los dos.
 
 mod formateador;
+mod funciones_lsp;
 mod lsp;
 mod pliegues;
 mod portapapeles;
@@ -368,6 +369,10 @@ struct EstadoApp {
     /// solo en lo que se ve en el panel.
     keymap: Keymap,
     lsp: lsp::EstadoLsp,
+    /// Ir a definición, completado, hover, referencias y renombrar
+    /// (BACKLOG.md P1 #17, `funciones_lsp.rs`): peticiones por mandar,
+    /// popups y listas.
+    funciones_lsp: funciones_lsp::EstadoFuncionesLsp,
     /// Registro sin nombre + comando de dos teclas pendiente del modo VIM
     /// (`config.editor.modo_vim`, M5) — uno solo para toda la app, no por
     /// panel (ver `tcode_core::EstadoVim`). Sin efecto mientras ningún
@@ -494,6 +499,7 @@ async fn ejecutar(
         editor_tema: EstadoEditorTema::nueva(),
         keymap,
         lsp: lsp::EstadoLsp::nuevo(),
+        funciones_lsp: Default::default(),
         vim: EstadoVim::nuevo(),
         logs_lsp: EstadoLogsLsp::nuevo(),
         prompt_explorador: EstadoPromptExplorador::nuevo(),
@@ -535,6 +541,9 @@ async fn ejecutar(
     // la pantalla entera 4 veces por segundo aunque el LSP estuviera
     // callado.
     let mut omitir_dibujo = false;
+    // La vuelta actual viene de un mensaje LSP que era la respuesta a una
+    // petición de `funciones_lsp` (ver la rama del `select!`).
+    let mut solo_respuestas_lsp = false;
 
     // Revisión periódica de `HEAD` (indicadores de git, ver
     // `tcode_fs::VigiaHead`): un commit o checkout hecho desde otra
@@ -556,6 +565,15 @@ async fn ejecutar(
     loop {
         if std::mem::take(&mut estado.guardado_pendiente) {
             let _ = guardar_archivo_activo(layout, &mut estado).await;
+        }
+        // Funciones de LSP (BACKLOG.md P1 #17): la petición que dejó un
+        // comando o la pausa al tipear, y las respuestas ya llegadas —
+        // ninguna de las dos cosas espera al servidor.
+        if estado.funciones_lsp.pedido.is_some() {
+            funciones_lsp::enviar_pedido(layout, &mut estado).await;
+        }
+        if !funciones_lsp::procesar_respuestas(layout, &mut estado) && std::mem::take(&mut solo_respuestas_lsp) {
+            omitir_dibujo = true;
         }
         let foco_actual = firma_foco(layout, &estado);
         if foco_actual != ultimo_foco {
@@ -619,6 +637,7 @@ async fn ejecutar(
                     estado.modo_zen.is_some(),
                 );
                 tcode_ui::panel_linea_vim::dibujar(frame, frame.area(), &estado.vim.linea_comando, &estado.paleta);
+                funciones_lsp::dibujar(frame, layout, &estado.funciones_lsp, &estado.paleta);
                 // Encima de todo, pero fuera de `tcode_ui::dibujar`: mientras
                 // está abierta captura el teclado, así que ningún otro
                 // overlay puede abrirse a la vez.
@@ -635,6 +654,7 @@ async fn ejecutar(
         }
 
         let firma_antes = firma_estructural(layout, &estado);
+        let completado_programado = estado.funciones_lsp.completado_programado;
 
         let evento = match teclas_sinteticas.pop_front() {
             Some(key) => Event::Key(key),
@@ -650,6 +670,10 @@ async fn ejecutar(
                 // que lo mandó; `None` si ese servidor se murió.
                 (lenguaje, mensaje) = estado.lsp.siguiente_mensaje() => {
                     estado.lsp.procesar_mensaje(lenguaje, mensaje, layout).await;
+                    // Si fue una respuesta a una función de LSP, en la
+                    // próxima vuelta solo se redibuja si cambió algo
+                    // (`funciones_lsp::procesar_respuestas`).
+                    solo_respuestas_lsp = estado.lsp.hay_respuestas();
                     continue;
                 }
                 // Indicadores de git (BACKLOG.md P2 #6): mientras algún
@@ -660,6 +684,16 @@ async fn ejecutar(
                 // solas al abrir un archivo o al dejar de tipear. Sin nada
                 // pendiente esta rama ni se arma: cero costo en reposo.
                 _ = tokio::time::sleep(INTERVALO_SONDEO_GIT), if layout.cargas_git_pendientes() => continue,
+                // Pausa al tipear antes de pedir completado
+                // (`funciones_lsp::despues_de_tecla`): sin nada programado
+                // esta rama ni se arma.
+                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(completado_programado.unwrap_or_else(Instant::now))),
+                    if completado_programado.is_some() =>
+                {
+                    funciones_lsp::pausa_vencida(&mut estado);
+                    omitir_dibujo = true;
+                    continue;
+                }
                 // Búsqueda en el proyecto (BACKLOG.md P1 #16): mientras el
                 // hilo de búsqueda trabaja, se juntan sus resultados cada
                 // tanto y se redibuja solo si llegó algo — la lista crece
@@ -1246,6 +1280,15 @@ async fn ejecutar(
             continue;
         }
 
+        // Lista de ubicaciones, prompt de renombrar y popups de hover y
+        // completado del LSP (BACKLOG.md P1 #17): ver
+        // `funciones_lsp::manejar_tecla`.
+        if funciones_lsp::manejar_tecla(key, layout, &mut estado) {
+            estado.confirmar_salida = false;
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+            continue;
+        }
+
         // Modo VIM (`config.editor.modo_vim`, M5, apagado por defecto —
         // ninguno de estos dos bloques hace nada si `editor.modo()` nunca
         // llegó a `Normal`, y a eso solo se llega si la config lo prende,
@@ -1318,8 +1361,14 @@ async fn ejecutar(
             estado.confirmar_salida = false;
         }
 
+        // Qué le pasó al texto con esta tecla, para el completado del LSP
+        // (`funciones_lsp::despues_de_tecla`).
+        let mut tecleo = funciones_lsp::Tecleo::Otro;
         match resolucion {
             Resolucion::Comando(nombre) => {
+                if nombre == "editor.borrar_atras" {
+                    tecleo = funciones_lsp::Tecleo::Borrar;
+                }
                 if let Accion::Salir = procesar_comando(&nombre, layout, &mut estado, &mut resolvedor) {
                     break;
                 }
@@ -1339,11 +1388,13 @@ async fn ejecutar(
                     if let KeyCode::Char(c) = key.code {
                         if sin_modificadores(key) {
                             layout.editor_activo_mut().insertar_char(c);
+                            tecleo = funciones_lsp::Tecleo::Caracter(c);
                         }
                     }
                 }
             }
         }
+        funciones_lsp::despues_de_tecla(tecleo, layout, &mut estado);
 
         necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
     }
@@ -1481,6 +1532,7 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
         || estado.guardar_como.activa()
         || estado.logs_lsp.activo()
         || estado.prompt_explorador.activo()
+        || estado.funciones_lsp.captura_texto()
         || layout.panel_activo().estado_csv.editando()
         || layout.panel_activo().estado_csv.prompt_filtro().is_some()
         || (estado.panel_admin.activo() && estado.panel_admin.editando_comando_lsp().is_some());
@@ -1504,6 +1556,7 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
         return;
     }
     estado.confirmar_salida = false;
+    estado.funciones_lsp.completado.cerrar();
     layout.editor_activo_mut().insertar_texto(texto);
 }
 
@@ -1784,6 +1837,10 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             }
             Accion::Continuar
         }
+        // Funciones de LSP (BACKLOG.md P1 #17). `lsp.renombrar` (`F2`) en
+        // la vista de tabla CSV no aplica y sigue hasta
+        // `ejecutar_comando_csv`, que lo reinterpreta como editar celda.
+        _ if id.starts_with("lsp.") && funciones_lsp::comando(id, layout, estado) => Accion::Continuar,
         _ if id.starts_with("pestana.ir_a_") => {
             if let Ok(numero) = id["pestana.ir_a_".len()..].parse::<usize>() {
                 layout.ir_a_pestana(numero.saturating_sub(1));
@@ -2105,7 +2162,7 @@ fn ejecutar_comando_csv(comando: &str, layout: &mut PanelLayout) -> Accion {
         "cursor.derecha" => panel.estado_csv.mover_derecha(num_columnas),
         "editor.indentar_o_autocompletar" => panel.estado_csv.tab(num_filas, num_columnas),
         "editor.desindentar" => panel.estado_csv.shift_tab(num_columnas),
-        "editor.nueva_linea" | "csv.editar_celda" => {
+        "editor.nueva_linea" | "csv.editar_celda" | "lsp.renombrar" => {
             let valor_actual =
                 panel.estado_csv.fila_real(&tabla).and_then(|r| tabla.filas[r].celdas.get(columna));
             panel.estado_csv.iniciar_edicion(valor_actual.map(String::as_str).unwrap_or(""));
