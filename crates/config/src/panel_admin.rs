@@ -1,4 +1,4 @@
-use crate::config::{Config, GuardadoAutomatico};
+use crate::config::{Config, GuardadoAutomatico, ModoPortapapeles};
 
 /// Las 6 secciones de PLAN.md §5 menos "Extensiones" (fase 2, fuera de
 /// alcance de M4). El orden es el de la tabla del plan.
@@ -63,6 +63,8 @@ pub enum CampoEditor {
     ColumnaRegla,
     GuardadoAutomatico,
     SegundosGuardadoAutomatico,
+    Portapapeles,
+    VimSincronizarPortapapeles,
 }
 
 /// Columna con la que arranca la regla vertical (BACKLOG.md P1 #5) al
@@ -85,7 +87,7 @@ const SEGUNDOS_GUARDADO_MIN: i64 = 5;
 const SEGUNDOS_GUARDADO_MAX: i64 = 600;
 
 impl CampoEditor {
-    pub const TODOS: [CampoEditor; 9] = [
+    pub const TODOS: [CampoEditor; 11] = [
         CampoEditor::TamanoTabulacion,
         CampoEditor::UsarEspacios,
         CampoEditor::AjusteLinea,
@@ -95,6 +97,8 @@ impl CampoEditor {
         CampoEditor::ColumnaRegla,
         CampoEditor::GuardadoAutomatico,
         CampoEditor::SegundosGuardadoAutomatico,
+        CampoEditor::Portapapeles,
+        CampoEditor::VimSincronizarPortapapeles,
     ];
 
     pub fn nombre(&self) -> &'static str {
@@ -108,6 +112,8 @@ impl CampoEditor {
             CampoEditor::ColumnaRegla => "Regla vertical (columna)",
             CampoEditor::GuardadoAutomatico => "Guardado automático",
             CampoEditor::SegundosGuardadoAutomatico => "Guardado automático: segundos",
+            CampoEditor::Portapapeles => "Portapapeles del sistema",
+            CampoEditor::VimSincronizarPortapapeles => "VIM: registro = portapapeles",
         }
     }
 
@@ -119,6 +125,8 @@ impl CampoEditor {
             CampoEditor::ColumnaRegla => Some("← en 'Apagada' no hace nada; → o Enter la prende en 80"),
             CampoEditor::GuardadoAutomatico => Some("Solo archivos con nombre; foco = otro panel/archivo/ventana"),
             CampoEditor::SegundosGuardadoAutomatico => Some("Solo se usa en el modo 'cada N segundos'; ←/→ de a 5"),
+            CampoEditor::Portapapeles => Some("OSC 52 anda por SSH; en tmux: set -g set-clipboard on"),
+            CampoEditor::VimSincronizarPortapapeles => Some("Como clipboard=unnamedplus; \"+y/\"+p andan siempre"),
             _ => None,
         }
     }
@@ -137,6 +145,8 @@ impl CampoEditor {
             CampoEditor::ColumnaRegla => "columna_regla",
             CampoEditor::GuardadoAutomatico => "guardado_automatico",
             CampoEditor::SegundosGuardadoAutomatico => "segundos_guardado_automatico",
+            CampoEditor::Portapapeles => "portapapeles",
+            CampoEditor::VimSincronizarPortapapeles => "vim_sincronizar_portapapeles",
         };
         ("editor", clave)
     }
@@ -155,6 +165,8 @@ impl CampoEditor {
             }
             CampoEditor::GuardadoAutomatico => etiqueta_guardado_automatico(config.editor.guardado_automatico).to_string(),
             CampoEditor::SegundosGuardadoAutomatico => format!("{} s", config.editor.segundos_guardado_automatico),
+            CampoEditor::Portapapeles => etiqueta_portapapeles(config.editor.portapapeles).to_string(),
+            CampoEditor::VimSincronizarPortapapeles => etiqueta_bool(config.editor.vim_sincronizar_portapapeles),
         }
     }
 
@@ -202,7 +214,20 @@ impl CampoEditor {
                 config.editor.segundos_guardado_automatico =
                     nuevo.clamp(SEGUNDOS_GUARDADO_MIN, SEGUNDOS_GUARDADO_MAX) as u64;
             }
+            CampoEditor::Portapapeles => config.editor.portapapeles = config.editor.portapapeles.rotar(delta),
+            CampoEditor::VimSincronizarPortapapeles => {
+                config.editor.vim_sincronizar_portapapeles = !config.editor.vim_sincronizar_portapapeles
+            }
         }
+    }
+}
+
+fn etiqueta_portapapeles(modo: ModoPortapapeles) -> &'static str {
+    match modo {
+        ModoPortapapeles::Automatico => "Automático (OSC 52 + sistema)",
+        ModoPortapapeles::SoloOsc52 => "Solo OSC 52",
+        ModoPortapapeles::SoloSistema => "Solo sistema",
+        ModoPortapapeles::Desactivado => "Desactivado",
     }
 }
 
@@ -1102,6 +1127,20 @@ mod tests {
         assert_eq!(config.editor.guardado_automatico, GuardadoAutomatico::Nunca);
         CampoEditor::GuardadoAutomatico.aplicar(&mut config, -1);
         assert_eq!(config.editor.guardado_automatico, GuardadoAutomatico::CadaNSegundos);
+    }
+
+    #[test]
+    fn campos_del_portapapeles_rotan_y_alternan() {
+        let mut config = Config::default();
+        assert_eq!(CampoEditor::Portapapeles.valor_actual(&config), "Automático (OSC 52 + sistema)");
+        CampoEditor::Portapapeles.aplicar(&mut config, 1);
+        assert_eq!(config.editor.portapapeles, ModoPortapapeles::SoloOsc52);
+        CampoEditor::Portapapeles.aplicar(&mut config, -2);
+        assert_eq!(config.editor.portapapeles, ModoPortapapeles::Desactivado);
+        assert_eq!(CampoEditor::Portapapeles.clave_toml(), ("editor", "portapapeles"));
+        assert_eq!(CampoEditor::VimSincronizarPortapapeles.valor_actual(&config), "No");
+        CampoEditor::VimSincronizarPortapapeles.aplicar(&mut config, 1);
+        assert!(config.editor.vim_sincronizar_portapapeles);
     }
 
     #[test]

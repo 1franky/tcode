@@ -32,6 +32,15 @@ pub enum Modo {
     VisualLinea,
 }
 
+/// Texto que copian `Ctrl+C`/`Ctrl+X` (ver `Editor::texto_para_copiar`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextoCopiado {
+    pub texto: String,
+    /// Líneas completas (se copió sin selección): pegarlo inserta arriba
+    /// de la línea del cursor en vez de en el medio.
+    pub lineal: bool,
+}
+
 /// Estado de edición de un archivo: buffer + cursor(es) + historial de
 /// deshacer/rehacer, combinados en las operaciones que un editor expone
 /// (insertar, borrar, mover el cursor, guardar...).
@@ -564,6 +573,103 @@ impl Editor {
         true
     }
 
+    /// Lo que copia `Ctrl+C` (BACKLOG.md P0 #15), sin tocar el buffer.
+    /// Con alguna selección: el texto de cada selección, en orden de
+    /// aparición en el documento, unidas por `\n` (los cursores sin
+    /// selección de un multi-cursor mixto no aportan nada). Sin ninguna
+    /// selección: la línea completa de cada cursor (una sola vez por
+    /// línea), cada una con su salto de línea — como VSCode, y marcado
+    /// como `lineal` para que pegarlo inserte la línea arriba en vez de
+    /// partir la del cursor (ver `pegar_lineas`).
+    pub fn texto_para_copiar(&self) -> TextoCopiado {
+        let mut rangos: Vec<Range<usize>> = (0..self.cursores.len()).map(|i| self.rango_bytes(i)).collect();
+        rangos.sort_by_key(|r| (r.start, r.end));
+        if rangos.iter().any(|r| !r.is_empty()) {
+            let rope = self.buffer.rope();
+            let partes: Vec<String> =
+                rangos.iter().filter(|r| !r.is_empty()).map(|r| rope.byte_slice(r.clone()).to_string()).collect();
+            return TextoCopiado { texto: partes.join("\n"), lineal: false };
+        }
+        let mut texto = String::new();
+        for linea in self.lineas_de_los_cursores() {
+            texto.push_str(&self.buffer.linea_con_salto(linea));
+            if !texto.ends_with('\n') {
+                texto.push('\n');
+            }
+        }
+        TextoCopiado { texto, lineal: true }
+    }
+
+    /// `Ctrl+X`: lo mismo que copia `texto_para_copiar`, y además lo
+    /// borra como UNA sola edición (un `Ctrl+Z` lo devuelve entero).
+    /// Sin selección borra las líneas completas de los cursores; la
+    /// última línea del archivo, si no termina en salto de línea, se
+    /// lleva el salto de la anterior (si no, quedaría una línea vacía
+    /// colgando). Cada cursor queda al principio de lo que ocupó el
+    /// lugar de lo borrado.
+    pub fn cortar(&mut self) -> TextoCopiado {
+        let copiado = self.texto_para_copiar();
+        if !copiado.lineal {
+            self.editar_cada_cursor(|_, seleccion| (seleccion, String::new()));
+            return copiado;
+        }
+        let total = self.buffer.len_bytes();
+        let num_lineas = self.buffer.num_lineas();
+        let mut rangos: Vec<Range<usize>> = Vec::new();
+        for linea in self.lineas_de_los_cursores() {
+            let inicio = self.buffer.inicio_byte_linea(linea);
+            let fin = if linea + 1 < num_lineas { self.buffer.inicio_byte_linea(linea + 1) } else { total };
+            // Líneas contiguas se funden en un solo rango:
+            // `aplicar_ediciones` no acepta rangos solapados.
+            match rangos.last_mut() {
+                Some(anterior) if anterior.end >= inicio => anterior.end = fin,
+                _ => rangos.push(inicio..fin),
+            }
+        }
+        if let Some(ultimo) = rangos.last_mut() {
+            if ultimo.end == total && ultimo.start > 0 && !self.buffer.termina_en_salto_de_linea() {
+                ultimo.start -= 1;
+            }
+        }
+        let ediciones: Vec<(Range<usize>, String)> = rangos.into_iter().map(|r| (r, String::new())).collect();
+        if self.aplicar_ediciones(&ediciones) {
+            for c in &mut self.cursores {
+                c.ancla = c.cursor;
+            }
+            self.fusionar_cursores_duplicados();
+        }
+        copiado
+    }
+
+    /// Pega `texto` (líneas completas, terminado en `\n`) al principio
+    /// de la línea de cada cursor, como UNA sola edición: es lo que hace
+    /// VSCode al pegar algo copiado con `Ctrl+C` sin selección — la línea
+    /// aparece arriba y el cursor sigue sobre la suya, en la misma
+    /// columna.
+    pub fn pegar_lineas(&mut self, texto: &str) {
+        if texto.is_empty() {
+            return;
+        }
+        let texto = texto.replace("\r\n", "\n").replace('\r', "\n");
+        let ediciones: Vec<(Range<usize>, String)> = self
+            .lineas_de_los_cursores()
+            .into_iter()
+            .map(|linea| {
+                let inicio = self.buffer.inicio_byte_linea(linea);
+                (inicio..inicio, texto.clone())
+            })
+            .collect();
+        self.aplicar_ediciones(&ediciones);
+    }
+
+    /// Líneas de los cursores, ordenadas y sin repetir.
+    fn lineas_de_los_cursores(&self) -> Vec<usize> {
+        let mut lineas: Vec<usize> = self.cursores.iter().map(|c| c.cursor.linea).collect();
+        lineas.sort_unstable();
+        lineas.dedup();
+        lineas
+    }
+
     /// `Ctrl+D` (PLAN.md §11 M3): si el cursor principal no tiene
     /// selección, selecciona la palabra bajo ese cursor (sin agregar
     /// ninguno nuevo todavía — la primera pulsación solo marca la
@@ -940,6 +1046,95 @@ mod tests {
         for c in texto.chars() {
             editor.insertar_char(c);
         }
+    }
+
+    #[test]
+    fn copiar_la_seleccion_o_la_linea_actual() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "gato perro\nsegunda");
+        editor.inicio_archivo();
+        let copiado = editor.texto_para_copiar();
+        assert_eq!(copiado, TextoCopiado { texto: "gato perro\n".to_string(), lineal: true });
+        // Última línea sin salto: se le agrega uno, igual es "una línea".
+        editor.fin_archivo();
+        assert_eq!(editor.texto_para_copiar().texto, "segunda\n");
+        editor.inicio_archivo();
+        editor.seleccionar_siguiente_ocurrencia(); // "gato"
+        assert_eq!(editor.texto_para_copiar(), TextoCopiado { texto: "gato".to_string(), lineal: false });
+        assert_eq!(editor.buffer().a_texto(), "gato perro\nsegunda");
+    }
+
+    #[test]
+    fn copiar_con_multicursor_une_las_selecciones_en_orden() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "uno x\ndos x\ntres x");
+        editor.inicio_archivo();
+        editor.seleccionar_todas_ocurrencias(); // "uno"
+        assert_eq!(editor.texto_para_copiar().texto, "uno");
+        editor.colapsar_cursores();
+        editor.fin_archivo();
+        editor.agregar_cursor_arriba();
+        editor.agregar_cursor_arriba();
+        assert_eq!(editor.texto_para_copiar().texto, "uno x\ndos x\ntres x\n");
+        // Selecciones de largo distinto, sin importar el orden de creación.
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "ab ab ab");
+        editor.inicio_archivo();
+        editor.seleccionar_siguiente_ocurrencia();
+        editor.seleccionar_siguiente_ocurrencia();
+        editor.seleccionar_siguiente_ocurrencia();
+        assert_eq!(editor.texto_para_copiar().texto, "ab\nab\nab");
+    }
+
+    #[test]
+    fn cortar_la_seleccion_es_un_solo_paso_de_deshacer() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "gato perro gato");
+        editor.inicio_archivo();
+        editor.seleccionar_todas_ocurrencias();
+        let copiado = editor.cortar();
+        assert_eq!(copiado.texto, "gato\ngato");
+        assert_eq!(editor.buffer().a_texto(), " perro ");
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "gato perro gato");
+    }
+
+    #[test]
+    fn cortar_sin_seleccion_se_lleva_la_linea_entera() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "uno\ndos\ntres");
+        editor.inicio_archivo();
+        editor.mover_abajo();
+        assert_eq!(editor.cortar().texto, "dos\n");
+        assert_eq!(editor.buffer().a_texto(), "uno\ntres");
+        assert_eq!((editor.cursor().linea, editor.cursor().columna), (1, 0));
+        // La última línea (sin salto) se lleva el salto de la anterior.
+        assert_eq!(editor.cortar().texto, "tres\n");
+        assert_eq!(editor.buffer().a_texto(), "uno");
+        editor.deshacer();
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "uno\ndos\ntres");
+    }
+
+    #[test]
+    fn cortar_lineas_contiguas_con_multicursor() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "a\nb\nc");
+        editor.agregar_cursor_arriba(); // cursores en "b" y "c"
+        assert_eq!(editor.cortar().texto, "b\nc\n");
+        assert_eq!(editor.buffer().a_texto(), "a");
+        assert_eq!(editor.cursores().len(), 1);
+    }
+
+    #[test]
+    fn pegar_lineas_inserta_arriba_y_conserva_el_cursor() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "uno\ndos");
+        editor.pegar_lineas("nueva\n");
+        assert_eq!(editor.buffer().a_texto(), "uno\nnueva\ndos");
+        assert_eq!((editor.cursor().linea, editor.cursor().columna), (2, 3));
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "uno\ndos");
     }
 
     #[test]
