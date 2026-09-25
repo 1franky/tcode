@@ -111,7 +111,7 @@ impl BuscadorArchivos {
 /// `listar_archivos_recursivo` recorre TODO de una — sin este filtro,
 /// cualquier proyecto con dependencias instaladas o binarios compilados
 /// (`target/`, `node_modules/`) haría el buscador inservible.
-const CARPETAS_IGNORADAS: &[&str] = &["target", "node_modules", ".git"];
+pub(crate) const CARPETAS_IGNORADAS: &[&str] = &["target", "node_modules", ".git"];
 
 /// Recorre `raiz` recursivamente y devuelve las rutas de todos los
 /// archivos (no carpetas) que contiene — la lista sobre la que filtra el

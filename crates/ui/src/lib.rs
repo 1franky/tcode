@@ -13,6 +13,7 @@ mod panel_admin;
 mod panel_archivos;
 mod panel_buscador;
 mod panel_busqueda;
+pub mod panel_busqueda_proyecto;
 mod panel_confirmar_borrado;
 mod panel_guardar_como;
 pub mod panel_linea_vim;

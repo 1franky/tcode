@@ -51,7 +51,10 @@ use tcode_core::{
     analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo,
     EstadoVim, Modo, Pliegue,
 };
-use tcode_fs::{BuscadorArchivos, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador, ModoPromptExplorador};
+use tcode_fs::{
+    BuscadorArchivos, EstadoBusquedaProyecto, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador,
+    ModoPromptExplorador,
+};
 use tcode_keymap::{Keymap, Resolucion, Resolvedor};
 use tcode_lsp::EstadoLogsLsp;
 use tcode_syntax::{Lenguaje, Resaltador};
@@ -344,6 +347,10 @@ struct EstadoApp {
     cierre_armado: Option<String>,
     paleta_comandos: EstadoPaleta,
     buscador_archivos: BuscadorArchivos,
+    /// Búsqueda (y reemplazo) en todo el proyecto (`Ctrl+Shift+F`/`Ctrl+K
+    /// B`, BACKLOG.md P1 #16): vista casi a pantalla completa, con la
+    /// búsqueda corriendo en un hilo aparte (ver `buscar_en_proyecto`).
+    busqueda_proyecto: EstadoBusquedaProyecto,
     estado_busqueda: EstadoBusqueda,
     guardar_como: EstadoGuardarComo,
     selector_tema: EstadoSelectorTema,
@@ -478,6 +485,7 @@ async fn ejecutar(
         cierre_armado: None,
         paleta_comandos: EstadoPaleta::nueva(),
         buscador_archivos: BuscadorArchivos::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
+        busqueda_proyecto: EstadoBusquedaProyecto::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
         estado_busqueda: EstadoBusqueda::nueva(),
         guardar_como: EstadoGuardarComo::nueva(),
         selector_tema: EstadoSelectorTema::nueva(),
@@ -611,6 +619,17 @@ async fn ejecutar(
                     estado.modo_zen.is_some(),
                 );
                 tcode_ui::panel_linea_vim::dibujar(frame, frame.area(), &estado.vim.linea_comando, &estado.paleta);
+                // Encima de todo, pero fuera de `tcode_ui::dibujar`: mientras
+                // está abierta captura el teclado, así que ningún otro
+                // overlay puede abrirse a la vez.
+                if estado.busqueda_proyecto.activo() {
+                    tcode_ui::panel_busqueda_proyecto::dibujar(
+                        frame,
+                        frame.area(),
+                        &estado.busqueda_proyecto,
+                        &estado.paleta,
+                    );
+                }
             })?;
             ultimo_dibujo = Instant::now();
         }
@@ -641,6 +660,15 @@ async fn ejecutar(
                 // solas al abrir un archivo o al dejar de tipear. Sin nada
                 // pendiente esta rama ni se arma: cero costo en reposo.
                 _ = tokio::time::sleep(INTERVALO_SONDEO_GIT), if layout.cargas_git_pendientes() => continue,
+                // Búsqueda en el proyecto (BACKLOG.md P1 #16): mientras el
+                // hilo de búsqueda trabaja, se juntan sus resultados cada
+                // tanto y se redibuja solo si llegó algo — la lista crece
+                // mientras busca y el teclado nunca espera. Sin búsqueda en
+                // curso esta rama ni se arma.
+                _ = tokio::time::sleep(INTERVALO_SONDEO_BUSQUEDA), if estado.busqueda_proyecto.buscando() => {
+                    omitir_dibujo = !estado.busqueda_proyecto.recibir();
+                    continue;
+                }
                 _ = tick.tick(), if necesita_tick(&estado) => {
                     omitir_dibujo = !procesar_tick(layout, &mut estado);
                     continue;
@@ -954,6 +982,17 @@ async fn ejecutar(
                 KeyCode::Char(c) if sin_modificadores(key) => estado.selector_simbolos.escribir(c),
                 _ => {}
             }
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+            continue;
+        }
+
+        // Búsqueda en el proyecto (`Ctrl+Shift+F`/`Ctrl+K B`, BACKLOG.md
+        // P1 #16): captura el teclado como la barra de `Ctrl+F`, con las
+        // mismas teclas para las opciones (`Alt+R/C/W`) y "reemplazar
+        // todo" (`Alt+Enter`), que acá pide confirmación con `y`.
+        if estado.busqueda_proyecto.activo() {
+            estado.confirmar_salida = false;
+            tecla_busqueda_proyecto(key, layout, &mut estado);
             necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
@@ -1324,6 +1363,12 @@ const INTERVALO_MAXIMO_SIN_DIBUJAR: Duration = Duration::from_millis(50);
 /// tardar pocos ms, así que casi siempre alcanza con una vuelta.
 const INTERVALO_SONDEO_GIT: Duration = Duration::from_millis(30);
 
+/// Cada cuánto se juntan los resultados de una búsqueda en el proyecto en
+/// curso (ver la rama correspondiente del `select!` en `ejecutar`): lo
+/// bastante seguido para que la lista se vea crecer, sin redibujar por
+/// cada archivo encontrado.
+const INTERVALO_SONDEO_BUSQUEDA: Duration = Duration::from_millis(40);
+
 /// Período del tick del bucle principal (ver `necesita_tick`): lo que
 /// tarda como mucho una línea nueva de stderr del LSP en aparecer en el
 /// visor abierto. La resolución del guardado "cada N segundos" también
@@ -1429,6 +1474,7 @@ fn guardar_panel(panel: &mut PanelEditor) -> Result<()> {
 /// acción, no texto.
 fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, teclas: &mut VecDeque<KeyEvent>) {
     let prompt_de_texto = estado.paleta_comandos.activa()
+        || (estado.busqueda_proyecto.activo() && !estado.busqueda_proyecto.confirmando())
         || estado.buscador_archivos.activo()
         || estado.selector_simbolos.activo()
         || estado.estado_busqueda.activa()
@@ -1449,6 +1495,7 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
     }
 
     let otro_modal = estado.editor_tema.activo()
+        || estado.busqueda_proyecto.activo()
         || estado.panel_admin.activo()
         || estado.selector_tema.activa()
         || estado.confirmar_borrado.activo()
@@ -1529,6 +1576,13 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         }
         "buscar.archivos" => {
             estado.buscador_archivos.abrir();
+            Accion::Continuar
+        }
+        // Reabrir conserva la búsqueda anterior y sus resultados (ver
+        // `EstadoBusquedaProyecto`), así se puede ir de un resultado al
+        // siguiente.
+        "buscar.en_proyecto" => {
+            estado.busqueda_proyecto.abrir();
             Accion::Continuar
         }
         // Breadcrumbs navegables: el esquema del archivo entero sale del
@@ -2895,6 +2949,211 @@ fn esquema_del_activo(layout: &PanelLayout, resaltador: &mut Resaltador) -> (Vec
         })
         .collect();
     (simbolos, byte_cursor)
+}
+
+/// Una tecla con la vista "Buscar en el proyecto" abierta (BACKLOG.md
+/// P1 #16). Con "reemplazar todo" pidiendo confirmación, solo `y`
+/// reemplaza — cualquier otra tecla cancela, como la confirmación de
+/// borrado del explorador: es una acción sobre muchos archivos a la vez.
+/// Todo lo que cambia consulta, filtro u opciones vuelve a buscar (y
+/// cancela la búsqueda anterior si seguía corriendo).
+fn tecla_busqueda_proyecto(key: KeyEvent, layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let busqueda = &mut estado.busqueda_proyecto;
+    busqueda.nueva_tecla();
+    if busqueda.confirmando() {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') if sin_modificadores(key) => reemplazar_en_proyecto(layout, estado),
+            _ => busqueda.cancelar_confirmacion(),
+        }
+        return;
+    }
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let rebuscar = match key.code {
+        KeyCode::Esc => {
+            busqueda.cerrar();
+            false
+        }
+        KeyCode::Tab => {
+            busqueda.alternar_campo();
+            false
+        }
+        KeyCode::Up => {
+            busqueda.mover_arriba(1);
+            false
+        }
+        KeyCode::Down => {
+            busqueda.mover_abajo(1);
+            false
+        }
+        KeyCode::PageUp => {
+            busqueda.mover_arriba(FILAS_POR_PAGINA_RESULTADOS);
+            false
+        }
+        KeyCode::PageDown => {
+            busqueda.mover_abajo(FILAS_POR_PAGINA_RESULTADOS);
+            false
+        }
+        KeyCode::Backspace => busqueda.borrar(),
+        KeyCode::Char('r') if alt => {
+            busqueda.alternar_regex();
+            true
+        }
+        KeyCode::Char('c') if alt => {
+            busqueda.alternar_mayusculas();
+            true
+        }
+        KeyCode::Char('w') if alt => {
+            busqueda.alternar_palabra();
+            true
+        }
+        // Mismo atajo que "reemplazar todo" de `Ctrl+H` (ahí también
+        // vale `Ctrl+Alt+Enter`, que incluye `Alt`).
+        KeyCode::Enter if alt => {
+            busqueda.pedir_reemplazo();
+            false
+        }
+        KeyCode::Enter => {
+            abrir_resultado_proyecto(layout, estado);
+            false
+        }
+        KeyCode::Char(c) if sin_modificadores(key) => busqueda.escribir(c),
+        _ => false,
+    };
+    if rebuscar {
+        let buffers = buffers_abiertos(layout);
+        estado.busqueda_proyecto.buscar(buffers);
+    }
+}
+
+/// `PageUp`/`PageDown` en la lista de resultados de la búsqueda en el
+/// proyecto: un salto fijo, sin depender del alto real de la lista (que
+/// solo conoce la UI al dibujar).
+const FILAS_POR_PAGINA_RESULTADOS: usize = 10;
+
+/// El texto de cada documento abierto con ruta, por ruta canónica: la
+/// búsqueda en el proyecto busca sobre esto en vez del disco, así los
+/// cambios sin guardar cuentan (BACKLOG.md P1 #16). Un `canonicalize`
+/// y un `a_texto` por pestaña, solo al lanzar una búsqueda.
+fn buffers_abiertos(layout: &PanelLayout) -> std::collections::HashMap<PathBuf, String> {
+    layout
+        .documentos()
+        .into_iter()
+        .filter_map(|panel| {
+            let ruta = std::fs::canonicalize(panel.editor.buffer().ruta()?).ok()?;
+            Some((ruta, panel.editor.buffer().a_texto()))
+        })
+        .collect()
+}
+
+/// `Enter` en la búsqueda en el proyecto: abre el archivo del resultado
+/// seleccionado como pestaña (o activa la que ya tenía) y salta a la
+/// coincidencia. La vista se oculta sin cancelar nada (`ocultar`, no
+/// `cerrar`): reabrirla vuelve a la misma lista y selección. El salto es
+/// por línea y columna, no por offset absoluto — el buffer normaliza
+/// CRLF y sus offsets no coinciden con los del disco.
+fn abrir_resultado_proyecto(layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let Some((archivo, coincidencia)) = estado.busqueda_proyecto.seleccionada() else {
+        return;
+    };
+    let ruta = archivo.ruta.clone();
+    let (linea, columna) = (coincidencia.linea, coincidencia.columna_byte);
+    estado.busqueda_proyecto.ocultar();
+    abrir_ruta_desde_explorador(layout, &mut estado.foco, ruta.clone(), &estado.config.editor);
+    let abierto = layout
+        .editor_activo()
+        .buffer()
+        .ruta()
+        .and_then(|r| std::fs::canonicalize(r).ok())
+        .is_some_and(|r| r == ruta);
+    if !abierto {
+        layout.panel_activo_mut().mensaje_estado = Some(format!("No se pudo abrir {}", ruta.display()));
+        return;
+    }
+    let editor = layout.editor_activo_mut();
+    let buffer = editor.buffer();
+    // El archivo pudo cambiar desde que se buscó: la posición se recorta
+    // a lo que haya ahora en vez de caer fuera del texto.
+    let linea = linea.min(buffer.num_lineas().saturating_sub(1));
+    let texto_linea = buffer.linea_texto(linea);
+    let mut columna = columna.min(texto_linea.trim_end_matches(['\n', '\r']).len());
+    while !texto_linea.is_char_boundary(columna) {
+        columna -= 1;
+    }
+    let byte = buffer.inicio_byte_linea(linea) + columna;
+    editor.mover_cursor_a_byte(byte);
+}
+
+/// "Reemplazar todo" de la búsqueda en el proyecto, ya confirmado con
+/// `y`. Sobre cada archivo de la lista de resultados:
+///
+/// - si está abierto en alguna pestaña (de cualquier panel), se
+///   reemplaza en el buffer con `Editor::aplicar_ediciones` — un solo
+///   paso de deshacer por documento, y queda SIN guardar: se revisa y se
+///   guarda con `Ctrl+S` como cualquier otro cambio;
+/// - si está cerrado, se vuelve a leer del disco, se vuelve a buscar en
+///   ese momento (los resultados mostrados pueden haber quedado viejos)
+///   y se escribe de forma atómica (`tcode_fs::reemplazar_en_archivo`:
+///   temporal + `rename`, nunca a medio escribir). Eso no se puede
+///   deshacer con `Ctrl+Z` — la confirmación lo dice. Abrir cada archivo
+///   en una pestaña sería deshacible, pero con decenas de archivos llena
+///   la barra de pestañas y le abre un documento a cada servidor LSP.
+///
+/// Al terminar vuelve a buscar, para que la lista refleje lo que quedó.
+fn reemplazar_en_proyecto(layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let Some(re) = estado.busqueda_proyecto.patron() else {
+        estado.busqueda_proyecto.terminar_reemplazo("Consulta inválida: no se reemplazó nada".to_string());
+        return;
+    };
+    let reemplazo = estado.busqueda_proyecto.reemplazo().to_string();
+    let rutas: Vec<PathBuf> = estado.busqueda_proyecto.archivos().iter().map(|a| a.ruta.clone()).collect();
+    // Rutas canónicas de los documentos abiertos, en el mismo orden que
+    // `paneles_mut` (una sola vez, no por archivo de la lista).
+    let abiertos: Vec<Option<PathBuf>> = layout
+        .documentos()
+        .into_iter()
+        .map(|p| p.editor.buffer().ruta().and_then(|r| std::fs::canonicalize(r).ok()))
+        .collect();
+
+    let (mut total, mut archivos, mut en_buffers, mut fallidos) = (0, 0, 0, 0);
+    let mut paneles = layout.paneles_mut();
+    for ruta in &rutas {
+        let mut abierto = false;
+        let mut reemplazadas = 0;
+        // El mismo archivo puede estar abierto en más de un panel (cada
+        // uno con su propio buffer): se reemplaza en todos.
+        for (panel, ruta_abierta) in paneles.iter_mut().zip(&abiertos) {
+            if ruta_abierta.as_ref() != Some(ruta) {
+                continue;
+            }
+            abierto = true;
+            let ediciones = tcode_fs::ediciones_de_reemplazo(&panel.editor.buffer().a_texto(), &re, &reemplazo);
+            if panel.editor.aplicar_ediciones(&ediciones) {
+                reemplazadas = reemplazadas.max(ediciones.len());
+            }
+        }
+        if abierto {
+            en_buffers += usize::from(reemplazadas > 0);
+        } else {
+            match tcode_fs::reemplazar_en_archivo(ruta, &re, &reemplazo) {
+                Ok(n) => reemplazadas = n,
+                Err(_) => fallidos += 1,
+            }
+        }
+        total += reemplazadas;
+        archivos += usize::from(reemplazadas > 0);
+    }
+    drop(paneles);
+
+    let mut aviso = format!("Reemplazadas {total} coincidencias en {archivos} archivos");
+    if en_buffers > 0 {
+        aviso.push_str(&format!(" ({en_buffers} abiertos quedaron sin guardar: Ctrl+S guarda, Ctrl+Z deshace)"));
+    }
+    if fallidos > 0 {
+        aviso.push_str(&format!("; {fallidos} no se pudieron escribir"));
+    }
+    let buffers = buffers_abiertos(layout);
+    estado.busqueda_proyecto.buscar(buffers);
+    estado.busqueda_proyecto.terminar_reemplazo(aviso);
 }
 
 /// Mueve el cursor del editor activo a la coincidencia de búsqueda

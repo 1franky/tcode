@@ -59,6 +59,7 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+K .` o `Ctrl+Shift+O` | Ir a un símbolo del archivo (funciones, clases...; ver [Breadcrumbs](#breadcrumbs)) |
 | `Ctrl+Shift+P` o `F1` | Paleta de comandos (buscar cualquier acción por nombre) |
 | `Ctrl+F` / `Ctrl+H` | Buscar / Buscar y reemplazar en el archivo |
+| `Ctrl+Shift+F` (o `Ctrl+K B`) | Buscar (y reemplazar) en todo el proyecto (ver [Buscar en todo el proyecto](#buscar-en-todo-el-proyecto)) |
 | `Ctrl+,` o `Ctrl+K A` | Panel de administración |
 | `Ctrl+K R` | Ver logs del LSP del lenguaje del archivo activo |
 | `Ctrl+K Ctrl+T` | Selector de temas (con preview en vivo) |
@@ -175,6 +176,57 @@ reemplazo. Con la barra abierta:
 
 `F3`/`Shift+F3` también funcionan con la barra cerrada, repitiendo la
 última búsqueda — igual que en VSCode.
+
+### Buscar en todo el proyecto
+
+`Ctrl+Shift+F` (o `Ctrl+K B`, "Buscar", en terminales sin el protocolo de
+teclado de Kitty, donde `Ctrl+Shift+F` llega como `Ctrl+F`; también en la
+paleta: "Buscar: En todo el proyecto") abre una vista casi a pantalla
+completa con tres campos — **Buscar**, **Reemplazar** y **Archivos** — y
+la lista de resultados agrupada por archivo, con el número de línea y la
+coincidencia resaltada. Busca mientras escribís: los resultados van
+apareciendo a medida que se encuentran (la búsqueda corre de fondo, el
+editor nunca se congela) y cada tecla nueva cancela la búsqueda anterior.
+
+| Tecla | Acción |
+|---|---|
+| `Tab` | Pasar al campo siguiente (Buscar -> Reemplazar -> Archivos) |
+| `↑` / `↓`, `PageUp` / `PageDown` | Moverse por los resultados |
+| `Enter` | Abrir el archivo del resultado (en una pestaña) con el cursor en la coincidencia |
+| `Alt+R` / `Alt+C` / `Alt+W` | Regex / mayúsculas / palabra completa (las mismas de `Ctrl+F`) |
+| `Alt+Enter` (o `Ctrl+Alt+Enter`) | Reemplazar todo (pide confirmación con `y`) |
+| `Esc` | Cerrar (cancela la búsqueda si seguía) |
+
+- **Qué se busca**: los archivos del proyecto (la carpeta de `Ctrl+P`),
+  respetando `.gitignore` y `.ignore` (aunque la carpeta no sea un repo
+  git), sin archivos ni carpetas ocultos, sin `target/` ni
+  `node_modules/`. Se saltean los binarios, los que no son UTF-8 y los de
+  más de 4 MB. Los archivos que tenés abiertos se buscan sobre lo que ves
+  en el editor (con los cambios sin guardar), no sobre el disco.
+- **Archivos**: globs separados por coma, con la sintaxis de
+  `.gitignore`: `*.rs` o `src/**` solo buscan ahí; con `!` adelante
+  excluyen (`!tests, !*.md`).
+- **Tope**: a las 5000 coincidencias la búsqueda se corta y lo avisa;
+  afiná la consulta o el filtro.
+- `Enter` esconde la vista sin perderla: `Ctrl+Shift+F` de nuevo vuelve a
+  la misma lista con la misma selección, para ir al siguiente resultado.
+  La lista no se actualiza sola si después editás: cualquier cambio en
+  la consulta, el filtro o las opciones vuelve a buscar.
+- **Reemplazar todo** usa el texto del campo Reemplazar tal cual (igual
+  que `Ctrl+H`: `$1` no se expande). Antes de hacer nada muestra cuántas
+  coincidencias en cuántos archivos y espera `y` (cualquier otra tecla
+  cancela). Solo se puede con la búsqueda terminada y sin haber llegado
+  al tope. Cada archivo se vuelve a buscar en el momento de reemplazar,
+  así que un archivo que cambió después de la búsqueda no se rompe.
+  Después:
+  - los archivos **abiertos** en alguna pestaña se cambian en el editor,
+    sin guardar: se revisan y se guardan con `Ctrl+S`, y un `Ctrl+Z` en
+    esa pestaña deshace todo el reemplazo de ese archivo;
+  - los archivos **cerrados** se escriben directo a disco, de forma
+    segura (a un temporal en la misma carpeta y después se reemplaza el
+    original: nunca queda a medio escribir; los finales de línea CRLF se
+    conservan). Esto **no** se deshace con `Ctrl+Z` — si el proyecto está
+    en git, `git diff`/`git checkout` son la red de seguridad.
 
 ## Plegado de bloques
 
