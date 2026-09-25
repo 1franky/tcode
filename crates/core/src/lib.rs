@@ -24,7 +24,7 @@ pub use csv::{
 };
 pub use cursor::{Cursor, CursorMultiple};
 pub use diff::ediciones_minimas;
-pub use editor::{Editor, Modo};
+pub use editor::{Editor, Modo, TextoCopiado};
 pub use estado_busqueda::{CampoBusqueda, EstadoBusqueda};
 pub use estado_csv::EstadoCsv;
 pub use estado_guardar_como::EstadoGuardarComo;

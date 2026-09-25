@@ -156,6 +156,17 @@
 # terminales sin protocolo Kitty (confirmado repetidas veces en tmux a lo
 # largo de este proyecto) — chord con Ctrl+K, sin esa ambigüedad.
 "Ctrl+K L"      = "cursor.seleccionar_todas_ocurrencias"
+# Portapapeles del sistema (BACKLOG.md P0 #15). Los tres tienen código de
+# control propio y tcode corre en modo raw, así que llegan como teclas en
+# cualquier terminal (Ctrl+C no se convierte en SIGINT). Ctrl+V además de
+# lo que pegue la terminal por su lado (bracketed paste, Cmd+V en macOS o
+# Ctrl+Shift+V en Linux): lee el portapapeles del sistema directamente, lo
+# que sirve cuando la terminal no hace bracketed paste o dentro de tmux.
+# Ctrl+Shift+V (vista Markdown) no choca: con protocolo Kitty llega
+# distinto; sin él la terminal suele quedárselo para pegar.
+"Ctrl+C"        = "editor.copiar"
+"Ctrl+X"        = "editor.cortar"
+"Ctrl+V"        = "editor.pegar"
 "Ctrl+Alt+Up"   = "cursor.agregar_arriba"
 "Ctrl+Alt+Down" = "cursor.agregar_abajo"
 

@@ -8,6 +8,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Primeros pasos](#primeros-pasos)
 - [Atajos esenciales](#atajos-esenciales)
 - [Multi-cursor y selección](#multi-cursor-y-selección)
+- [Copiar, cortar y pegar](#copiar-cortar-y-pegar)
 - [Búsqueda y reemplazo](#búsqueda-y-reemplazo)
 - [Plegado de bloques](#plegado-de-bloques)
 - [Paneles divididos (splits)](#paneles-divididos-splits)
@@ -47,6 +48,7 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+S` | Guardar (si el buffer no tiene nombre todavía, abre "Guardar como") |
 | `Ctrl+Shift+S` (o `Ctrl+K S`) | Guardar como... — elegir/cambiar la ruta del archivo |
 | `Ctrl+Z` / `Ctrl+Y` | Deshacer / Rehacer |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copiar / cortar (la selección, o la línea si no hay) / pegar, con el portapapeles del sistema (ver [Copiar, cortar y pegar](#copiar-cortar-y-pegar)) |
 | `Ctrl+Q` | Salir |
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Pestaña siguiente / anterior (ver [Pestañas](#pestañas-de-archivos-abiertos)) |
 | `Ctrl+W` | Cerrar la pestaña activa |
@@ -94,6 +96,70 @@ cada uno extendiendo su propia selección de forma independiente.
 
 Con varios cursores activos, escribir/borrar/mover el cursor afecta a
 todos a la vez — igual que en VSCode o Sublime Text.
+
+## Copiar, cortar y pegar
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+C` | Copia la selección al portapapeles del sistema. Sin selección, copia la línea entera |
+| `Ctrl+X` | Igual que `Ctrl+C`, y además borra lo copiado (un solo `Ctrl+Z` lo devuelve) |
+| `Ctrl+V` | Pega desde el portapapeles del sistema |
+
+- **Con varios cursores**: se copian las selecciones de todos, en orden y
+  unidas por saltos de línea. Si ninguno tiene selección, se copia la
+  línea de cada cursor.
+- **Líneas enteras, como en VSCode**: lo copiado sin selección, pegado
+  con `Ctrl+V`, se inserta **arriba** de la línea del cursor, no en el
+  medio.
+- **La barra de estado avisa** cuántas líneas se copiaron o cortaron
+  ("Copiado: 3 líneas"). Si agrega "(solo dentro de tcode)", lo copiado
+  no salió de tcode: el portapapeles está desactivado, o no hubo manera
+  de llegar al del sistema.
+- **Pegar desde la terminal sigue funcionando**: `Cmd+V` en macOS,
+  `Ctrl+Shift+V` en la mayoría de las terminales de Linux, o el clic del
+  medio. En esos casos es la terminal la que manda el texto
+  (bracketed paste). `Ctrl+V` es útil cuando la terminal no hace
+  bracketed paste, o dentro de tmux sin configurar. Si no puede leer el
+  portapapeles del sistema, pega lo último que se copió dentro de tcode.
+- También están en la paleta de comandos ("Editor: Copiar al
+  portapapeles", etc.).
+
+**Cómo llega al portapapeles del sistema.** tcode usa dos caminos a la
+vez, y se puede elegir en `Ctrl+,` → Editor → "Portapapeles del sistema"
+(`portapapeles` en `[editor]`):
+
+| Modo | Al copiar | Al pegar con `Ctrl+V` |
+|---|---|---|
+| Automático (por defecto, `automatico`) | OSC 52 + herramienta del sistema | Herramienta del sistema |
+| Solo OSC 52 (`solo_osc52`) | OSC 52 | Lo último copiado en tcode |
+| Solo sistema (`solo_sistema`) | Herramienta del sistema | Herramienta del sistema |
+| Desactivado (`desactivado`) | Nada (solo queda dentro de tcode) | Lo último copiado en tcode |
+
+- **OSC 52** es una secuencia de escape que le pide a la *terminal* que
+  guarde el texto en su portapapeles.
+  - Funciona también **por SSH**: se llena el portapapeles de tu máquina,
+    no el del servidor.
+  - La soportan casi todas las terminales modernas: kitty, WezTerm,
+    Alacritty, iTerm2 (hay que habilitar "Applications in terminal may
+    access clipboard"), Windows Terminal, foot y Ghostty.
+  - **Terminal.app de macOS no la soporta.** Ahí se usa `pbcopy`.
+  - Los textos de más de ~75 KB no se mandan por OSC 52.
+- **Herramientas del sistema**: en macOS, `pbcopy`/`pbpaste`; en Wayland,
+  `wl-copy`/`wl-paste`; en X11, `xclip` o `xsel`; en Windows y WSL,
+  `clip.exe` y PowerShell `Get-Clipboard`. Se usa la primera que esté
+  instalada. Si alguna se cuelga, tcode la corta en medio segundo, así
+  que no congela el editor.
+- **Dentro de tmux**, para que OSC 52 llegue a la terminal de afuera,
+  hace falta esta línea en `~/.tmux.conf`:
+
+  ```
+  set -g set-clipboard on
+  ```
+
+  Sin ella, en la misma máquina igual funciona por `pbcopy`/`wl-copy`/
+  `xclip`. Por SSH + tmux, en cambio, hace falta.
+- **La lectura por OSC 52 no se usa.** La mayoría de las terminales la
+  bloquean por seguridad.
 
 ## Búsqueda y reemplazo
 
@@ -451,8 +517,24 @@ Como en VIM real, en modo Normal el cursor nunca queda "después" del
 último carácter de una línea no vacía (`$`/`l` se detienen sobre él), y
 al salir de Insertar vuelve un lugar a la izquierda.
 
-Sin registros con nombre, marcas, macros ni búsqueda con `/` (para buscar,
-`Ctrl+F` sigue funcionando); `.` no repite operaciones hechas en Visual.
+**Portapapeles del sistema en modo VIM.** `y`/`d`/`c`/`x` y `p` siguen
+usando el registro interno, así que yanquear no pisa lo que tenías
+copiado de otra app. Tres maneras de usar el portapapeles del sistema:
+
+- **`"+` (o `"*`) delante de un comando**: `"+yy` y `"+y` en Visual
+  copian al portapapeles. `"+p`/`"+P` pegan desde el portapapeles, sin
+  tocar el registro sin nombre.
+- **Sincronizar siempre**: prendiendo `Ctrl+,` → Editor → "VIM: registro
+  = portapapeles" (`vim_sincronizar_portapapeles = true`), todo lo que
+  yanqueás o borrás va al portapapeles, y `p` pega desde ahí. Equivale
+  al `clipboard=unnamedplus` de Neovim.
+- **`Ctrl+C`/`Ctrl+X`/`Ctrl+V`**, que andan igual en cualquier modo.
+
+El texto que llega de otra app se pega por líneas si termina en salto
+de línea.
+
+No hay otros registros con nombre (`"a`, etc.; tcode avisa), ni marcas,
+macros o búsqueda con `/` (para buscar, `Ctrl+F` sigue funcionando); `.` no repite operaciones hechas en Visual.
 Ver PRUEBAS.md para la lista completa de limitaciones.
 
 ## Paleta de comandos y buscador de archivos
@@ -563,7 +645,7 @@ opción por nombre):
 | **Atajos de teclado** | Ver/rebindear cualquier atajo (`Enter` sobre un comando y presionar la nueva combinación), con detección de conflictos resaltada en rojo. `Backspace` restablece uno solo al valor por defecto; hay una fila para restablecer todos. También exportar/importar el `keymap.toml` activo a/desde un archivo fijo (ver [Personalizar atajos](#personalizar-atajos)). |
 | **Temas** | Elegir tema (abre el selector con preview) y duplicar el activo para editarlo. |
 | **Lenguajes / LSP** | Habilitar/deshabilitar el servidor LSP de cada lenguaje, ver si el binario está en el `PATH` y el estado de la sesión de cada lenguaje (Conectado/Iniciando/Error/Inactivo). `c` sobre una fila edita el comando+argumentos a mano (ver [LSP](#lsp-autocompletado-y-diagnósticos)); `Backspace` quita ese override. |
-| **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, indicadores de git, modo VIM, regla vertical, guardado automático. |
+| **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, indicadores de git, modo VIM, regla vertical, guardado automático, portapapeles del sistema (ver [Copiar, cortar y pegar](#copiar-cortar-y-pegar)). |
 | **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo), la barra de pestañas y los [breadcrumbs](#breadcrumbs) de arriba del código. |
 
 Todos los cambios se aplican y persisten al instante en `config.toml`, sin

@@ -20,7 +20,7 @@ pub use color::{analizar_color_hex, formatear_color_hex, hsl_a_rgb, rgb_a_hsl};
 pub use confianza::{sha256_hex, ConfigConfianza, ProyectoConfiable};
 pub use config::{
     cargar, directorio_config, directorio_temas_usuario, guardar, guardar_en, recargar, ruta_config, ComandoLsp,
-    Config, ConfigEditor, ConfigInterfaz, ConfigLenguajes, GuardadoAutomatico,
+    Config, ConfigEditor, ConfigInterfaz, ConfigLenguajes, GuardadoAutomatico, ModoPortapapeles,
     SEGUNDOS_GUARDADO_AUTOMATICO_POR_DEFECTO,
 };
 pub use editor_tema::{
