@@ -44,34 +44,29 @@ Cuatro niveles:
 
 ## P0 — Gaps sorprendentes
 
-### 15. Copiar y cortar al portapapeles del sistema
-
-Encontrado el 2026-09-24 revisando el código: no existen `Ctrl+C`/`Ctrl+X`
-ni ningún comando de copiar/cortar. Pegar funciona solo porque lo hace la
-terminal (bracketed paste), pero no hay forma de llevar una selección de
-tcode a otra app; en modo VIM `y` copia a un registro interno. Alcance:
-OSC 52 (funciona también por SSH) + respaldo con `pbcopy`/`wl-copy`/
-`xclip`/`clip.exe`; `Ctrl+C`/`Ctrl+X` sobre la selección (o la línea
-actual si no hay), `Ctrl+V` interno como alternativa al pegado de la
-terminal; integrar con el registro del modo VIM.
+Ninguno pendiente — el último (#15, portapapeles) se cerró, ver "Hecho
+recientemente".
 
 ---
 
 ## P1 — Gaps reales de alcance acotado
 
-### 16. Búsqueda (y reemplazo) en todo el proyecto
+Ninguno pendiente — #16 (búsqueda en el proyecto) y #17 (LSP avanzado) se
+cerraron, ver "Hecho recientemente". Limitaciones conocidas:
 
-`Ctrl+F`/`Ctrl+H` buscan solo en el archivo abierto y `Ctrl+P` solo
-nombres de archivo. Falta buscar texto en todos los archivos del proyecto
-(estilo `grep`/`ripgrep`, respetando `.gitignore`), con una lista de
-resultados navegable que salte a cada coincidencia, y reemplazo en varios
-archivos con vista previa.
-
-### 17. Funciones de LSP más allá de diagnósticos y formateo
-
-El cliente LSP solo usa diagnósticos (`publishDiagnostics`) y
-`textDocument/formatting`. Faltan: ir a definición, autocompletado,
-hover (tipo y documentación), buscar referencias y renombrar símbolo.
+- **Portapapeles (#15)**: Terminal.app ignora OSC 52 (se usa `pbcopy`);
+  tmux necesita `set -g set-clipboard on` para reenviar OSC 52; por SSH
+  `Ctrl+V` no puede leer el portapapeles local (pega lo copiado dentro de
+  tcode); con varios cursores se pega el texto entero en cada uno.
+- **Búsqueda en el proyecto (#16)**: la lista no se refresca sola tras
+  editar; reemplazo literal (sin `$1`); en archivos cerrados el reemplazo
+  se escribe a disco y no se puede deshacer (la confirmación lo avisa);
+  archivos de más de 4 MB o no UTF-8 no se buscan.
+- **LSP (#17)**: snippets sin saltos entre placeholders; completado solo
+  con un cursor (y en VIM solo en Insertar); renombrar sin
+  `prepareRename` ni operaciones sobre archivos; el hover no se desplaza.
+  Rust sigue sin comando LSP por defecto (hay que configurar
+  `rust-analyzer`).
 
 ---
 
@@ -151,6 +146,23 @@ Limitaciones conocidas de estas piezas (no son gaps nuevos):
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-24/25 — portapapeles, búsqueda en el proyecto y LSP avanzado**
+(3 agentes en paralelo, integrados de a uno con verificación
+independiente):
+- **P0 #15 Portapapeles del sistema** (PR #120): `Ctrl+C`/`Ctrl+X`/
+  `Ctrl+V` (sin selección, la línea); OSC 52 + `pbcopy`/`wl-copy`/
+  `xclip`/`clip.exe`; registros `"+`/`"*` en VIM.
+- **P1 #16 Búsqueda y reemplazo en el proyecto** (PR #121,
+  `Ctrl+Shift+F`/`Ctrl+K B`): crate `ignore` de ripgrep, en paralelo en
+  un hilo aparte, resultados incrementales; reemplazo deshacible en
+  buffers abiertos, escritura atómica en los cerrados.
+- **P1 #17 LSP avanzado** (PR #122): ir a definición (`F12`) y volver
+  (`Alt+←`/`Ctrl+K H`), autocompletado, hover (`Ctrl+K I`), referencias
+  (`Shift+F12`), renombrar (`F2`). Al integrar apareció `Ctrl+K B`
+  asignado dos veces (el keymap junta las secciones en un solo mapa y el
+  último pisaba al otro sin avisar): test nuevo
+  `el_keymap_por_defecto_no_repite_atajos_entre_secciones`.
 
 **2026-09-24 — limitaciones conocidas convertidas en features** (4 agentes
 en paralelo, integrados de a uno con verificación independiente):
