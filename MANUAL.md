@@ -71,6 +71,7 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+K R` | Ver logs del LSP del lenguaje del archivo activo |
 | `F12` (o `Ctrl+K D`) / `Alt+←` (o `Ctrl+K H`) | Ir a la definición / volver (ver [LSP](#navegación-autocompletado-y-renombrar)) |
 | `Shift+F12` (o `Ctrl+K U`) | Buscar referencias |
+| `Ctrl+Shift+M` (o `Ctrl+K Q`) / `F8` / `Shift+F8` | Panel de problemas / siguiente / anterior (ver [Panel de problemas](#panel-de-problemas)) |
 | `Ctrl+K I` | Tipo y documentación del símbolo bajo el cursor (hover) |
 | `Ctrl+Espacio` (o `Ctrl+K Espacio`) | Autocompletar |
 | `F2` (o `Ctrl+K Shift+R`) | Renombrar símbolo (en la tabla de un CSV, `F2` edita la celda) |
@@ -937,6 +938,19 @@ Todas están también en la paleta de comandos (categoría "LSP"). El
 servidor recibe como carpeta del proyecto el directorio desde el que se
 lanzó `tcode` (pyright, por ejemplo, la necesita para renombrar en más de
 un archivo).
+
+### Panel de problemas
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+Shift+M` o `Ctrl+K Q` | **Panel de problemas**: todos los diagnósticos del LSP de los archivos abiertos (en cualquier pestaña o panel), como `error  archivo:línea:col  mensaje`, ordenados por archivo y posición. El título cuenta errores y avisos. Se filtra escribiendo, `Enter` (o un clic) salta. |
+| `F8` / `Shift+F8` | **Siguiente / anterior problema** desde el cursor, pasando al archivo siguiente al terminar los de este y dando la vuelta al final. El mensaje se ve en la barra de estado. |
+
+Saltar a un problema cuenta para "Volver" (`Alt+←`) como cualquier otro
+salto, y también funciona con el foco en el explorador (el foco pasa al
+editor). Solo se ven los archivos abiertos: el LSP no informa los que no
+se abrieron. Sin protocolo Kitty, `Ctrl+Shift+M` llega como `Enter`: usar
+`Ctrl+K Q`.
 
 ### Formatear al guardar
 

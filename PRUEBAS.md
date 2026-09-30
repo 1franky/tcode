@@ -1065,6 +1065,19 @@ una con palabras sueltas y un bloque plegable.
 - [ ] Con "Guardar como" o el `:` de VIM abiertos, los clics no hacen nada (lo escrito queda).
 - [ ] Al salir con `Ctrl+Q`, la terminal ya no captura el mouse (se puede seleccionar texto normalmente).
 - [ ] Tipear y pegar siguen igual de rápidos que en `develop`.
+## Panel de problemas (BACKLOG.md P2 #22)
+
+Con `HOME` temporal y pyright instalado, en una carpeta con `a.py` (un
+error de tipos, un nombre indefinido, y una línea con `ñandú_🙂` antes de
+otro error) y `b.py` (un nombre indefinido), abrir los dos más un `c.py`
+sin errores, esperar a que pyright los analice.
+
+- [ ] **Lista.** `Ctrl+K Q` (o `Ctrl+Shift+M` con protocolo Kitty) abre "Problemas (N errores)" con los de `a.py` y `b.py` ordenados por archivo y línea, con `línea:col` correctos también después de los acentos.
+- [ ] **Salto.** `Enter` sobre el de la línea con `ñandú` deja el cursor exactamente en el nombre. `Alt+←` vuelve. Un clic en una fila (con el mouse prendido) hace lo mismo. Escribir filtra; `Esc` cierra.
+- [ ] **F8.** Recorre los problemas en orden, pasa de `a.py` a `b.py` sin abrir una pestaña nueva y del último vuelve al primero; `Shift+F8` al revés. El mensaje aparece en la barra de estado.
+- [ ] **Desde el explorador.** Con el foco en el explorador, `F8` salta y lo que se escribe después va al editor.
+- [ ] **Sin problemas.** Con solo `c.py` abierto, `Ctrl+K Q` y `F8` avisan "Sin problemas en los archivos abiertos".
+- [ ] **Paleta.** "Problemas: Ver todos", "Ir al siguiente" e "Ir al anterior" hacen lo mismo que los atajos.
 
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
