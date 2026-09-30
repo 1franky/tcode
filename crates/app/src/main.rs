@@ -677,6 +677,9 @@ async fn ejecutar(
         if !funciones_lsp::procesar_respuestas(layout, &mut estado) && std::mem::take(&mut solo_respuestas_lsp) {
             omitir_dibujo = true;
         }
+        if estado.lsp.hay_contestaciones() {
+            estado.lsp.enviar_contestaciones().await;
+        }
         let foco_actual = firma_foco(layout, &estado);
         if foco_actual != ultimo_foco {
             if estado.config.editor.guardado_automatico == GuardadoAutomatico::AlPerderFoco {

@@ -142,7 +142,7 @@ pub fn ver(layout: &mut PanelLayout, estado: &mut EstadoApp) {
             caracter: p.caracter,
         })
         .collect();
-    estado.funciones_lsp.lista.abrir(titulo, entradas);
+    estado.funciones_lsp.abrir_ubicaciones(titulo, entradas);
 }
 
 /// El índice del problema al que saltar desde `(archivo, línea, columna)`

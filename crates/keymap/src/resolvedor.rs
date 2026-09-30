@@ -128,7 +128,7 @@ mod tests {
         let keymap = keymap_por_defecto();
         let mut resolvedor = Resolvedor::nuevo(keymap);
         resolvedor.procesar(parsear_combinacion("Ctrl+K").unwrap());
-        let r = resolvedor.procesar(parsear_combinacion("x").unwrap());
+        let r = resolvedor.procesar(parsear_combinacion("y").unwrap());
         assert_eq!(r, Resolucion::Cancelado);
         assert!(!resolvedor.chord_en_curso());
     }
