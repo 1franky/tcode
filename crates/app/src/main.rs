@@ -20,6 +20,7 @@ mod funciones_lsp;
 mod lsp;
 mod pliegues;
 mod portapapeles;
+mod problemas;
 mod vim;
 
 use std::collections::VecDeque;
@@ -1669,6 +1670,16 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         // mismo árbol de tree-sitter que el resaltado (recorrerlo es
         // O(archivo), pero solo al abrir el selector, no por frame). Sin
         // sentido en el explorador o en la vista de tabla CSV.
+        // Panel de problemas (BACKLOG.md P2 #22): también con el foco en
+        // el explorador — saltar lleva el foco al editor.
+        "problemas.ver" => {
+            problemas::ver(layout, estado);
+            Accion::Continuar
+        }
+        "problemas.siguiente" | "problemas.anterior" => {
+            problemas::saltar(id == "problemas.siguiente", layout, estado);
+            Accion::Continuar
+        }
         "simbolos.ir_a" => {
             if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
                 let (simbolos, byte_cursor) = esquema_del_activo(layout, &mut estado.resaltador);

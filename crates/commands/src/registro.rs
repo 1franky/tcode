@@ -94,6 +94,9 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "lsp.hover", descripcion: "LSP: Mostrar tipo y documentación (hover)" },
         Comando { id: "lsp.completar", descripcion: "LSP: Autocompletar" },
         Comando { id: "lsp.renombrar", descripcion: "LSP: Renombrar símbolo" },
+        Comando { id: "problemas.ver", descripcion: "Problemas: Ver todos (diagnósticos de los archivos abiertos)" },
+        Comando { id: "problemas.siguiente", descripcion: "Problemas: Ir al siguiente" },
+        Comando { id: "problemas.anterior", descripcion: "Problemas: Ir al anterior" },
         Comando { id: "plegar.desplegar_todo", descripcion: "Plegado: Desplegar todo" },
     ]
 }

@@ -135,7 +135,7 @@ fn editor_de_texto(layout: &PanelLayout, estado: &EstadoApp) -> bool {
     estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla
 }
 
-fn avisar(layout: &mut PanelLayout, texto: impl Into<String>) {
+pub(crate) fn avisar(layout: &mut PanelLayout, texto: impl Into<String>) {
     layout.panel_activo_mut().mensaje_estado = Some(texto.into());
 }
 
@@ -293,7 +293,7 @@ pub fn procesar_respuestas(layout: &mut PanelLayout, estado: &mut EstadoApp) -> 
 /// Si `a` y `b` son el mismo archivo: iguales tal cual o una vez
 /// resueltos los enlaces (en macOS `/tmp` es `/private/tmp`, y un
 /// servidor puede devolver cualquiera de las dos) y las rutas relativas.
-fn mismo_archivo(a: &Path, b: &Path) -> bool {
+pub(crate) fn mismo_archivo(a: &Path, b: &Path) -> bool {
     a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
@@ -335,7 +335,7 @@ fn byte_de(editor: &Editor, linea: u32, caracter: u32) -> usize {
 
 /// Salta a una ubicación (abriendo el archivo en una pestaña si hace
 /// falta), recordando de dónde se venía para "Volver".
-fn saltar_a(layout: &mut PanelLayout, estado: &mut EstadoApp, ruta: PathBuf, linea: u32, caracter: u32) {
+pub(crate) fn saltar_a(layout: &mut PanelLayout, estado: &mut EstadoApp, ruta: PathBuf, linea: u32, caracter: u32) {
     let editor = layout.editor_activo();
     let origen = editor.buffer().ruta().map(|r| {
         let cursor = editor.cursor();
@@ -355,6 +355,9 @@ fn saltar_a(layout: &mut PanelLayout, estado: &mut EstadoApp, ruta: PathBuf, lin
     let editor = layout.editor_activo_mut();
     let byte = byte_de(editor, linea, caracter);
     editor.mover_cursor_a_byte(byte);
+    // Desde el panel de problemas se puede saltar con el foco en el
+    // explorador.
+    estado.foco = Foco::Editor;
 }
 
 /// "Volver" (`Alt+←`): al lugar de antes del último salto.

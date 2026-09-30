@@ -131,11 +131,6 @@ Reabrir pestañas, splits y posición de los cursores de la última vez
 Copias de respaldo periódicas de los buffers con cambios sin guardar
 (fuera del proyecto) y ofrecer recuperarlas al reabrir.
 
-### 22. Panel de problemas
-
-Lista de todos los diagnósticos del LSP de todos los documentos abiertos,
-con salto a cada uno.
-
 ### 23. Más funciones de LSP
 
 Acciones rápidas (`textDocument/codeAction`: quick fixes, imports),
@@ -203,6 +198,13 @@ Búsqueda con `/`/`?`/`n`/`*`, macros, registros con nombre, `Ctrl+R`.
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-30 — P2 #22 Panel de problemas:** `Ctrl+Shift+M`/`Ctrl+K Q`
+lista los diagnósticos de todos los documentos abiertos (reusa la lista
+de ubicaciones de "Buscar referencias": filtro, `Enter`, mouse y "Volver"
+gratis); `F8`/`Shift+F8` recorren los problemas entre archivos. Solo
+archivos abiertos (el LSP no informa los demás). Código en
+`crates/app/src/problemas.rs`.
 
 **2026-09-24/25 — portapapeles, búsqueda en el proyecto y LSP avanzado**
 (3 agentes en paralelo, integrados de a uno con verificación
