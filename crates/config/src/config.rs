@@ -65,6 +65,11 @@ pub struct ConfigEditor {
     /// recuerde aunque se cambie de modo y se vuelva. Ignorado en los
     /// otros dos modos.
     pub segundos_guardado_automatico: u64,
+    /// Restaurar la sesión anterior (BACKLOG.md P2 #20): al abrir `tcode`
+    /// sin archivo en una carpeta, reabre las pestañas, los splits y la
+    /// posición del cursor de la última vez en esa carpeta. Prendido por
+    /// defecto, como VSCode. `tcode <archivo>` abre solo ese archivo.
+    pub restaurar_sesion: bool,
     /// Cómo llegan `Ctrl+C`/`Ctrl+X` al portapapeles del sistema y de
     /// dónde lee `Ctrl+V` (BACKLOG.md P0 #15). `Automatico` por defecto:
     /// secuencia OSC 52 a la terminal (anda también por SSH) y además la
@@ -173,6 +178,7 @@ impl Default for ConfigEditor {
             columna_regla: None,
             guardado_automatico: GuardadoAutomatico::Nunca,
             segundos_guardado_automatico: SEGUNDOS_GUARDADO_AUTOMATICO_POR_DEFECTO,
+            restaurar_sesion: true,
             portapapeles: ModoPortapapeles::Automatico,
             vim_sincronizar_portapapeles: false,
         }
@@ -491,6 +497,7 @@ mod tests {
                 columna_regla: Some(80),
                 guardado_automatico: GuardadoAutomatico::CadaNSegundos,
                 segundos_guardado_automatico: 10,
+                restaurar_sesion: false,
                 portapapeles: ModoPortapapeles::SoloSistema,
                 vim_sincronizar_portapapeles: true,
             },

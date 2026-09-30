@@ -22,6 +22,7 @@ mod mouse;
 mod pliegues;
 mod portapapeles;
 mod problemas;
+mod sesion;
 mod vim;
 
 use std::collections::VecDeque;
@@ -92,7 +93,7 @@ async fn main() -> Result<()> {
         None => Editor::nuevo(),
     };
     pliegues::restaurar(&mut editor);
-    let mut layout = PanelLayout::nuevo(editor, ruta_arg.clone().unwrap_or_else(|| "[Sin nombre]".to_string()));
+    let layout_inicial = PanelLayout::nuevo(editor, ruta_arg.clone().unwrap_or_else(|| "[Sin nombre]".to_string()));
 
     // La config y el keymap nunca hacen fallar el arranque: si el archivo
     // del usuario está corrupto, se sigue con los valores por defecto en
@@ -103,7 +104,24 @@ async fn main() -> Result<()> {
     let capas_config = CapasConfig::cargar(tcode_config::directorio_inicio_proyecto(ruta_arg.as_deref()));
     let config = capas_config.efectiva();
     let keymap = tcode_keymap::cargar().unwrap_or_else(|_| tcode_keymap::keymap_por_defecto());
-    let explorador = crear_explorador(ruta_arg.as_deref());
+    let mut explorador = crear_explorador(ruta_arg.as_deref());
+
+    // Sesión anterior de esta carpeta (BACKLOG.md P2 #20), solo si se
+    // lanzó sin archivo. Cada documento restaurado ya sale en Normal si
+    // el modo VIM está prendido (ver `sesion::abrir`).
+    let restaurada = sesion::aplica(ruta_arg.as_deref(), &config).then(|| sesion::restaurar(&config)).flatten();
+    let hubo_sesion = restaurada.is_some();
+    let mut layout = match restaurada {
+        Some((layout, explorador_visible)) => {
+            if explorador_visible {
+                explorador.mostrar();
+            } else {
+                explorador.ocultar();
+            }
+            layout
+        }
+        None => layout_inicial,
+    };
 
     // Modo VIM (M5, `config.editor.modo_vim`, apagado por defecto): el
     // `Editor` arranca siempre en `Modo::Insertar` sin saber nada de esta
@@ -111,7 +129,7 @@ async fn main() -> Result<()> {
     // `Normal` antes de la primera tecla. Lo mismo al abrir un archivo
     // (`abrir_ruta_desde_explorador`) y al dividir un panel
     // (`panel.dividir_*` en `ejecutar_comando`).
-    if config.editor.modo_vim {
+    if config.editor.modo_vim && !hubo_sesion {
         layout.editor_activo_mut().entrar_modo_normal();
     }
 
@@ -1503,6 +1521,9 @@ async fn ejecutar(
         necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
     }
 
+    if sesion::aplica(ruta_arg, &estado.config) {
+        sesion::guardar(layout, &estado.explorador);
+    }
     estado.lsp.cerrar().await;
     Ok(())
 }

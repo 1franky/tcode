@@ -930,6 +930,7 @@ dependencies = [
  "anyhow",
  "dirs",
  "serde",
+ "serde_json",
  "tcode-fuzzy",
  "tempfile",
  "toml",
