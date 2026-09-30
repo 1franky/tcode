@@ -15,7 +15,7 @@ use crate::{overlay, Paleta};
 /// scroll con `↑`/`↓` — "siguiendo lo más nuevo" (sin fila) se le pasa
 /// como `usize::MAX`, que nunca coincide con ningún índice real, y el
 /// overlay dibuja desde arriba, donde entran las líneas nuevas.
-pub fn dibujar(frame: &mut Frame, area_total: Rect, estado: &EstadoLogsLsp, paleta: &Paleta) {
+pub fn dibujar(frame: &mut Frame, area_total: Rect, estado: &EstadoLogsLsp, paleta: &Paleta) -> crate::zonas::ZonaOverlay {
     let filas: Vec<(String, Vec<usize>)> = if estado.sin_logs() {
         vec![("(sin logs — no hay ninguna sesión LSP activa, o no escribió nada en stderr)".to_string(), Vec::new())]
     } else {
@@ -26,5 +26,5 @@ pub fn dibujar(frame: &mut Frame, area_total: Rect, estado: &EstadoLogsLsp, pale
     let consulta = format!("Filtrar: {} ({siguiendo}, ↑/↓ recorre, Esc cierra)", estado.filtro());
 
     let seleccion = estado.seleccion().unwrap_or(usize::MAX);
-    overlay::dibujar(frame, area_total, "Logs del LSP activo", &consulta, &filas, seleccion, paleta);
+    overlay::dibujar(frame, area_total, "Logs del LSP activo", &consulta, &filas, seleccion, paleta)
 }

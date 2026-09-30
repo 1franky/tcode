@@ -44,21 +44,15 @@ Cuatro niveles:
 
 ## P0 — Gaps sorprendentes
 
-Encontrados el 2026-09-25 revisando comandos y atajos: cosas que casi
-cualquier editor tiene y tcode no.
+Ninguno pendiente — #18 (mouse) y #19 (edición básica) se cerraron, ver
+"Hecho recientemente". Limitaciones conocidas:
 
-### 18. Soporte de mouse
-
-No hay ningún manejo de mouse (`EnableMouseCapture` nunca se activa).
-Clic para ubicar el cursor, arrastrar para seleccionar, rueda para
-scroll, clic en pestañas / explorador / resultados de listas.
-
-### 19. Edición básica que falta
-
-- Comentar/descomentar (`Ctrl+/`), según el lenguaje.
-- Mover línea arriba/abajo (`Alt+↑`/`Alt+↓`) y duplicar línea.
-- Seleccionar todo (`Ctrl+A`).
-- Ir a línea (`Ctrl+G`) fuera del modo VIM (hoy solo `:{n}`).
+- **Mouse (#18)**: mientras `tcode` captura el mouse, la selección nativa
+  de la terminal necesita `Shift` (o `Option` en Terminal.app/iTerm2);
+  la vista de código no tiene scroll horizontal con la rueda; en modo VIM
+  el doble clic y `Shift+clic` no seleccionan (se arrastra a Visual).
+- **Edición básica (#19)**: en macOS, `Alt+↑/↓` necesitan que la terminal
+  mande Option como Meta (si no, están los chords `Ctrl+K`).
 
 ---
 
@@ -199,6 +193,16 @@ Búsqueda con `/`/`?`/`n`/`*`, macros, registros con nombre, `Ctrl+R`.
 
 ## Hecho recientemente (para no reabrir por error)
 
+**2026-09-30 — todo P0 cerrado:**
+- **P0 #19 Edición básica** (PR #127): comentar/descomentar (`Ctrl+/`),
+  mover (`Alt+↑/↓`) y duplicar líneas, seleccionar todo (`Ctrl+A`), ir a
+  línea (`Ctrl+G`); todo con multi-cursor y un solo paso de deshacer.
+- **P0 #18 Mouse**: clic, arrastre, doble/triple clic y `Shift+clic` en
+  el código; rueda en código, explorador, tabla CSV y listas; clic en
+  pestañas (medio para cerrar), explorador, paleta y demás overlays (clic
+  afuera cierra); popups del LSP. Lo que se dibujó en cada frame queda en
+  `tcode_ui::ZonasMouse`; `crates/app/src/mouse.rs` las consulta. Se
+  apaga en Interfaz → "Usar el mouse".
 **2026-09-30 — P2 #22 Panel de problemas:** `Ctrl+Shift+M`/`Ctrl+K Q`
 lista los diagnósticos de todos los documentos abiertos (reusa la lista
 de ubicaciones de "Buscar referencias": filtro, `Enter`, mouse y "Volver"

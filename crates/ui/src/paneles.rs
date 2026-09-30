@@ -9,6 +9,8 @@ use tcode_fs::DiffGit;
 use tcode_lsp::DiagnosticoSimple;
 use tcode_syntax::{Lenguaje, Resaltador};
 
+use crate::vista_codigo::PosicionClic;
+use crate::zonas::{ZonaPanel, ZonasMouse};
 use crate::{barra_pestanas, breadcrumbs, statusbar, vista_codigo, vista_csv, vista_markdown, EstadoUi, Paleta};
 
 /// Cómo se divide un panel (`Ctrl+\`/`Ctrl+K Ctrl+\`, PLAN.md §4): en
@@ -573,6 +575,48 @@ impl Layout {
         }
     }
 
+    /// Clic en un panel (BACKLOG.md P0 #18): lo activa. A diferencia de
+    /// [`Layout::ir_a_panel`], hacer clic en el panel que ya está activo no
+    /// sale del maximizado (maximizado es el único que se ve).
+    pub fn activar_panel(&mut self, indice: usize) {
+        if indice != self.activo {
+            self.ir_a_panel(indice);
+        }
+    }
+
+    /// El documento visible del panel `indice`, si existe.
+    fn documento_en(&self, indice: usize) -> Option<&PanelEditor> {
+        self.hojas().get(indice).map(|p| p.activo())
+    }
+
+    /// Posición del texto bajo `(x, y)` en la vista de código del panel de
+    /// `zona` (del último frame), llevando el punto al borde del área si
+    /// quedó afuera — ver `vista_codigo::posicion_en`. `None` si ese panel
+    /// no muestra código.
+    pub fn posicion_en_codigo(&self, zona: &ZonaPanel, x: u16, y: u16) -> Option<PosicionClic> {
+        let codigo = zona.codigo.as_ref()?;
+        let documento = self.documento_en(zona.indice)?;
+        Some(vista_codigo::posicion_en(&documento.editor, &documento.estado_ui, codigo, x, y))
+    }
+
+    /// Rueda del mouse sobre el panel de `zona`: desplaza su código (o el
+    /// preview Markdown) `delta` filas sin mover el cursor. La tabla CSV
+    /// no pasa por acá: ahí la rueda mueve la celda seleccionada (`app`).
+    pub fn desplazar_vista(&mut self, zona: &ZonaPanel, delta: isize) {
+        let Some(pestanas) = self.hojas_mut().into_iter().nth(zona.indice) else { return };
+        let documento = pestanas.activo_mut();
+        match &zona.codigo {
+            Some(codigo) => vista_codigo::desplazar(&documento.editor, &mut documento.estado_ui, codigo, delta),
+            None => {
+                // Solo preview: el scroll es una línea del fuente, sin
+                // cursor que lo persiga (`vista_codigo` no se dibuja).
+                let maximo = documento.editor.buffer().num_lineas().saturating_sub(1);
+                let scroll = documento.estado_ui.scroll.saturating_add_signed(delta);
+                documento.estado_ui.scroll = scroll.min(maximo);
+            }
+        }
+    }
+
     /// Dibuja el árbol de paneles completo dentro de `area`, recursivo:
     /// cada división reparte el espacio 50/50 entre sus dos sub-árboles.
     /// Solo el panel activo recibe el cursor real de la terminal.
@@ -591,6 +635,7 @@ impl Layout {
         columna_regla: Option<usize>,
         indicadores_git: bool,
         interfaz: &ConfigInterfaz,
+        zonas: &mut ZonasMouse,
     ) {
         // Maximizado: la hoja activa se dibuja sola, como si fuera la raíz
         // (índice 0 de un árbol de un solo panel) — el resto del árbol ni
@@ -615,7 +660,15 @@ impl Layout {
             columna_regla,
             indicadores_git,
             interfaz,
+            zonas,
         );
+        // Maximizada, la hoja se dibujó como índice 0: para el mouse vale
+        // su índice real.
+        if self.maximizado {
+            for zona in &mut zonas.paneles {
+                zona.indice = self.activo;
+            }
+        }
         if self.maximizado && interfaz.mostrar_statusbar && area.height > 0 {
             // Pegado a la derecha de la última fila (la de la statusbar),
             // encima de su relleno: así no hace falta tocar
@@ -697,10 +750,12 @@ fn dibujar_panel(
     columna_regla: Option<usize>,
     indicadores_git: bool,
     interfaz: &ConfigInterfaz,
+    zonas: &mut ZonasMouse,
 ) {
     match panel {
         Panel::Hoja(pestanas) => {
             let es_activo = *indice_actual == activo;
+            let mut zona = ZonaPanel { indice: *indice_actual, area, ..Default::default() };
             *indice_actual += 1;
 
             // Barra de pestañas (BACKLOG.md P3 #10): una fila arriba del
@@ -711,7 +766,9 @@ fn dibujar_panel(
             // más abajo, cuando ya se sabe qué vista usa el panel).
             let franjas = franjas_superiores(area, interfaz);
             if let Some(barra) = franjas.pestanas {
-                barra_pestanas::dibujar(frame, barra, &pestanas.documentos, pestanas.activa, es_activo, paleta);
+                zona.pestanas =
+                    barra_pestanas::dibujar(frame, barra, &pestanas.documentos, pestanas.activa, es_activo, paleta);
+                zona.barra_pestanas = Some(barra);
             }
             let (area, area_breadcrumbs) = (franjas.resto, franjas.breadcrumbs);
             let panel_editor = pestanas.activo_mut();
@@ -730,6 +787,7 @@ fn dibujar_panel(
                 (area, None)
             };
             let partes = [area_contenido];
+            zona.contenido = area_contenido;
 
             // La búsqueda opera solo sobre el buffer del panel activo: los
             // demás paneles no reciben coincidencias que resaltar.
@@ -768,7 +826,7 @@ fn dibujar_panel(
                 // para cualquier cosa que haya cambiado el buffer.
                 let num_visibles = panel_editor.estado_csv.filas_visibles(&tabla).len();
                 panel_editor.estado_csv.recortar(num_visibles, tabla.num_columnas());
-                vista_csv::dibujar(
+                zona.tabla = vista_csv::dibujar(
                     frame,
                     partes[0],
                     &tabla,
@@ -790,6 +848,7 @@ fn dibujar_panel(
                         panel_editor.mensaje_estado.as_deref(),
                     );
                 }
+                zonas.paneles.push(zona);
                 return;
             }
 
@@ -810,7 +869,7 @@ fn dibujar_panel(
 
             match area_markdown {
                 ModoMarkdown::Fuente => {
-                    vista_codigo::dibujar(
+                    zona.codigo = Some(vista_codigo::dibujar(
                         frame,
                         partes[0],
                         &panel_editor.editor,
@@ -826,14 +885,14 @@ fn dibujar_panel(
                         ajuste_linea,
                         columna_regla,
                         marcas_git,
-                    );
+                    ));
                 }
                 ModoMarkdown::Dividido => {
                     let columnas = ratatui::layout::Layout::default()
                         .direction(Direction::Horizontal)
                         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                         .split(partes[0]);
-                    vista_codigo::dibujar(
+                    zona.codigo = Some(vista_codigo::dibujar(
                         frame,
                         columnas[0],
                         &panel_editor.editor,
@@ -864,7 +923,7 @@ fn dibujar_panel(
                         // arriba).
                         columna_regla,
                         marcas_git,
-                    );
+                    ));
                     vista_markdown::dibujar(
                         frame,
                         columnas[1],
@@ -900,6 +959,7 @@ fn dibujar_panel(
                     panel_editor.mensaje_estado.as_deref(),
                 );
             }
+            zonas.paneles.push(zona);
         }
         Panel::Division { direccion, primero, segundo } => {
             // Ojo: un split "vertical" (PLAN.md §4) reparte el ANCHO —
@@ -915,11 +975,11 @@ fn dibujar_panel(
                 .split(area);
             dibujar_panel(
                 frame, partes[0], primero, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
-                ajuste_linea, columna_regla, indicadores_git, interfaz,
+                ajuste_linea, columna_regla, indicadores_git, interfaz, zonas,
             );
             dibujar_panel(
                 frame, partes[1], segundo, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
-                ajuste_linea, columna_regla, indicadores_git, interfaz,
+                ajuste_linea, columna_regla, indicadores_git, interfaz, zonas,
             );
         }
     }

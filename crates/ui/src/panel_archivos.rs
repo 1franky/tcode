@@ -6,6 +6,7 @@ use ratatui::Frame;
 
 use tcode_fs::Explorador;
 
+use crate::zonas::ZonaLista;
 use crate::Paleta;
 
 /// Panel lateral del explorador de archivos (`Ctrl+B`, PLAN.md §4/§11 M1):
@@ -33,7 +34,10 @@ use crate::Paleta;
 /// fila en `lista_visible()`, así que da lo mismo si la ventana visible
 /// arranca en la fila 0 o más abajo: lo que se ve siempre corresponde a
 /// la tecla que hay que tipear.
-pub fn dibujar(frame: &mut Frame, area: Rect, explorador: &Explorador, paleta: &Paleta) {
+///
+/// Devuelve qué fila del árbol quedó en cada renglón, para el mouse
+/// (BACKLOG.md P0 #18).
+pub fn dibujar(frame: &mut Frame, area: Rect, explorador: &Explorador, paleta: &Paleta) -> ZonaLista {
     let seleccion = explorador.seleccion();
     let modo_salto = explorador.modo_salto();
 
@@ -93,9 +97,12 @@ pub fn dibujar(frame: &mut Frame, area: Rect, explorador: &Explorador, paleta: &
         .title(explorador.nombre_raiz().to_string())
         .style(Style::default().bg(paleta.fondo).fg(paleta.texto));
 
+    let interior = bloque.inner(area);
+    let total = items.len();
     let mut estado_lista = ListState::default();
-    if seleccion < items.len() {
+    if seleccion < total {
         estado_lista.select(Some(seleccion));
     }
     frame.render_stateful_widget(List::new(items).block(bloque), area, &mut estado_lista);
+    ZonaLista::continua(interior, estado_lista.offset(), total)
 }

@@ -6,12 +6,17 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use tcode_core::{linea_de_ordinal, ordinal_visible, tramo_que_oculta, Coincidencia, Editor};
+use tcode_core::{linea_de_ordinal, ordinal_visible, tramo_que_oculta, Coincidencia, CursorMultiple, Editor};
 use tcode_fs::MarcaGit;
 use tcode_lsp::{DiagnosticoSimple, Severidad};
 use tcode_syntax::{Lenguaje, Resaltador, Token};
 
+use crate::zonas::ZonaCodigo;
 use crate::{EstadoUi, Paleta};
+
+/// Marcador de bloque plegado al final de su cabecera (ver [`dibujar`]);
+/// un clic sobre él lo despliega (ver [`posicion_en`]).
+const MARCADOR_PLIEGUE: &str = " ... ";
 
 /// El tramo de una línea lógica que ocupa una fila de pantalla. Sin
 /// ajuste de línea hay una fila visual por línea lógica (`inicio: 0,
@@ -244,10 +249,19 @@ pub fn dibujar(
     ajuste_linea: bool,
     columna_regla: Option<usize>,
     marcas_git: Option<&[Option<MarcaGit>]>,
-) {
+) -> ZonaCodigo {
     estado.posicion_cursor = None;
     let buffer = editor.buffer();
     let (area_gutter, area) = dividir_gutter(area, buffer.num_lineas(), mostrar_numeros, marcas_git.is_some());
+    let zona = ZonaCodigo { texto: area, gutter: area_gutter, ajuste: ajuste_linea };
+    // Scroll con la rueda (BACKLOG.md P0 #18): mientras el cursor siga
+    // exactamente donde estaba al girarla, el scroll no lo persigue (como
+    // VSCode, el cursor puede quedar fuera de la pantalla). Cualquier
+    // cosa que lo mueva o edite el texto vuelve al scroll automático.
+    let libre = estado.scroll_libre == Some(firma_cursor(editor));
+    if !libre {
+        estado.scroll_libre = None;
+    }
 
     let alto_visible = area.height as usize;
     let ancho_visible = area.width as usize;
@@ -271,8 +285,16 @@ pub fn dibujar(
         let filas_de = |l: usize| filas_de_linea(buffer.longitud_visible_linea(l), ancho);
         let ancla = (estado.scroll, estado.subfila_scroll);
         let cursor_visual = (cursor.linea, cursor.columna / ancho);
-        let (ancla, fila_cursor) =
+        let (ajustada, fila_cursor) =
             ajustar_scroll_con_ajuste(ancla, cursor_visual, alto_visible, buffer.num_lineas(), &ocultos, filas_de);
+        // Con el scroll libre el ancla se queda donde la dejó la rueda; el
+        // cursor se ve solo si el ajuste no hubiera tenido que moverla.
+        let (ancla, fila_cursor) = if libre {
+            let normal = normalizar_ancla(ancla, buffer.num_lineas(), &ocultos, filas_de);
+            (normal, (normal == ajustada).then_some(fila_cursor))
+        } else {
+            (ajustada, Some(fila_cursor))
+        };
         (estado.scroll, estado.subfila_scroll) = ancla;
         let mut filas: Vec<FilaVisual> = Vec::with_capacity(alto_visible);
         let mut linea = ancla.0;
@@ -291,7 +313,11 @@ pub fn dibujar(
         // identidad y esto es exactamente lo de antes: las líneas
         // `scroll..scroll + alto`.
         let fila_cursor = ordinal_visible(&ocultos, cursor.linea);
-        ajustar_scroll(estado, fila_cursor, alto_visible);
+        if libre {
+            estado.scroll = estado.scroll.min(ordinal_visible(&ocultos, buffer.num_lineas().saturating_sub(1)));
+        } else {
+            ajustar_scroll(estado, fila_cursor, alto_visible);
+        }
         let mut filas = Vec::with_capacity(alto_visible);
         let mut idx = linea_de_ordinal(&ocultos, estado.scroll);
         while filas.len() < alto_visible && idx < buffer.num_lineas() {
@@ -302,7 +328,7 @@ pub fn dibujar(
             filas.push(FilaVisual { idx_linea: idx, inicio: 0, fin: buffer.linea_texto(idx).len() });
             idx += 1;
         }
-        (filas, fila_cursor.saturating_sub(estado.scroll))
+        (filas, fila_cursor.checked_sub(estado.scroll).filter(|f| *f < alto_visible))
     };
     // Texto de las líneas que tocan las filas visibles, indexado desde la
     // primera de ellas. Las ocultas por un pliegue en el medio no se
@@ -366,7 +392,7 @@ pub fn dibujar(
             // ambiguo (el de puntos suspensivos, los triángulos) desalinean
             // el render en Windows Terminal (ver el fix de v0.5.1).
             if fila.fin == linea.len() && ocultos.iter().any(|t| t.start == fila.idx_linea + 1) {
-                spans.push(Span::styled(" ... ", Style::default().fg(paleta.numero_linea).bg(paleta.seleccion)));
+                spans.push(Span::styled(MARCADOR_PLIEGUE, Style::default().fg(paleta.numero_linea).bg(paleta.seleccion)));
             }
 
             // Regla vertical (BACKLOG.md P1 #5): entre selección/búsqueda
@@ -467,13 +493,212 @@ pub fn dibujar(
         dibujar_gutter(frame, area_gutter, &filas, alto_visible, cursor.linea, paleta, mostrar_numeros, marcas_git);
     }
 
-    if mostrar_cursor {
+    if let (true, Some(fila_cursor)) = (mostrar_cursor, fila_cursor_en_pantalla) {
         let columna_local = if ajuste_linea { cursor.columna % ancho } else { cursor.columna };
         let columna = area.x + columna_local as u16;
-        let fila_pantalla = area.y + fila_cursor_en_pantalla as u16;
+        let fila_pantalla = area.y + fila_cursor as u16;
         frame.set_cursor_position((columna, fila_pantalla));
         estado.posicion_cursor = Some((columna, fila_pantalla));
     }
+    zona
+}
+
+/// Lo que tiene que seguir igual para que el scroll de la rueda no se
+/// vuelva a pegar al cursor (ver `EstadoUi::scroll_libre`): el cursor
+/// principal con su selección, cuántos cursores hay y la revisión del
+/// texto.
+pub(crate) type FirmaCursor = (CursorMultiple, usize, u64);
+
+pub(crate) fn firma_cursor(editor: &Editor) -> FirmaCursor {
+    (editor.cursores()[0], editor.cursores().len(), editor.buffer().revision())
+}
+
+/// El ancla de scroll llevada a una fila que exista y se vea — la misma
+/// normalización del principio de [`ajustar_scroll_con_ajuste`].
+fn normalizar_ancla(
+    ancla: PosicionVisual,
+    num_lineas: usize,
+    ocultos: &[Range<usize>],
+    filas: impl Fn(usize) -> usize,
+) -> PosicionVisual {
+    let linea = visible_o_cabecera(ocultos, ancla.0.min(num_lineas.max(1) - 1));
+    (linea, ancla.1.min(filas(linea) - 1))
+}
+
+/// La fila visual que está `fila` filas debajo de `ancla` (la de arriba
+/// de la pantalla), o `None` si cae después del final del archivo.
+/// Recorre solo las filas del medio: O(alto de pantalla). Sin ajuste de
+/// línea se usa con una fila por línea.
+fn fila_visual_en(
+    ancla: PosicionVisual,
+    fila: usize,
+    num_lineas: usize,
+    ocultos: &[Range<usize>],
+    filas: impl Fn(usize) -> usize,
+) -> Option<PosicionVisual> {
+    let (mut linea, mut subfila) = ancla;
+    let mut resto = fila;
+    loop {
+        let n = filas(linea);
+        if subfila + resto < n {
+            return Some((linea, subfila + resto));
+        }
+        resto -= n - subfila;
+        subfila = 0;
+        linea = siguiente_visible(ocultos, linea);
+        if linea >= num_lineas {
+            return None;
+        }
+    }
+}
+
+/// Corre el ancla `delta` filas visuales (negativo = hacia arriba), sin
+/// pasar de la primera fila ni de la que deja la última fila del archivo
+/// abajo de todo en una pantalla de `alto` filas. O(|delta| + alto).
+fn mover_ancla(
+    ancla: PosicionVisual,
+    delta: isize,
+    num_lineas: usize,
+    ocultos: &[Range<usize>],
+    filas: impl Fn(usize) -> usize,
+    alto: usize,
+) -> PosicionVisual {
+    let (mut linea, mut subfila) = ancla;
+    if delta < 0 {
+        for _ in 0..delta.unsigned_abs() {
+            if subfila > 0 {
+                subfila -= 1;
+            } else if let Some(anterior) = anterior_visible(ocultos, linea) {
+                linea = anterior;
+                subfila = filas(linea) - 1;
+            } else {
+                break;
+            }
+        }
+        return (linea, subfila);
+    }
+    // El tope: desde la última fila del archivo, `alto - 1` para arriba.
+    let ultima = visible_o_cabecera(ocultos, num_lineas.max(1) - 1);
+    let mut tope = (ultima, filas(ultima) - 1);
+    for _ in 1..alto.max(1) {
+        if tope.1 > 0 {
+            tope.1 -= 1;
+        } else if let Some(anterior) = anterior_visible(ocultos, tope.0) {
+            tope = (anterior, filas(anterior) - 1);
+        } else {
+            break;
+        }
+    }
+    for _ in 0..delta {
+        if (linea, subfila) >= tope {
+            break;
+        }
+        if subfila + 1 < filas(linea) {
+            subfila += 1;
+        } else {
+            let siguiente = siguiente_visible(ocultos, linea);
+            if siguiente >= num_lineas {
+                break;
+            }
+            (linea, subfila) = (siguiente, 0);
+        }
+    }
+    (linea, subfila)
+}
+
+/// Qué carácter de `texto` (una fila visual) se dibujó en la columna de
+/// pantalla `x` (relativa al inicio de la fila), sumando los anchos con
+/// los que los dibuja `ratatui` (2 los caracteres anchos, 0 los que no
+/// ocupan lugar; un tab cuenta 1, `ratatui` no lo expande). Devuelve el
+/// índice de carácter y, si `x` quedó más allá del texto, cuántas columnas
+/// más allá (`Some(0)` = justo después del último).
+fn columna_en_texto(texto: &str, x: usize) -> (usize, Option<usize>) {
+    let mut usado = 0;
+    let mut buf = [0u8; 4];
+    for (i, c) in texto.chars().enumerate() {
+        let ancho = Span::raw(&*c.encode_utf8(&mut buf)).width();
+        if ancho > 0 && x < usado + ancho {
+            return (i, None);
+        }
+        usado += ancho;
+    }
+    (texto.chars().count(), Some(x.saturating_sub(usado)))
+}
+
+/// Una posición del texto bajo el mouse (ver [`posicion_en`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PosicionClic {
+    pub linea: usize,
+    pub columna: usize,
+    /// El punto cayó en el gutter (números / marcas de git).
+    pub en_gutter: bool,
+    /// El punto cayó sobre el marcador ` ... ` de un bloque plegado.
+    pub sobre_pliegue: bool,
+}
+
+/// Traduce un punto de la pantalla a línea/columna del documento, con el
+/// scroll, el ajuste de línea y los pliegues del último dibujo (ver
+/// [`dibujar`]). Un punto fuera del área del texto se lleva a su borde
+/// (así un arrastre que se pasa de la pantalla sigue seleccionando); uno
+/// debajo del final del archivo es el final de la última línea. Solo lee
+/// la línea bajo el punto y recorre las filas de la pantalla.
+pub fn posicion_en(editor: &Editor, estado: &EstadoUi, zona: &ZonaCodigo, x: u16, y: u16) -> PosicionClic {
+    let buffer = editor.buffer();
+    let ocultos = editor.plegado().tramos_ocultos();
+    let num_lineas = buffer.num_lineas();
+    let area = zona.texto;
+    let en_gutter = zona.gutter.is_some_and(|g| crate::zonas::contiene(g, x, y));
+    let fila = (y.clamp(area.y, (area.y + area.height).saturating_sub(1).max(area.y)) - area.y) as usize;
+    let x_rel = x.saturating_sub(area.x) as usize;
+    let ancho = (area.width as usize).max(1);
+    let filas_ajuste = |l: usize| filas_de_linea(buffer.longitud_visible_linea(l), ancho);
+
+    let visual = if zona.ajuste {
+        let ancla = normalizar_ancla((estado.scroll, estado.subfila_scroll), num_lineas, &ocultos, filas_ajuste);
+        fila_visual_en(ancla, fila, num_lineas, &ocultos, filas_ajuste)
+    } else {
+        let ancla = (linea_de_ordinal(&ocultos, estado.scroll).min(num_lineas.max(1) - 1), 0);
+        fila_visual_en(ancla, fila, num_lineas, &ocultos, |_| 1)
+    };
+    let Some((linea, subfila)) = visual else {
+        let ultima = visible_o_cabecera(&ocultos, num_lineas.max(1) - 1);
+        let columna = buffer.longitud_visible_linea(ultima);
+        return PosicionClic { linea: ultima, columna, en_gutter, sobre_pliegue: false };
+    };
+    let inicio = if zona.ajuste { subfila * ancho } else { 0 };
+    if en_gutter {
+        return PosicionClic { linea, columna: inicio, en_gutter, sobre_pliegue: false };
+    }
+
+    let texto = buffer.linea_texto(linea);
+    let texto_fila: String = if zona.ajuste { texto.chars().skip(inicio).take(ancho).collect() } else { texto };
+    let (indice, pasado) = columna_en_texto(&texto_fila, x_rel);
+    let ultima_fila = !zona.ajuste || subfila + 1 == filas_ajuste(linea);
+    let plegada = ocultos.iter().any(|t| t.start == linea + 1);
+    let sobre_pliegue = ultima_fila && plegada && pasado.is_some_and(|p| p < MARCADOR_PLIEGUE.len());
+    PosicionClic { linea, columna: inicio + indice, en_gutter, sobre_pliegue }
+}
+
+/// Desplaza la vista `delta` filas (la rueda del mouse) sin mover el
+/// cursor, y deja el scroll "libre" hasta que el cursor cambie (ver
+/// [`dibujar`]).
+pub fn desplazar(editor: &Editor, estado: &mut EstadoUi, zona: &ZonaCodigo, delta: isize) {
+    let buffer = editor.buffer();
+    let ocultos = editor.plegado().tramos_ocultos();
+    let num_lineas = buffer.num_lineas();
+    let alto = zona.texto.height as usize;
+    if zona.ajuste {
+        let ancho = (zona.texto.width as usize).max(1);
+        let filas = |l: usize| filas_de_linea(buffer.longitud_visible_linea(l), ancho);
+        let ancla = normalizar_ancla((estado.scroll, estado.subfila_scroll), num_lineas, &ocultos, filas);
+        (estado.scroll, estado.subfila_scroll) = mover_ancla(ancla, delta, num_lineas, &ocultos, filas, alto);
+    } else {
+        let arriba = linea_de_ordinal(&ocultos, estado.scroll).min(num_lineas.max(1) - 1);
+        let linea = visible_o_cabecera(&ocultos, arriba);
+        let (nueva, _) = mover_ancla((linea, 0), delta, num_lineas, &ocultos, |_| 1, alto);
+        estado.scroll = ordinal_visible(&ocultos, nueva);
+    }
+    estado.scroll_libre = Some(firma_cursor(editor));
 }
 
 /// El diagnóstico más grave (error > advertencia > información >
@@ -1112,5 +1337,126 @@ mod tests {
                 "{largos:?} ancla {ancla:?} cursor {cursor:?} alto {alto}"
             );
         }
+    }
+
+    // --- Mouse (BACKLOG.md P0 #18): de un punto de la pantalla al texto.
+
+    fn editor_con(texto: &str) -> Editor {
+        let mut editor = Editor::nuevo();
+        editor.insertar_texto(texto);
+        editor
+    }
+
+    fn zona(ancho: u16, alto: u16, ajuste: bool, con_gutter: bool) -> ZonaCodigo {
+        // Gutter de 3 columnas en x = 10..13, el texto desde x = 13, y = 2.
+        let gutter = con_gutter.then_some(Rect { x: 10, y: 2, width: 3, height: alto });
+        let x = if con_gutter { 13 } else { 10 };
+        ZonaCodigo { texto: Rect { x, y: 2, width: ancho, height: alto }, gutter, ajuste }
+    }
+
+    fn clic(editor: &Editor, estado: &EstadoUi, zona: &ZonaCodigo, x: u16, y: u16) -> (usize, usize) {
+        let p = posicion_en(editor, estado, zona, x, y);
+        (p.linea, p.columna)
+    }
+
+    #[test]
+    fn columna_en_texto_suma_anchos_de_pantalla() {
+        assert_eq!(columna_en_texto("hola", 0), (0, None));
+        assert_eq!(columna_en_texto("hola", 3), (3, None));
+        assert_eq!(columna_en_texto("hola", 4), (4, Some(0)));
+        assert_eq!(columna_en_texto("hola", 7), (4, Some(3)));
+        // "日" ocupa dos columnas: las dos caen en el mismo carácter.
+        assert_eq!(columna_en_texto("a日b", 1), (1, None));
+        assert_eq!(columna_en_texto("a日b", 2), (1, None));
+        assert_eq!(columna_en_texto("a日b", 3), (2, None));
+        // Un tab ocupa una sola columna, como lo cuenta `ratatui` (no lo
+        // expande a la próxima parada de tabulación).
+        assert_eq!(columna_en_texto("a\tb", 1), (1, None));
+        assert_eq!(columna_en_texto("a\tb", 2), (2, None));
+    }
+
+    #[test]
+    fn clic_sin_ajuste_respeta_scroll_gutter_y_final_del_archivo() {
+        let editor = editor_con("cero\nuno\ndos largo\ntres");
+        let mut estado = EstadoUi { scroll: 1, ..Default::default() };
+        let z = zona(20, 5, false, true);
+        assert_eq!(clic(&editor, &estado, &z, 13, 2), (1, 0));
+        assert_eq!(clic(&editor, &estado, &z, 17, 3), (2, 4));
+        // Más allá del texto de la línea: al final.
+        assert_eq!(clic(&editor, &estado, &z, 30, 2), (1, 3));
+        // En el gutter: principio de la línea, marcado como gutter.
+        let p = posicion_en(&editor, &estado, &z, 11, 4);
+        assert_eq!((p.linea, p.columna, p.en_gutter), (3, 0, true));
+        // Debajo de la última línea: final del archivo.
+        assert_eq!(clic(&editor, &estado, &z, 14, 6), (3, 4));
+        // Arriba del área (un arrastre que se pasó): la primera fila.
+        estado.scroll = 2;
+        assert_eq!(clic(&editor, &estado, &z, 14, 0), (2, 1));
+    }
+
+    #[test]
+    fn clic_con_ajuste_ubica_la_subfila() {
+        // Ancho 4: "abcdefghij" ocupa 3 filas ("abcd", "efgh", "ij").
+        let editor = editor_con("abcdefghij\nxy");
+        let z = zona(4, 5, true, false);
+        let estado = EstadoUi::default();
+        assert_eq!(clic(&editor, &estado, &z, 11, 3), (0, 5));
+        assert_eq!(clic(&editor, &estado, &z, 13, 4), (0, 10));
+        assert_eq!(clic(&editor, &estado, &z, 11, 5), (1, 1));
+        // Con el scroll a mitad de la línea larga.
+        let estado = EstadoUi { scroll: 0, subfila_scroll: 2, ..Default::default() };
+        assert_eq!(clic(&editor, &estado, &z, 10, 2), (0, 8));
+        assert_eq!(clic(&editor, &estado, &z, 10, 3), (1, 0));
+    }
+
+    #[test]
+    fn clic_saltea_las_lineas_plegadas_y_detecta_el_marcador() {
+        let mut editor = editor_con("fn a() {\n  x\n  y\n}\nfin");
+        editor.inicio_archivo();
+        assert!(editor.plegar_en_cursor(&[tcode_core::Pliegue { inicio: 0, fin: 3 }]));
+        let ocultos = editor.plegado().tramos_ocultos();
+        let siguiente = siguiente_visible(&ocultos, 0);
+        let estado = EstadoUi::default();
+        for ajuste in [false, true] {
+            let z = zona(30, 5, ajuste, false);
+            assert_eq!(clic(&editor, &estado, &z, 12, 3).0, siguiente, "ajuste {ajuste}");
+            // "fn a() {" mide 8: el marcador ocupa las 5 columnas de después.
+            assert!(posicion_en(&editor, &estado, &z, 10 + 9, 2).sobre_pliegue);
+            assert!(!posicion_en(&editor, &estado, &z, 10 + 14, 2).sobre_pliegue);
+            assert!(!posicion_en(&editor, &estado, &z, 10 + 3, 2).sobre_pliegue);
+        }
+    }
+
+    #[test]
+    fn mover_ancla_no_pasa_del_principio_ni_del_final() {
+        let largos = [1, 3, 1, 2, 1]; // 8 filas en total
+        let filas = |l: usize| largos[l];
+        assert_eq!(mover_ancla((0, 0), -3, 5, &[], filas, 3), (0, 0));
+        assert_eq!(mover_ancla((0, 0), 2, 5, &[], filas, 3), (1, 1));
+        assert_eq!(mover_ancla((1, 1), -2, 5, &[], filas, 3), (0, 0));
+        // Tope con alto 3: las últimas 3 filas son (3,0), (3,1), (4,0).
+        assert_eq!(mover_ancla((0, 0), 50, 5, &[], filas, 3), (3, 0));
+        // Pantalla más alta que el archivo: no se mueve.
+        assert_eq!(mover_ancla((0, 0), 5, 5, &[], filas, 20), (0, 0));
+        // Con un pliegue que oculta la línea 1.
+        let ocultos = vec![Range { start: 1, end: 2 }];
+        assert_eq!(mover_ancla((0, 0), 1, 5, &ocultos, filas, 1), (2, 0));
+        assert_eq!(mover_ancla((2, 0), -1, 5, &ocultos, filas, 1), (0, 0));
+    }
+
+    #[test]
+    fn desplazar_deja_el_scroll_libre_hasta_que_se_mueve_el_cursor() {
+        let texto: String = (0..50).map(|i| format!("linea {i}\n")).collect();
+        let mut editor = editor_con(&texto);
+        editor.inicio_archivo();
+        let mut estado = EstadoUi::default();
+        let z = zona(20, 10, false, false);
+        desplazar(&editor, &mut estado, &z, 3);
+        assert_eq!(estado.scroll, 3);
+        assert_eq!(estado.scroll_libre, Some(firma_cursor(&editor)));
+        desplazar(&editor, &mut estado, &z, 1000);
+        assert_eq!(estado.scroll, 41, "la última línea (50, vacía) queda abajo de todo");
+        editor.mover_abajo();
+        assert_ne!(estado.scroll_libre, Some(firma_cursor(&editor)));
     }
 }

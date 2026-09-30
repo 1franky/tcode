@@ -22,7 +22,7 @@ use serde_json::{json, Value};
 use tcode_commands::{EntradaUbicacion, EstadoListaUbicaciones};
 use tcode_core::{Editor, Modo};
 use tcode_lsp::{EstadoCompletado, ItemCompletado, Ubicacion};
-use tcode_ui::{Layout as PanelLayout, ModoCsv, Paleta};
+use tcode_ui::{Layout as PanelLayout, ModoCsv, Paleta, ZonaOverlay};
 
 use crate::lsp::{RespuestaLsp, TipoPedido};
 use crate::{abrir_ruta_desde_explorador, sin_modificadores, sincronizar_lsp, EstadoApp, Foco};
@@ -715,27 +715,72 @@ pub fn pausa_vencida(estado: &mut EstadoApp) {
 }
 
 /// Dibuja lo de este módulo encima de todo lo demás.
-pub fn dibujar(frame: &mut Frame, layout: &PanelLayout, funciones: &EstadoFuncionesLsp, paleta: &Paleta) {
+/// Dibuja lo de este módulo que esté abierto. Devuelve, para el mouse
+/// (BACKLOG.md P0 #18), dónde quedó la lista de ubicaciones (un overlay
+/// modal) y el popup de completado o de hover (pegados al cursor).
+pub fn dibujar(
+    frame: &mut Frame,
+    layout: &PanelLayout,
+    funciones: &EstadoFuncionesLsp,
+    paleta: &Paleta,
+) -> (Option<ZonaOverlay>, Option<ZonaOverlay>) {
     let area = frame.area();
     if funciones.lista.activo() {
-        tcode_ui::panel_lsp::dibujar_lista_ubicaciones(frame, area, &funciones.lista, paleta);
-        return;
+        return (tcode_ui::panel_lsp::dibujar_lista_ubicaciones(frame, area, &funciones.lista, paleta), None);
     }
     if let Some(nombre) = &funciones.renombrar {
         tcode_ui::panel_lsp::dibujar_prompt_renombrar(frame, area, nombre, paleta);
-        return;
+        return (None, None);
     }
-    let Some(cursor) = layout.panel_activo().estado_ui.posicion_cursor() else { return };
+    let Some(cursor) = layout.panel_activo().estado_ui.posicion_cursor() else { return (None, None) };
     if funciones.completado.activo() {
         // Anclado al inicio de la palabra (no al cursor), para que no se
         // corra a cada letra escrita.
         let contexto = contexto_cursor(layout.editor_activo());
         let escritas = contexto.texto[contexto.byte_palabra..contexto.byte_cursor].chars().count() as u16;
         let ancla = (cursor.0.saturating_sub(escritas), cursor.1);
-        tcode_ui::panel_lsp::dibujar_completado(frame, area, ancla, &funciones.completado, paleta);
+        (None, tcode_ui::panel_lsp::dibujar_completado(frame, area, ancla, &funciones.completado, paleta))
     } else if let Some(texto) = &funciones.hover {
-        tcode_ui::panel_lsp::dibujar_hover(frame, area, cursor, texto, paleta);
+        (None, tcode_ui::panel_lsp::dibujar_hover(frame, area, cursor, texto, paleta))
+    } else {
+        (None, None)
     }
+}
+
+/// Clic sobre un ítem de la lista de ubicaciones (BACKLOG.md P0 #18):
+/// igual que elegirlo con las flechas y `Enter`.
+pub fn clic_en_lista(indice: usize, layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let lista = &mut estado.funciones_lsp.lista;
+    let actual = lista.seleccion();
+    crate::mouse::llevar_seleccion(lista, actual, indice, EstadoListaUbicaciones::mover_arriba, EstadoListaUbicaciones::mover_abajo);
+    if let Some(entrada) = estado.funciones_lsp.lista.confirmar() {
+        saltar_a(layout, estado, entrada.ruta, entrada.linea, entrada.caracter);
+    }
+}
+
+/// Clic sobre un ítem del completado: igual que elegirlo y `Enter`.
+pub fn clic_en_completado(indice: usize, layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let completado = &mut estado.funciones_lsp.completado;
+    let actual = completado.seleccion();
+    crate::mouse::llevar_seleccion(completado, actual, indice, EstadoCompletado::mover_arriba, EstadoCompletado::mover_abajo);
+    estado.funciones_lsp.completado_programado = None;
+    aceptar_completado(layout, estado);
+}
+
+/// La rueda sobre el popup de completado: mueve la selección.
+pub fn rueda_en_completado(abajo: bool, estado: &mut EstadoApp) {
+    if abajo {
+        estado.funciones_lsp.completado.mover_abajo();
+    } else {
+        estado.funciones_lsp.completado.mover_arriba();
+    }
+}
+
+/// Un clic en otro lado cierra el completado y el hover, como una tecla
+/// que no sigue la palabra.
+pub fn cerrar_popups(estado: &mut EstadoApp) {
+    estado.funciones_lsp.cerrar_completado();
+    estado.funciones_lsp.hover = None;
 }
 
 #[cfg(test)]

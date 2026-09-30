@@ -153,6 +153,26 @@ impl Editor {
         self.revelar_cursores();
     }
 
+    /// Doble clic (BACKLOG.md P0 #18): selecciona la palabra en `posicion`
+    /// (mismo criterio que `Ctrl+D`, ver `limites_palabra`) como único
+    /// cursor. Solo lee esa línea — `seleccion_de_palabra` copia todas.
+    /// Sin palabra ahí (espacio, símbolo, línea vacía) deja el cursor en
+    /// `posicion` sin selección. Devuelve si seleccionó algo.
+    pub fn seleccionar_palabra_en(&mut self, posicion: Cursor) -> bool {
+        let caracteres: Vec<char> = self.buffer.linea_texto(posicion.linea).chars().collect();
+        match limites_palabra(&caracteres, posicion.columna) {
+            Some((inicio, fin)) => {
+                let linea = posicion.linea;
+                self.fijar_seleccion(Cursor { linea, columna: inicio }, Cursor { linea, columna: fin });
+                true
+            }
+            None => {
+                self.fijar_seleccion(posicion, posicion);
+                false
+            }
+        }
+    }
+
     /// Abre un grupo de deshacer (ver `Historia::abrir_grupo`): todas las
     /// ediciones hasta `cerrar_grupo_deshacer` (o volver a Normal, o
     /// deshacer) se deshacen en un solo paso. Lo usa el modo VIM para que
@@ -1581,6 +1601,19 @@ mod tests {
         assert_eq!(limites_palabra(&caracteres, 4), Some((0, 4))); // justo después
         assert_eq!(limites_palabra(&caracteres, 5), Some((5, 10))); // "mundo"
         assert_eq!(limites_palabra(&caracteres, 4).unwrap(), (0, 4));
+    }
+
+    #[test]
+    fn seleccionar_palabra_en_marca_la_palabra_o_solo_ubica_el_cursor() {
+        let mut editor = Editor::nuevo();
+        escribir(&mut editor, "uno\nhola  mundo");
+        assert!(editor.seleccionar_palabra_en(Cursor { linea: 1, columna: 8 }));
+        let c = editor.cursores()[0];
+        assert_eq!((c.ancla, c.cursor), (Cursor { linea: 1, columna: 6 }, Cursor { linea: 1, columna: 11 }));
+        // Entre los dos espacios no hay palabra: cursor ahí, sin selección.
+        assert!(!editor.seleccionar_palabra_en(Cursor { linea: 1, columna: 5 }));
+        assert!(!editor.cursores()[0].tiene_seleccion());
+        assert_eq!(editor.cursor(), Cursor { linea: 1, columna: 5 });
     }
 
     /// Regresión: escribir MÁS DE UN carácter seguido con varios cursores

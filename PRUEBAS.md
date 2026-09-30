@@ -1039,6 +1039,32 @@ Ghostty).
 - [ ] **Modo VIM.** Con el modo VIM prendido, en Normal: `Ctrl+/`, `Alt+↑/↓`, `Shift+Alt+↓`, `Ctrl+A` y `Ctrl+G` funcionan igual; después de `Ctrl+G` se sigue en Normal.
 - [ ] **Explorador y CSV.** Con el foco en el explorador o en la vista de tabla de un CSV, ninguno de estos atajos toca el archivo (`Ctrl+K ↑/↓` sigue insertando filas en la tabla).
 
+## Mouse
+
+Con `HOME` temporal, en una terminal con mouse (en tmux: `set -g mouse
+on`, o inyectando secuencias SGR con `send-keys -l`, p. ej.
+`$'\e[<0;10;5M'` + `$'\e[<0;10;5m'` = clic en columna 10, fila 5). Un
+archivo con más de 100 líneas, alguna línea más larga que la ventana,
+una con palabras sueltas y un bloque plegable.
+
+- [ ] `Ctrl+,` → Interfaz → "Usar el mouse" está en "Sí" por defecto. Apagarlo: la terminal vuelve a seleccionar texto al arrastrar y los clics no hacen nada en tcode; `config.toml` queda con `usar_mouse = false`. Prenderlo: vuelve en el acto.
+- [ ] Clic en distintas filas y columnas del código: el cursor va exactamente ahí (con números de línea y marcas de git prendidos y apagados). Clic más allá del final de una línea: final de esa línea. Clic debajo de la última línea: final del archivo.
+- [ ] Con ajuste de línea prendido: clic en la 2.ª/3.ª fila de una línea partida ubica el cursor en la parte correcta de la línea.
+- [ ] Con un bloque plegado: clic debajo del pliegue va a la línea que se ve ahí (no a una oculta). Clic sobre ` ... ` lo despliega.
+- [ ] Línea con caracteres anchos (`日本語`) o acentos: clic sobre cada carácter ubica el cursor antes de ese carácter.
+- [ ] Arrastrar selecciona; arrastrar por debajo del borde del código desplaza la vista y sigue seleccionando.
+- [ ] Doble clic selecciona la palabra; triple clic, la línea entera. `Shift`+clic extiende la selección.
+- [ ] Rueda: la vista baja/sube 3 filas por muesca sin mover el cursor (queda fuera de la pantalla); una flecha vuelve a llevar la vista al cursor. No pasa del final del archivo. Con ajuste de línea también.
+- [ ] Con dos paneles (`Ctrl+\`): clic en el otro panel lo activa y ubica el cursor ahí. La rueda sobre el panel inactivo lo desplaza sin activarlo. Maximizado (`F11`), clic en el panel no lo restaura.
+- [ ] Clic en una pestaña la activa; clic medio la cierra; con cambios sin guardar avisa y un segundo clic medio la cierra.
+- [ ] Explorador (`Ctrl+B`): clic en una carpeta la expande/colapsa; clic en un archivo lo abre en el panel activo. La rueda mueve la selección.
+- [ ] Paleta (`F1`), buscador (`Ctrl+P`), selector de temas y de símbolos: clic en un ítem lo ejecuta/abre; clic afuera cierra (el selector de temas vuelve al tema de antes); rueda mueve la selección.
+- [ ] Búsqueda en el proyecto (`Ctrl+Shift+F`): clic en una coincidencia la abre; clic en el encabezado de archivo no hace nada.
+- [ ] Vista de tabla de un `.csv`: clic selecciona la celda (también el encabezado); rueda baja de fila, `Shift`+rueda cambia de columna.
+- [ ] Modo VIM en Normal: clic mueve el cursor; arrastrar entra a Visual (`-- VISUAL --`) con lo arrastrado; `d` lo borra. En Visual, un clic sale a Normal.
+- [ ] Con "Guardar como" o el `:` de VIM abiertos, los clics no hacen nada (lo escrito queda).
+- [ ] Al salir con `Ctrl+Q`, la terminal ya no captura el mouse (se puede seleccionar texto normalmente).
+- [ ] Tipear y pegar siguen igual de rápidos que en `develop`.
 ## Panel de problemas (BACKLOG.md P2 #22)
 
 Con `HOME` temporal y pyright instalado, en una carpeta con `a.py` (un

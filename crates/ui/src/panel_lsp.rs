@@ -14,6 +14,7 @@ use ratatui::Frame;
 use tcode_commands::EstadoListaUbicaciones;
 use tcode_lsp::EstadoCompletado;
 
+use crate::zonas::{ZonaLista, ZonaOverlay};
 use crate::{overlay, Paleta};
 
 /// Filas de items visibles a la vez en el popup de completado.
@@ -61,17 +62,18 @@ fn recortar(texto: &str, maximo: usize) -> String {
 /// las letras que coinciden con lo escrito en negrita; tipo; detalle),
 /// la seleccionada con el fondo de la línea actual, y la selección
 /// siempre a la vista (se desplaza de a una ventana de
-/// [`FILAS_COMPLETADO`]).
+/// [`FILAS_COMPLETADO`]). Devuelve el popup y qué item (índice de
+/// `EstadoCompletado::seleccion`) quedó en cada renglón, para el mouse.
 pub fn dibujar_completado(
     frame: &mut Frame,
     area_total: Rect,
     cursor: (u16, u16),
     estado: &EstadoCompletado,
     paleta: &Paleta,
-) {
+) -> Option<ZonaOverlay> {
     let visibles = estado.visibles();
     if !estado.activo() || visibles.is_empty() {
-        return;
+        return None;
     }
     let desde = estado.seleccion().saturating_sub(FILAS_COMPLETADO - 1);
     let ventana = &visibles[desde..(desde + FILAS_COMPLETADO).min(visibles.len())];
@@ -91,7 +93,7 @@ pub fn dibujar_completado(
     let ancho_resto = filas.iter().map(|(_, _, r)| r.chars().count()).max().unwrap_or(0);
     let ancho = (ancho_etiqueta + 2 + ancho_resto + 2) as u16;
     let alto = filas.len() as u16 + 2;
-    let Some(area) = area_junto_al_cursor(area_total, cursor, ancho, alto) else { return };
+    let area = area_junto_al_cursor(area_total, cursor, ancho, alto)?;
 
     let estilo_base = Style::default().bg(paleta.fondo).fg(paleta.texto);
     let lineas: Vec<Line> = filas
@@ -114,22 +116,26 @@ pub fn dibujar_completado(
         })
         .collect();
     let titulo = format!(" {}/{} ", estado.seleccion() + 1, visibles.len());
+    let bloque = Block::default().borders(Borders::ALL).border_set(crate::BORDE_ASCII).title(titulo).style(estilo_base);
+    let interior = bloque.inner(area);
     frame.render_widget(Clear, area);
-    frame.render_widget(
-        Paragraph::new(lineas).style(estilo_base).block(
-            Block::default().borders(Borders::ALL).border_set(crate::BORDE_ASCII).title(titulo).style(estilo_base),
-        ),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lineas).style(estilo_base).block(bloque), area);
+    Some(ZonaOverlay { area, lista: Some(ZonaLista::continua(interior, desde, visibles.len())) })
 }
 
 /// Popup de hover bajo el cursor: el texto (ya plano, ver
 /// `tcode_lsp::texto_hover`) con cada línea cortada a [`ANCHO_HOVER`].
-pub fn dibujar_hover(frame: &mut Frame, area_total: Rect, cursor: (u16, u16), texto: &str, paleta: &Paleta) {
+pub fn dibujar_hover(
+    frame: &mut Frame,
+    area_total: Rect,
+    cursor: (u16, u16),
+    texto: &str,
+    paleta: &Paleta,
+) -> Option<ZonaOverlay> {
     let lineas: Vec<String> = texto.lines().map(|l| recortar(&l.replace('\t', "    "), ANCHO_HOVER)).collect();
     let ancho = lineas.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16 + 2;
     let alto = lineas.len() as u16 + 2;
-    let Some(area) = area_junto_al_cursor(area_total, cursor, ancho.max(12), alto) else { return };
+    let area = area_junto_al_cursor(area_total, cursor, ancho.max(12), alto)?;
     let estilo_base = Style::default().bg(paleta.fondo).fg(paleta.texto);
     frame.render_widget(Clear, area);
     frame.render_widget(
@@ -138,18 +144,24 @@ pub fn dibujar_hover(frame: &mut Frame, area_total: Rect, cursor: (u16, u16), te
         ),
         area,
     );
+    Some(ZonaOverlay { area, lista: None })
 }
 
 /// Lista de ubicaciones (varias definiciones, o las referencias):
 /// el mismo overlay de "escribir para filtrar" que el selector de
 /// símbolos.
-pub fn dibujar_lista_ubicaciones(frame: &mut Frame, area_total: Rect, lista: &EstadoListaUbicaciones, paleta: &Paleta) {
+pub fn dibujar_lista_ubicaciones(
+    frame: &mut Frame,
+    area_total: Rect,
+    lista: &EstadoListaUbicaciones,
+    paleta: &Paleta,
+) -> Option<ZonaOverlay> {
     if !lista.activo() {
-        return;
+        return None;
     }
     let filas: Vec<(String, Vec<usize>)> =
         lista.resultados().map(|(entrada, posiciones)| (entrada.etiqueta.clone(), posiciones.to_vec())).collect();
-    overlay::dibujar(frame, area_total, lista.titulo(), lista.consulta(), &filas, lista.seleccion(), paleta);
+    Some(overlay::dibujar(frame, area_total, lista.titulo(), lista.consulta(), &filas, lista.seleccion(), paleta))
 }
 
 /// Prompt de una línea con el nombre nuevo para "Renombrar símbolo",

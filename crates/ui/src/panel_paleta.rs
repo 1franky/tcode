@@ -3,10 +3,11 @@ use ratatui::Frame;
 
 use tcode_commands::EstadoPaleta;
 
+use crate::zonas::ZonaOverlay;
 use crate::{overlay, Paleta};
 
 /// Dibuja la paleta de comandos (`Ctrl+Shift+P`/`F1`, PLAN.md §4).
-pub fn dibujar(frame: &mut Frame, area_total: Rect, paleta_comandos: &EstadoPaleta, paleta: &Paleta) {
+pub fn dibujar(frame: &mut Frame, area_total: Rect, paleta_comandos: &EstadoPaleta, paleta: &Paleta) -> ZonaOverlay {
     let filas: Vec<(String, Vec<usize>)> = paleta_comandos
         .resultados()
         .into_iter()
@@ -21,5 +22,5 @@ pub fn dibujar(frame: &mut Frame, area_total: Rect, paleta_comandos: &EstadoPale
         &filas,
         paleta_comandos.seleccion(),
         paleta,
-    );
+    )
 }

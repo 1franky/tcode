@@ -9,6 +9,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Atajos esenciales](#atajos-esenciales)
 - [Multi-cursor y selección](#multi-cursor-y-selección)
 - [Edición de líneas](#edición-de-líneas)
+- [Mouse](#mouse)
 - [Copiar, cortar y pegar](#copiar-cortar-y-pegar)
 - [Búsqueda y reemplazo](#búsqueda-y-reemplazo)
 - [Plegado de bloques](#plegado-de-bloques)
@@ -147,6 +148,66 @@ todos a la vez — igual que en VSCode o Sublime Text.
   si no, están los chords con `Ctrl+K` y la paleta ("Editor: ...").
 - En modo VIM, los atajos con `Ctrl`/`Alt` funcionan igual en modo
   Normal.
+
+## Mouse
+
+El mouse viene prendido. Se apaga en `Ctrl+,` → Interfaz → "Usar el
+mouse" (efecto inmediato, se guarda como `usar_mouse` en `[interfaz]`).
+
+**Selección nativa de la terminal:** mientras `tcode` usa el mouse, la
+terminal no selecciona texto por su cuenta al arrastrar. En la mayoría
+de las terminales se puede seguir haciéndolo manteniendo `Shift`
+(`Option` en iTerm2 y Terminal.app de macOS) mientras se arrastra. Si
+preferís la selección de la terminal siempre, apagá "Usar el mouse".
+
+En el código:
+
+| Gesto | Acción |
+|---|---|
+| Clic | Ubica el cursor (respeta el gutter, el ajuste de línea, los bloques plegados y los caracteres anchos) |
+| Arrastrar | Selecciona; pasarse por arriba o por abajo del código lo desplaza |
+| Doble clic | Selecciona la palabra |
+| Triple clic | Selecciona la línea entera |
+| `Shift`+clic | Extiende la selección desde donde estaba |
+| Clic en el gutter | Cursor al principio de esa línea |
+| Clic en ` ... ` de un bloque plegado | Lo despliega |
+| Rueda | Desplaza 3 filas sin mover el cursor (como VSCode); cualquier tecla que mueva el cursor vuelve a llevar la vista hasta él |
+| Clic en otro panel de un split | Lo activa |
+
+La vista de código no tiene scroll horizontal (sin ajuste de línea, las
+líneas largas se cortan), así que `Shift`+rueda no hace nada ahí.
+
+En el resto de la pantalla:
+
+- **Pestañas:** clic activa la pestaña; clic con el botón del medio la
+  cierra — con cambios sin guardar pide confirmación como `Ctrl+W` (un
+  segundo clic medio, o `Ctrl+W`, confirma).
+- **Explorador:** un clic selecciona y abre, como en VSCode: un archivo
+  se abre en el panel activo, una carpeta se expande o colapsa. La rueda
+  mueve la selección de a 3 filas.
+- **Tabla CSV:** clic selecciona la celda; la rueda mueve la selección de
+  a 3 filas y `Shift`+rueda de columna.
+- **Paleta, buscador de archivos, selector de temas y de símbolos,
+  búsqueda en el proyecto, lista de referencias/definiciones del LSP:**
+  clic en un ítem lo elige (como `Enter`); clic fuera del recuadro lo
+  cierra (como `Esc`); la rueda mueve la selección de a uno.
+- **Autocompletado del LSP:** clic en una sugerencia la acepta; la rueda
+  encima la recorre; un clic en otro lado cierra el popup (y el de
+  hover).
+- **Barra de `Ctrl+F`:** un clic fuera de ella la cierra y ubica el
+  cursor donde se hizo clic.
+
+**Modo VIM:** en Normal, un clic mueve el cursor (sin quedar pasado del
+último carácter); arrastrar entra a Visual con lo arrastrado
+seleccionado; en Visual, un clic sale a Normal. Doble clic y
+`Shift`+clic solo mueven el cursor.
+
+El mouse no hace nada en el panel de administración (`Ctrl+,`), el
+editor visual de temas ni los prompts de texto ("Guardar como", nuevo
+archivo/renombrar del explorador, renombrar símbolo, `:` de VIM,
+edición y filtro de celdas CSV): un clic perdido no borra lo que se
+estaba escribiendo. La confirmación de borrado del explorador se cancela
+con cualquier clic, igual que con cualquier tecla.
 
 ## Copiar, cortar y pegar
 
@@ -697,7 +758,7 @@ opción por nombre):
 | **Temas** | Elegir tema (abre el selector con preview) y duplicar el activo para editarlo. |
 | **Lenguajes / LSP** | Habilitar/deshabilitar el servidor LSP de cada lenguaje, ver si el binario está en el `PATH` y el estado de la sesión de cada lenguaje (Conectado/Iniciando/Error/Inactivo). `c` sobre una fila edita el comando+argumentos a mano (ver [LSP](#lsp-autocompletado-y-diagnósticos)); `Backspace` quita ese override. |
 | **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, indicadores de git, modo VIM, regla vertical, guardado automático, portapapeles del sistema (ver [Copiar, cortar y pegar](#copiar-cortar-y-pegar)). |
-| **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo), la barra de pestañas y los [breadcrumbs](#breadcrumbs) de arriba del código. |
+| **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo), la barra de pestañas y los [breadcrumbs](#breadcrumbs) de arriba del código, y si se [usa el mouse](#mouse). |
 
 Todos los cambios se aplican y persisten al instante en `config.toml`, sin
 tocar ni reiniciar nada más.

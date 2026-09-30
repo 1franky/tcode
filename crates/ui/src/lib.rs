@@ -28,6 +28,7 @@ mod statusbar;
 mod vista_codigo;
 mod vista_csv;
 mod vista_markdown;
+mod zonas;
 
 use ratatui::layout::{Constraint, Direction, Layout as LayoutRatatui};
 use ratatui::Frame;
@@ -43,7 +44,9 @@ use tcode_syntax::Resaltador;
 pub use paleta::Paleta;
 pub use paneles::{DireccionSplit, Layout, ModoCsv, ModoMarkdown, PanelEditor};
 pub use panel_admin::FilaLenguajeLsp;
+pub use vista_codigo::PosicionClic;
 pub use vista_csv::ancho_columna as ancho_columna_csv;
+pub use zonas::{contiene, ZonaCodigo, ZonaLista, ZonaOverlay, ZonaPanel, ZonaPestana, ZonaTabla, ZonasMouse};
 
 /// Ancho fijo (en columnas) del panel lateral del explorador cuando está
 /// visible.
@@ -99,6 +102,10 @@ pub struct EstadoUi {
     /// tabla o preview, panel no activo). Lo usan los popups del LSP
     /// (completado, hover — BACKLOG.md P1 #17) para aparecer justo debajo.
     posicion_cursor: Option<(u16, u16)>,
+    /// Scroll movido con la rueda del mouse (BACKLOG.md P0 #18): la firma
+    /// del cursor en ese momento. Mientras el cursor no cambie, el dibujo
+    /// no vuelve a llevar el scroll hasta él (ver `vista_codigo::dibujar`).
+    scroll_libre: Option<vista_codigo::FirmaCursor>,
 }
 
 impl EstadoUi {
@@ -156,6 +163,11 @@ impl<'a> Cromo<'a> {
 /// mutuamente excluyentes — nunca dos a la vez). `modo_zen` esconde el
 /// explorador y las barras (ver [`Cromo`]); los overlays se siguen
 /// dibujando igual, sobre el área completa.
+///
+/// `zonas` se rehace entera: dónde quedó cada cosa, para el mouse
+/// (BACKLOG.md P0 #18, ver [`ZonasMouse`]). Las dos vistas a pantalla
+/// completa (editor de tema y panel de administración) no anotan nada:
+/// ahí el mouse no hace nada.
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -180,8 +192,13 @@ pub fn dibujar(
     confirmar_borrado: &EstadoConfirmarBorrado,
     selector_simbolos: &EstadoSelectorSimbolos,
     modo_zen: bool,
+    zonas: &mut ZonasMouse,
 ) {
     let area_total = frame.area();
+    zonas.explorador = None;
+    zonas.paneles.clear();
+    zonas.overlay = None;
+    zonas.popup = None;
 
     if editor_tema.activo() {
         editor_tema::dibujar(frame, area_total, editor_tema, paleta);
@@ -201,7 +218,7 @@ pub fn dibujar(
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(ANCHO_PANEL_LATERAL), Constraint::Min(1)])
             .split(area_total);
-        panel_archivos::dibujar(frame, partes[0], explorador, paleta);
+        zonas.explorador = Some(panel_archivos::dibujar(frame, partes[0], explorador, paleta));
         partes[1]
     } else {
         area_total
@@ -218,21 +235,23 @@ pub fn dibujar(
         config.editor.columna_regla,
         config.editor.indicadores_git,
         &cromo.interfaz,
+        zonas,
     );
-    panel_busqueda::dibujar(frame, area_principal, estado_busqueda, paleta);
+    zonas.overlay = panel_busqueda::dibujar(frame, area_principal, estado_busqueda, paleta)
+        .map(|area| ZonaOverlay { area, lista: None });
 
     if paleta_comandos.activa() {
-        panel_paleta::dibujar(frame, area_total, paleta_comandos, paleta);
+        zonas.overlay = Some(panel_paleta::dibujar(frame, area_total, paleta_comandos, paleta));
     } else if buscador_archivos.activo() {
-        panel_buscador::dibujar(frame, area_total, buscador_archivos, paleta);
+        zonas.overlay = Some(panel_buscador::dibujar(frame, area_total, buscador_archivos, paleta));
     } else if selector_tema.activa() {
-        panel_selector_tema::dibujar(frame, area_total, selector_tema, paleta);
+        zonas.overlay = Some(panel_selector_tema::dibujar(frame, area_total, selector_tema, paleta));
     } else if selector_simbolos.activo() {
-        panel_selector_simbolos::dibujar(frame, area_total, selector_simbolos, paleta);
+        zonas.overlay = Some(panel_selector_simbolos::dibujar(frame, area_total, selector_simbolos, paleta));
     } else if guardar_como.activa() {
         panel_guardar_como::dibujar(frame, area_total, guardar_como, paleta);
     } else if logs_lsp.activo() {
-        panel_logs_lsp::dibujar(frame, area_total, logs_lsp, paleta);
+        zonas.overlay = Some(panel_logs_lsp::dibujar(frame, area_total, logs_lsp, paleta));
     } else if prompt_explorador.activo() {
         panel_prompt_explorador::dibujar(frame, area_total, prompt_explorador, paleta);
     } else if confirmar_borrado.activo() {
