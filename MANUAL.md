@@ -15,6 +15,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Plegado de bloques](#plegado-de-bloques)
 - [Paneles divididos (splits)](#paneles-divididos-splits)
 - [Pestañas de archivos abiertos](#pestañas-de-archivos-abiertos)
+- [Sesión y recuperación](#sesión-y-recuperación)
 - [Explorador de archivos](#explorador-de-archivos)
 - [Modo VIM opcional](#modo-vim-opcional)
 - [Paleta de comandos y buscador de archivos](#paleta-de-comandos-y-buscador-de-archivos)
@@ -503,6 +504,34 @@ atajos siguen andando igual sin la barra. El modo zen también la oculta.
   ninguno, y una pestaña de fondo sigue recibiendo sus diagnósticos. El
   servidor de un lenguaje se cierra al cerrar la última pestaña de ese
   lenguaje.
+
+## Sesión y recuperación
+
+**Restaurar la sesión.** Al abrir `tcode` sin archivo en una carpeta,
+vuelven las pestañas, los splits, la posición del cursor en cada archivo
+y si el explorador estaba abierto, tal como quedaron la última vez en
+esa carpeta. Cada carpeta tiene su propia sesión. `tcode archivo.rs` abre
+solo ese archivo y no toca la sesión guardada. Los archivos que ya no
+existen se saltean, y un "[Sin nombre]" no se guarda. Se apaga en
+`Ctrl+,` → Editor → "Restaurar la sesión anterior".
+
+**Recuperar cambios sin guardar.** Mientras escribís, `tcode` guarda una
+copia de los archivos con cambios sin guardar fuera del proyecto, un
+segundo después de dejar de tipear (o cada 5 segundos si no parás). Si
+`tcode` se cierra de golpe (se cerró la terminal, se cortó la conexión
+SSH, un `kill`, se colgó la máquina), la próxima vez que lo abras en la
+misma carpeta aparece un aviso con los archivos afectados:
+
+| Tecla | Acción |
+|---|---|
+| `Enter` | Recupera: cada archivo se abre con los cambios, **sin guardar** (revisalos y `Ctrl+S`); un `Ctrl+Z` vuelve a lo que hay en disco |
+| `d` | Descarta las copias |
+| `Esc` | Lo deja para después: se vuelve a preguntar la próxima vez |
+
+Al salir normalmente (incluso con "salir sin guardar") las copias se
+borran: solo quedan después de un cierre inesperado. Con varias ventanas
+de `tcode` abiertas en la misma carpeta, ninguna ofrece recuperar lo de
+otra que sigue abierta.
 
 ## Explorador de archivos
 

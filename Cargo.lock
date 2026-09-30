@@ -902,6 +902,7 @@ dependencies = [
  "crossterm",
  "lsp-types",
  "ratatui",
+ "ropey",
  "serde_json",
  "tcode-commands",
  "tcode-config",

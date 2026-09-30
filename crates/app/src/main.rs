@@ -22,6 +22,7 @@ mod mouse;
 mod pliegues;
 mod portapapeles;
 mod problemas;
+mod respaldo;
 mod sesion;
 mod vim;
 
@@ -452,6 +453,15 @@ struct EstadoApp {
     /// explorador enfocado) — separada de `prompt_explorador` porque no
     /// tiene ningún campo de texto, solo `y`/cualquier otra tecla.
     confirmar_borrado: EstadoConfirmarBorrado,
+    /// Copias de respaldo de los buffers modificados (BACKLOG.md P2 #21,
+    /// `respaldo.rs`).
+    respaldo: respaldo::EstadoRespaldo,
+    /// Respaldos de una sesión que se cerró de golpe en esta carpeta,
+    /// mientras se pregunta si recuperarlos (diálogo modal al arrancar).
+    recuperacion: Option<Vec<tcode_config::Huerfano>>,
+    /// Si esta ejecución guarda la sesión de la carpeta (BACKLOG.md P2
+    /// #20, ver `sesion::aplica`).
+    guardar_sesion: bool,
     /// Cuándo corrió por última vez el guardado automático "cada N
     /// segundos" (BACKLOG.md P2 #4) — se reinicia también al cambiar ese
     /// modo o el número de segundos desde el panel de administración, para
@@ -546,6 +556,17 @@ async fn ejecutar(
     );
 
     let config = capas_config.efectiva();
+    // Recuperación ante cierres inesperados (BACKLOG.md P2 #21): los
+    // respaldos que dejó un `tcode` de esta carpeta que se cerró de golpe
+    // se ofrecen en un diálogo antes de la primera tecla; los de este
+    // proceso empiezan a escribirse en cuanto haya algo modificado.
+    let proyecto = std::env::current_dir().and_then(std::fs::canonicalize).unwrap_or_default();
+    let base_respaldos = tcode_config::directorio_respaldos();
+    let huerfanos = tcode_config::buscar_huerfanos(&base_respaldos, &proyecto);
+    let recuperacion = (!huerfanos.is_empty()).then_some(huerfanos);
+    let respaldo = respaldo::EstadoRespaldo::iniciar(&base_respaldos, &proyecto);
+    let guardar_sesion = sesion::aplica(ruta_arg, &config);
+
     let mut estado = EstadoApp {
         paleta: cargar_paleta(&config.interfaz.tema),
         config,
@@ -575,6 +596,9 @@ async fn ejecutar(
         logs_lsp: EstadoLogsLsp::nuevo(),
         prompt_explorador: EstadoPromptExplorador::nuevo(),
         confirmar_borrado: EstadoConfirmarBorrado::nuevo(),
+        respaldo,
+        recuperacion,
+        guardar_sesion,
         ultimo_autoguardado: Instant::now(),
         guardado_pendiente: false,
         resaltador: Resaltador::nuevo(),
@@ -727,6 +751,9 @@ async fn ejecutar(
                     layout.editor_activo().buffer().num_lineas(),
                     &estado.paleta,
                 );
+                if let Some(huerfanos) = &estado.recuperacion {
+                    tcode_ui::panel_recuperacion::dibujar(frame, frame.area(), &respaldo::nombres(huerfanos), &estado.paleta);
+                }
                 let (lista_lsp, popup_lsp) = funciones_lsp::dibujar(frame, layout, &estado.funciones_lsp, &estado.paleta);
                 if lista_lsp.is_some() {
                     estado.zonas.overlay = lista_lsp;
@@ -797,7 +824,7 @@ async fn ejecutar(
                     omitir_dibujo = !estado.busqueda_proyecto.recibir();
                     continue;
                 }
-                _ = tick.tick(), if necesita_tick(&estado) => {
+                _ = tick.tick(), if necesita_tick(layout, &estado) => {
                     omitir_dibujo = !procesar_tick(layout, &mut estado);
                     continue;
                 }
@@ -856,6 +883,22 @@ async fn ejecutar(
         // al guardar") dura hasta la próxima tecla.
         layout.panel_activo_mut().mensaje_estado = None;
         estado.cierre_armado = estado.cierre_pedido.take();
+
+        // Diálogo de recuperación (BACKLOG.md P2 #21): antes que todo,
+        // captura el teclado hasta que se decida. `Enter` recupera, `d`
+        // descarta, `Esc` lo deja para la próxima vez (suelta el bloqueo
+        // sin borrar nada). Descartar pide una tecla distinta de la que
+        // recupera, así un `Enter` apurado nunca pierde nada.
+        if let Some(huerfanos) = estado.recuperacion.take() {
+            match key.code {
+                KeyCode::Enter => respaldo::recuperar(huerfanos, layout, &mut estado),
+                KeyCode::Char('d') | KeyCode::Char('D') => huerfanos.into_iter().for_each(tcode_config::Huerfano::borrar),
+                KeyCode::Esc => drop(huerfanos),
+                _ => estado.recuperacion = Some(huerfanos),
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+            continue;
+        }
 
         // El editor visual de tema (`Ctrl+K Ctrl+P`, PLAN.md §7) es otra
         // vista a pantalla completa que captura el teclado por completo:
@@ -1521,9 +1564,10 @@ async fn ejecutar(
         necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
     }
 
-    if sesion::aplica(ruta_arg, &estado.config) {
+    if estado.guardar_sesion {
         sesion::guardar(layout, &estado.explorador);
     }
+    estado.respaldo.terminar();
     estado.lsp.cerrar().await;
     Ok(())
 }
@@ -1555,8 +1599,10 @@ const INTERVALO_TICK: Duration = Duration::from_millis(250);
 /// con el visor de logs abierto o el guardado automático "cada N
 /// segundos" prendido — si no, no hay nada que hacer en cada tick y no
 /// tiene sentido despertarse.
-fn necesita_tick(estado: &EstadoApp) -> bool {
-    estado.logs_lsp.activo() || estado.config.editor.guardado_automatico == GuardadoAutomatico::CadaNSegundos
+fn necesita_tick(layout: &PanelLayout, estado: &EstadoApp) -> bool {
+    estado.logs_lsp.activo()
+        || estado.config.editor.guardado_automatico == GuardadoAutomatico::CadaNSegundos
+        || estado.respaldo.necesita_tick(layout)
 }
 
 /// Un tick del bucle principal: refresca el visor de logs del LSP si
@@ -1565,6 +1611,12 @@ fn necesita_tick(estado: &EstadoApp) -> bool {
 /// si no, el bucle se saltea el próximo dibujo.
 fn procesar_tick(layout: &mut PanelLayout, estado: &mut EstadoApp) -> bool {
     let mut cambio = false;
+    // Respaldos de lo no guardado (BACKLOG.md P2 #21) y, de paso, la
+    // sesión: si `tcode` se cierra de golpe, al volver se reabren las
+    // mismas pestañas además de recuperarse los cambios.
+    if estado.respaldo.tick(layout) && estado.guardar_sesion {
+        sesion::guardar(layout, &estado.explorador);
+    }
     if estado.logs_lsp.activo() {
         let (lineas, total) = estado.lsp.logs_con_total();
         cambio |= estado.logs_lsp.actualizar(lineas, total);
@@ -1677,6 +1729,7 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
         || estado.panel_admin.activo()
         || estado.selector_tema.activa()
         || estado.confirmar_borrado.activo()
+        || estado.recuperacion.is_some()
         || estado.explorador.modo_salto();
     if otro_modal || estado.foco != Foco::Editor || layout.panel_activo().modo_csv == ModoCsv::Tabla {
         return;

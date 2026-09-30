@@ -1079,6 +1079,22 @@ sin errores, esperar a que pyright los analice.
 - [ ] **Sin problemas.** Con solo `c.py` abierto, `Ctrl+K Q` y `F8` avisan "Sin problemas en los archivos abiertos".
 - [ ] **Paleta.** "Problemas: Ver todos", "Ir al siguiente" e "Ir al anterior" hacen lo mismo que los atajos.
 
+## Sesión y recuperación (BACKLOG.md P2 #20 y #21)
+
+Con `HOME` temporal, en una carpeta con `a.txt`, `b.txt` y `src/c.txt`
+(varias decenas de líneas cada uno). Lanzar siempre `tcode` sin archivo
+desde esa carpeta salvo que se diga otra cosa.
+
+- [ ] **Sesión.** Abrir `a.txt` y `b.txt` en pestañas, dividir (`Ctrl+K \`), abrir `src/c.txt` en el panel nuevo, mover los cursores, mostrar el explorador y salir. Al volver a lanzar: los mismos paneles, pestañas (con rutas relativas), cursores y explorador.
+- [ ] **Archivo borrado.** Borrar `b.txt` por fuera y relanzar: el resto se restaura, sin error. Si un panel se queda sin archivos, desaparece.
+- [ ] **Con archivo.** `tcode a.txt` abre solo `a.txt`; al salir, la sesión de la carpeta no cambió (la próxima vez sin archivo se restaura la de antes).
+- [ ] **Opción.** Con "Restaurar la sesión anterior" apagado en `Ctrl+,` → Editor, se arranca con un "[Sin nombre]".
+- [ ] **Cierre inesperado.** Escribir algo en un "[Sin nombre]", en `a.txt` y en `b.txt`, esperar 2 s y matar el proceso (`kill -9`, o cerrar la ventana de la terminal). Al relanzar aparece "Recuperar cambios" con los tres; `Enter` los abre sin guardar, con el cursor donde estaba, y `Ctrl+Z` en cada uno vuelve al texto del disco.
+- [ ] **Descartar y posponer.** Repetir el cierre: `Esc` cierra el aviso sin borrar nada (vuelve a aparecer al relanzar); `d` los descarta (no vuelve a aparecer).
+- [ ] **Salida normal.** Con cambios sin guardar, `Ctrl+Q` dos veces: al relanzar NO aparece el aviso.
+- [ ] **Dos instancias.** Con un `tcode` abierto y con cambios en la carpeta, abrir otro en la misma carpeta: no ofrece recuperar nada.
+- [ ] **Velocidad.** Mantener apretada una tecla en un archivo de ~10.000 líneas: tipea igual de fluido que en `develop` (el respaldo se escribe en otro hilo).
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).
