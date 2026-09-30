@@ -14,7 +14,12 @@ use crate::{overlay, Paleta};
 /// el ancho ambiguo de esos caracteres geométricos) para no perder de
 /// referencia cuál era, mientras se navega el preview en vivo con
 /// `↑`/`↓`.
-pub fn dibujar(frame: &mut Frame, area_total: Rect, selector: &EstadoSelectorTema, paleta: &Paleta) {
+pub fn dibujar(
+    frame: &mut Frame,
+    area_total: Rect,
+    selector: &EstadoSelectorTema,
+    paleta: &Paleta,
+) -> crate::zonas::ZonaOverlay {
     let filas: Vec<(String, Vec<usize>)> = selector
         .temas_filtrados()
         .iter()
@@ -27,7 +32,7 @@ pub fn dibujar(frame: &mut Frame, area_total: Rect, selector: &EstadoSelectorTem
 
     let consulta = format!("Filtro: {} (Tab para cambiar)", selector.filtro().etiqueta());
 
-    overlay::dibujar(frame, area_total, "Seleccionar tema", &consulta, &filas, selector.seleccion(), paleta);
+    overlay::dibujar(frame, area_total, "Seleccionar tema", &consulta, &filas, selector.seleccion(), paleta)
 }
 
 fn etiqueta_tipo(tipo: &str) -> &'static str {

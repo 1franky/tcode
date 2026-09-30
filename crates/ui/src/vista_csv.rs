@@ -6,6 +6,7 @@ use ratatui::Frame;
 
 use tcode_core::{EstadoCsv, TablaCsv};
 
+use crate::zonas::ZonaTabla;
 use crate::{EstadoUi, Paleta};
 
 /// Ancho de columna (en columnas de terminal) recortado al contenido más
@@ -48,6 +49,10 @@ const ESPACIADO_COLUMNAS: usize = 1;
 /// visibles (`EstadoCsv::filas_visibles`; `estado.fila()` es un índice
 /// en esa lista) y la última línea del área muestra una barra con el
 /// filtro vigente — o, mientras se escribe uno (`Ctrl+K /`), el prompt.
+///
+/// Devuelve dónde quedó cada celda visible (encabezado, desplazamiento
+/// del cuerpo, columnas), para el mouse (BACKLOG.md P0 #18); `None` con
+/// el archivo vacío.
 pub fn dibujar(
     frame: &mut Frame,
     area: Rect,
@@ -56,12 +61,12 @@ pub fn dibujar(
     estado_ui: &mut EstadoUi,
     paleta: &Paleta,
     mostrar_cursor: bool,
-) {
+) -> Option<ZonaTabla> {
     let estilo_base = Style::default().bg(paleta.fondo).fg(paleta.texto);
 
     if tabla.filas.is_empty() {
         frame.render_widget(Paragraph::new("(archivo CSV/TSV vacío)").style(estilo_base), area);
-        return;
+        return None;
     }
 
     let visibles = estado.filas_visibles(tabla);
@@ -129,6 +134,15 @@ pub fn dibujar(
             frame.set_cursor_position((columna, rect.y));
         }
     }
+
+    let mut columnas = Vec::with_capacity(ultima_col - primera_col);
+    let mut x = area.x;
+    for (col, ancho) in anchos_visibles.iter().enumerate() {
+        let ancho = (*ancho as u16).min((area.x + area.width).saturating_sub(x));
+        columnas.push((x, ancho, primera_col + col));
+        x = x.saturating_add(ancho + ESPACIADO_COLUMNAS as u16);
+    }
+    Some(ZonaTabla { area, desde: estado_tabla.offset(), num_filas: visibles.len(), num_columnas, columnas })
 }
 
 /// Barra de una línea al pie de la tabla (BACKLOG.md P2 #9): el prompt

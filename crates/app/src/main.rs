@@ -18,12 +18,13 @@
 mod formateador;
 mod funciones_lsp;
 mod lsp;
+mod mouse;
 mod pliegues;
 mod portapapeles;
 mod vim;
 
 use std::collections::VecDeque;
-use std::io::{self, Stdout};
+use std::io::{self, Stdout, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -113,8 +114,17 @@ async fn main() -> Result<()> {
         layout.editor_activo_mut().entrar_modo_normal();
     }
 
-    let (mut terminal, protocolo_kitty) = iniciar_terminal()?;
-    let resultado = ejecutar(&mut terminal, &mut layout, capas_config, keymap, explorador, ruta_arg.as_deref()).await;
+    let (mut terminal, protocolo_kitty) = iniciar_terminal(config.interfaz.usar_mouse)?;
+    let resultado = ejecutar(
+        &mut terminal,
+        &mut layout,
+        capas_config,
+        keymap,
+        explorador,
+        ruta_arg.as_deref(),
+        config.interfaz.usar_mouse,
+    )
+    .await;
     finalizar_terminal(&mut terminal, protocolo_kitty)?;
     // Al salir, los pliegues de todo lo que quedó abierto (ver `pliegues`).
     pliegues::recordar(layout.paneles_mut().into_iter().map(|p| {
@@ -267,7 +277,10 @@ fn firma_estructural(layout: &PanelLayout, estado: &EstadoApp) -> (String, (usiz
 /// clásicas (confirmado con un diagnóstico directo contra `crossterm` en
 /// tmux) — por eso `paleta.comandos` también tiene `F1` como atajo
 /// alternativo universal en `runtime/keymaps/default.toml`.
-fn iniciar_terminal() -> Result<(Terminal<Backend>, bool)> {
+///
+/// Con `usar_mouse` (`interfaz.usar_mouse`, BACKLOG.md P0 #18) también
+/// activa la captura del mouse — ver [`capturar_mouse`].
+fn iniciar_terminal(usar_mouse: bool) -> Result<(Terminal<Backend>, bool)> {
     configurar_consola_utf8();
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -282,6 +295,9 @@ fn iniciar_terminal() -> Result<(Terminal<Backend>, bool)> {
     // y ese modo sigue andando igual con los cambios de panel/archivo.
     // En tmux hace falta `set -g focus-events on` para que los reenvíe.
     let _ = execute!(stdout, EnableFocusChange);
+    if usar_mouse {
+        capturar_mouse(&mut stdout, true);
+    }
 
     let protocolo_kitty = supports_keyboard_enhancement().unwrap_or(false);
     if protocolo_kitty {
@@ -296,10 +312,36 @@ fn finalizar_terminal(terminal: &mut Terminal<Backend>, protocolo_kitty: bool) -
         execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     }
     let _ = execute!(terminal.backend_mut(), DisableFocusChange);
+    // Siempre, aunque la config lo tuviera apagado: es inocuo, y así la
+    // terminal nunca queda capturando el mouse al salir.
+    capturar_mouse(terminal.backend_mut(), false);
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), DisableBracketedPaste, LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
+}
+
+/// Prende o apaga la captura del mouse (BACKLOG.md P0 #18), best-effort:
+/// una terminal que no la soporta ignora las secuencias. En Unix se piden
+/// solo los modos 1000 (clics y rueda), 1002 (movimiento CON un botón
+/// apretado, para arrastrar) y 1006 (coordenadas SGR, sin tope de 223
+/// columnas) — no el 1003 que prende `crossterm::EnableMouseCapture`, que
+/// manda un evento por cada movimiento del mouse aunque no haya botón
+/// apretado (tráfico y despertares del bucle por nada). En Windows la
+/// consola no usa secuencias sino un modo de entrada: ahí va el comando
+/// de `crossterm`.
+fn capturar_mouse(salida: &mut impl Write, activar: bool) {
+    #[cfg(windows)]
+    {
+        use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+        let _ = if activar { execute!(salida, EnableMouseCapture) } else { execute!(salida, DisableMouseCapture) };
+    }
+    #[cfg(not(windows))]
+    {
+        let secuencia: &[u8] =
+            if activar { b"\x1b[?1000h\x1b[?1002h\x1b[?1006h" } else { b"\x1b[?1006l\x1b[?1002l\x1b[?1000l" };
+        let _ = salida.write_all(secuencia).and_then(|_| salida.flush());
+    }
 }
 
 /// Qué panel recibe las teclas de navegación/edición genéricas
@@ -423,6 +465,12 @@ struct EstadoApp {
     /// P0 #15) + la copia interna de lo último copiado. Ver
     /// `portapapeles.rs`.
     portapapeles: portapapeles::Portapapeles,
+    /// Dónde se dibujó cada cosa en el último frame (lo anota
+    /// `tcode_ui::dibujar`), para traducir los eventos de mouse
+    /// (BACKLOG.md P0 #18, ver `mouse.rs`).
+    zonas: tcode_ui::ZonasMouse,
+    /// Doble clic y arrastre en curso (`mouse.rs`).
+    mouse: mouse::EstadoMouse,
 }
 
 /// Entra o sale del modo zen (ver `EstadoApp::modo_zen`). Al entrar, el
@@ -450,6 +498,7 @@ async fn ejecutar(
     keymap: Keymap,
     explorador: Explorador,
     ruta_arg: Option<&str>,
+    mouse_inicial: bool,
 ) -> Result<()> {
     let mut resolvedor = Resolvedor::nuevo(keymap.clone());
     let mut eventos = EventStream::new();
@@ -512,7 +561,14 @@ async fn ejecutar(
         resaltador: Resaltador::nuevo(),
         modo_zen: None,
         portapapeles: portapapeles::Portapapeles::nuevo(),
+        zonas: Default::default(),
+        mouse: Default::default(),
     };
+    // Si la terminal está capturando el mouse ahora (ver `capturar_mouse`):
+    // se reconcilia con `interfaz.usar_mouse` en cada vuelta, así el
+    // toggle de `Ctrl+,` (o recargar una config que lo cambió) surte
+    // efecto en el acto.
+    let mut mouse_capturado = mouse_inicial;
     if let Some(aviso) = aviso_proyecto_no_confiable(&estado.capas_config) {
         layout.panel_activo_mut().mensaje_estado = Some(aviso);
     }
@@ -607,6 +663,10 @@ async fn ejecutar(
                 forzar_redibujado_completo(terminal)?;
                 necesita_redibujado = false;
             }
+            if estado.config.interfaz.usar_mouse != mouse_capturado {
+                mouse_capturado = estado.config.interfaz.usar_mouse;
+                capturar_mouse(terminal.backend_mut(), mouse_capturado);
+            }
 
             // Barato (5 lenguajes): se recalcula cada frame en vez de
             // cachearlo, para que el estado en vivo del cliente LSP
@@ -638,6 +698,7 @@ async fn ejecutar(
                     &estado.confirmar_borrado,
                     &estado.selector_simbolos,
                     estado.modo_zen.is_some(),
+                    &mut estado.zonas,
                 );
                 tcode_ui::panel_linea_vim::dibujar(frame, frame.area(), &estado.vim.linea_comando, &estado.paleta);
                 tcode_ui::panel_ir_a_linea::dibujar(
@@ -647,12 +708,16 @@ async fn ejecutar(
                     layout.editor_activo().buffer().num_lineas(),
                     &estado.paleta,
                 );
-                funciones_lsp::dibujar(frame, layout, &estado.funciones_lsp, &estado.paleta);
+                let (lista_lsp, popup_lsp) = funciones_lsp::dibujar(frame, layout, &estado.funciones_lsp, &estado.paleta);
+                if lista_lsp.is_some() {
+                    estado.zonas.overlay = lista_lsp;
+                }
+                estado.zonas.popup = popup_lsp;
                 // Encima de todo, pero fuera de `tcode_ui::dibujar`: mientras
                 // está abierta captura el teclado, así que ningún otro
                 // overlay puede abrirse a la vez.
                 if estado.busqueda_proyecto.activo() {
-                    tcode_ui::panel_busqueda_proyecto::dibujar(
+                    estado.zonas.overlay = tcode_ui::panel_busqueda_proyecto::dibujar(
                         frame,
                         frame.area(),
                         &estado.busqueda_proyecto,
@@ -731,6 +796,18 @@ async fn ejecutar(
             Event::Key(key) if key.kind == KeyEventKind::Press => key,
             Event::Paste(texto) => {
                 pegar_texto(&texto, layout, &mut estado, &mut teclas_sinteticas);
+                necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+                continue;
+            }
+            // Mouse (BACKLOG.md P0 #18, ver `mouse.rs`). Un evento que no
+            // cambió nada (moverlo sin botón, un clic en un borde) no
+            // redibuja.
+            Event::Mouse(evento) => {
+                match mouse::manejar(evento, layout, &mut estado, &mut resolvedor) {
+                    mouse::Resultado::Salir => break,
+                    mouse::Resultado::Nada => omitir_dibujo = true,
+                    mouse::Resultado::Cambio => {}
+                }
                 necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
                 continue;
             }

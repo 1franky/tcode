@@ -279,10 +279,11 @@ pub enum CampoInterfaz {
     StatusbarLenguaje,
     StatusbarDiagnosticos,
     StatusbarModo,
+    UsarMouse,
 }
 
 impl CampoInterfaz {
-    pub const TODOS: [CampoInterfaz; 9] = [
+    pub const TODOS: [CampoInterfaz; 10] = [
         CampoInterfaz::MostrarStatusbar,
         CampoInterfaz::MostrarPestanas,
         CampoInterfaz::MostrarBreadcrumbs,
@@ -292,6 +293,7 @@ impl CampoInterfaz {
         CampoInterfaz::StatusbarLenguaje,
         CampoInterfaz::StatusbarDiagnosticos,
         CampoInterfaz::StatusbarModo,
+        CampoInterfaz::UsarMouse,
     ];
 
     pub fn nombre(&self) -> &'static str {
@@ -305,6 +307,7 @@ impl CampoInterfaz {
             CampoInterfaz::StatusbarLenguaje => "Statusbar: lenguaje detectado",
             CampoInterfaz::StatusbarDiagnosticos => "Statusbar: resumen de diagnósticos LSP",
             CampoInterfaz::StatusbarModo => "Statusbar: modo",
+            CampoInterfaz::UsarMouse => "Usar el mouse",
         }
     }
 
@@ -321,6 +324,7 @@ impl CampoInterfaz {
             CampoInterfaz::StatusbarLenguaje => "statusbar_lenguaje",
             CampoInterfaz::StatusbarDiagnosticos => "statusbar_diagnosticos",
             CampoInterfaz::StatusbarModo => "statusbar_modo",
+            CampoInterfaz::UsarMouse => "usar_mouse",
         };
         ("interfaz", clave)
     }
@@ -336,6 +340,7 @@ impl CampoInterfaz {
             CampoInterfaz::StatusbarLenguaje => config.interfaz.statusbar_lenguaje,
             CampoInterfaz::StatusbarDiagnosticos => config.interfaz.statusbar_diagnosticos,
             CampoInterfaz::StatusbarModo => config.interfaz.statusbar_modo,
+            CampoInterfaz::UsarMouse => config.interfaz.usar_mouse,
         };
         etiqueta_bool(activo)
     }
@@ -354,6 +359,7 @@ impl CampoInterfaz {
             CampoInterfaz::StatusbarLenguaje => &mut config.interfaz.statusbar_lenguaje,
             CampoInterfaz::StatusbarDiagnosticos => &mut config.interfaz.statusbar_diagnosticos,
             CampoInterfaz::StatusbarModo => &mut config.interfaz.statusbar_modo,
+            CampoInterfaz::UsarMouse => &mut config.interfaz.usar_mouse,
         };
         *campo = !*campo;
     }
@@ -912,6 +918,17 @@ mod tests {
         assert_eq!(CampoInterfaz::MostrarBreadcrumbs.clave_toml(), ("interfaz", "mostrar_breadcrumbs"));
         CampoInterfaz::MostrarBreadcrumbs.aplicar(&mut config);
         assert!(!config.interfaz.mostrar_breadcrumbs);
+        assert!(config.interfaz.mostrar_statusbar, "no toca otros campos");
+    }
+
+    #[test]
+    fn usar_mouse_viene_prendido_y_se_alterna() {
+        let mut config = Config::default();
+        assert!(config.interfaz.usar_mouse);
+        assert_eq!(CampoInterfaz::UsarMouse.clave_toml(), ("interfaz", "usar_mouse"));
+        assert_eq!(CampoInterfaz::UsarMouse.valor_actual(&config), CampoInterfaz::MostrarStatusbar.valor_actual(&config));
+        CampoInterfaz::UsarMouse.aplicar(&mut config);
+        assert!(!config.interfaz.usar_mouse);
         assert!(config.interfaz.mostrar_statusbar, "no toca otros campos");
     }
 

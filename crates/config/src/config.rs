@@ -202,6 +202,12 @@ pub struct ConfigInterfaz {
     pub statusbar_lenguaje: bool,
     pub statusbar_diagnosticos: bool,
     pub statusbar_modo: bool,
+    /// Soporte de mouse (BACKLOG.md P0 #18): clic, arrastre y rueda en el
+    /// código, las pestañas, el explorador y las listas. Prendido por
+    /// defecto; se puede apagar porque capturar el mouse le quita a la
+    /// terminal su selección nativa de texto (con `Shift` — `Option` en
+    /// iTerm2 — la mayoría de las terminales la siguen ofreciendo igual).
+    pub usar_mouse: bool,
 }
 
 impl Default for ConfigInterfaz {
@@ -217,6 +223,7 @@ impl Default for ConfigInterfaz {
             statusbar_lenguaje: true,
             statusbar_diagnosticos: true,
             statusbar_modo: true,
+            usar_mouse: true,
         }
     }
 }
@@ -498,6 +505,7 @@ mod tests {
                 statusbar_lenguaje: true,
                 statusbar_diagnosticos: false,
                 statusbar_modo: true,
+                usar_mouse: false,
             },
             lenguajes: ConfigLenguajes {
                 lsp_deshabilitado: vec!["python".to_string()],

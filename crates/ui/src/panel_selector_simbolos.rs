@@ -14,7 +14,12 @@ const INDENTACION: usize = 2;
 /// (`impl Editor` > `  fn insertar`), seguido de su número de línea; las
 /// letras que coinciden con el filtro van en negrita (corridas por la
 /// indentación, porque el filtro compara solo contra la etiqueta).
-pub fn dibujar(frame: &mut Frame, area_total: Rect, selector: &EstadoSelectorSimbolos, paleta: &Paleta) {
+pub fn dibujar(
+    frame: &mut Frame,
+    area_total: Rect,
+    selector: &EstadoSelectorSimbolos,
+    paleta: &Paleta,
+) -> crate::zonas::ZonaOverlay {
     let filas: Vec<(String, Vec<usize>)> = if selector.sin_simbolos() {
         vec![("(este archivo no tiene funciones, clases ni otros símbolos)".to_string(), Vec::new())]
     } else {
@@ -31,5 +36,5 @@ pub fn dibujar(frame: &mut Frame, area_total: Rect, selector: &EstadoSelectorSim
     };
     // Sin símbolos, la fila del aviso no se marca como seleccionada.
     let seleccion = if selector.sin_simbolos() { usize::MAX } else { selector.seleccion() };
-    overlay::dibujar(frame, area_total, "Ir a símbolo", selector.consulta(), &filas, seleccion, paleta);
+    overlay::dibujar(frame, area_total, "Ir a símbolo", selector.consulta(), &filas, seleccion, paleta)
 }
