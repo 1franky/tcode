@@ -21,7 +21,7 @@ use ratatui::Frame;
 use serde_json::{json, Value};
 use tcode_commands::{EntradaUbicacion, EstadoListaUbicaciones};
 use tcode_core::{Editor, Modo};
-use tcode_lsp::{EstadoCompletado, ItemCompletado, Ubicacion};
+use tcode_lsp::{AccionRapida, EdicionArchivo, EstadoCompletado, ItemCompletado, Ubicacion};
 use tcode_ui::{Layout as PanelLayout, ModoCsv, Paleta, ZonaOverlay};
 
 use crate::lsp::{RespuestaLsp, TipoPedido};
@@ -45,7 +45,7 @@ const MAX_PILA_VOLVER: usize = 50;
 
 /// Una petición que se manda al principio de la próxima vuelta del bucle
 /// (ver la nota del módulo).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Pedido {
     Definicion,
     Referencias,
@@ -55,6 +55,10 @@ pub enum Pedido {
     /// `reintento`: la lista anterior vino incompleta.
     Completado { disparador: Option<char>, manual: bool, reintento: bool },
     Renombrar(String),
+    /// Acciones rápidas (BACKLOG.md P2 #23) para la selección o el cursor.
+    AccionesRapidas,
+    /// El comando (`Command` crudo) de la acción rápida elegida.
+    EjecutarComando(Value),
 }
 
 /// Estado de las funciones de este módulo, un campo de `EstadoApp`.
@@ -81,6 +85,11 @@ pub struct EstadoFuncionesLsp {
     /// `Buffer::revision` del documento activo al pedir el renombrado: si
     /// cambió cuando llega la respuesta, sus posiciones ya no valen.
     revision_renombrar: Option<u64>,
+    /// Acciones rápidas ofrecidas, mientras la lista las muestra (la
+    /// lista es la misma de las ubicaciones: cada entrada guarda en
+    /// `linea` su índice acá), y la revisión del documento al pedirlas.
+    acciones: Option<Vec<AccionRapida>>,
+    revision_acciones: Option<u64>,
     /// De dónde se saltó (archivo, byte), para "Volver".
     pila_volver: Vec<(PathBuf, usize)>,
 }
@@ -90,6 +99,13 @@ impl EstadoFuncionesLsp {
     /// pegado se reparte en teclas, ver `pegar_texto`).
     pub fn captura_texto(&self) -> bool {
         self.lista.activo() || self.renombrar.is_some()
+    }
+
+    /// Abre la lista con ubicaciones (a las que `Enter` salta), no con
+    /// acciones rápidas.
+    pub fn abrir_ubicaciones(&mut self, titulo: impl Into<String>, entradas: Vec<EntradaUbicacion>) {
+        self.lista.abrir(titulo, entradas);
+        self.acciones = None;
     }
 
     fn cerrar_completado(&mut self) {
@@ -151,6 +167,7 @@ pub fn comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp) -> bo
         "lsp.ir_a_definicion" => funciones.pedido = Some(Pedido::Definicion),
         "lsp.referencias" => funciones.pedido = Some(Pedido::Referencias),
         "lsp.hover" => funciones.pedido = Some(Pedido::Hover),
+        "lsp.acciones_rapidas" => funciones.pedido = Some(Pedido::AccionesRapidas),
         "lsp.completar" => {
             funciones.pedido = Some(Pedido::Completado { disparador: None, manual: true, reintento: false })
         }
@@ -195,6 +212,12 @@ pub async fn enviar_pedido(layout: &mut PanelLayout, estado: &mut EstadoApp) {
     sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
 
     let ruta = layout.panel_activo().ruta_mostrada.clone();
+    if let Pedido::EjecutarComando(comando) = &pedido {
+        if let Err(motivo) = estado.lsp.ejecutar_comando(&ruta, comando).await {
+            avisar(layout, format!("LSP: {motivo}"));
+        }
+        return;
+    }
     let contexto = contexto_cursor(layout.editor_activo());
     let posicion = tcode_lsp::posicion_en_linea(contexto.linea, &contexto.texto[..contexto.byte_cursor]);
     let (tipo, extra) = match &pedido {
@@ -212,6 +235,8 @@ pub async fn enviar_pedido(layout: &mut PanelLayout, estado: &mut EstadoApp) {
             (TipoPedido::Completado, json!({ "context": contexto }))
         }
         Pedido::Renombrar(nombre) => (TipoPedido::Renombrar, json!({ "newName": nombre })),
+        Pedido::AccionesRapidas => (TipoPedido::AccionesRapidas, parametros_acciones(layout)),
+        Pedido::EjecutarComando(_) => unreachable!("se mandó arriba"),
     };
     match estado.lsp.pedir(tipo, &ruta, posicion, extra).await {
         Ok(()) => match pedido {
@@ -226,6 +251,9 @@ pub async fn enviar_pedido(layout: &mut PanelLayout, estado: &mut EstadoApp) {
             }
             Pedido::Renombrar(_) => {
                 estado.funciones_lsp.revision_renombrar = Some(layout.editor_activo().buffer().revision());
+            }
+            Pedido::AccionesRapidas => {
+                estado.funciones_lsp.revision_acciones = Some(layout.editor_activo().buffer().revision());
             }
             _ => {}
         },
@@ -244,6 +272,25 @@ pub async fn enviar_pedido(layout: &mut PanelLayout, estado: &mut EstadoApp) {
 /// se siguió escribiendo otra cosa) se descarta sin redibujar.
 pub fn procesar_respuestas(layout: &mut PanelLayout, estado: &mut EstadoApp) -> bool {
     let mut cambio = false;
+    // Cambios que pidió un servidor al ejecutar el comando de una acción
+    // rápida (`workspace/applyEdit`): se aplican y se le contesta si se
+    // pudo (la contestación sale en la próxima vuelta del bucle).
+    for pedida in estado.lsp.tomar_ediciones_pedidas() {
+        cambio = true;
+        let aplicada = tcode_lsp::parsear_workspace_edit(&pedida.edicion).map_err(|e| e.to_string()).and_then(|archivos| {
+            let resultado = aplicar_workspace_edit(layout, estado, &archivos);
+            avisar(layout, format!("Acción aplicada: {}", resultado.resumen(archivos.len())));
+            if resultado.fallidos > 0 {
+                Err(format!("{} archivo(s) no se pudieron cambiar", resultado.fallidos))
+            } else {
+                Ok(())
+            }
+        });
+        if let Err(motivo) = &aplicada {
+            avisar(layout, format!("Acción: {motivo}"));
+        }
+        estado.lsp.responder_edicion(&pedida, aplicada);
+    }
     for RespuestaLsp { tipo, resultado } in estado.lsp.tomar_respuestas() {
         cambio |= tipo != TipoPedido::Completado;
         let valor = match resultado {
@@ -285,6 +332,9 @@ pub fn procesar_respuestas(layout: &mut PanelLayout, estado: &mut EstadoApp) -> 
             },
             TipoPedido::Completado => cambio |= abrir_completado(layout, estado, &valor),
             TipoPedido::Renombrar => aplicar_renombrado(layout, estado, &valor),
+            TipoPedido::AccionesRapidas => abrir_acciones(layout, estado, &valor),
+            // Lo que haya cambiado llegó antes como `workspace/applyEdit`.
+            TipoPedido::EjecutarComando => {}
         }
     }
     cambio
@@ -413,7 +463,7 @@ fn abrir_lista(layout: &mut PanelLayout, estado: &mut EstadoApp, titulo: &str, u
             }
         })
         .collect();
-    estado.funciones_lsp.lista.abrir(titulo, entradas);
+    estado.funciones_lsp.abrir_ubicaciones(titulo, entradas);
 }
 
 /// Si el popup de completado puede seguir abierto (o abrirse) con el
@@ -539,10 +589,39 @@ fn aplicar_renombrado(layout: &mut PanelLayout, estado: &mut EstadoApp, valor: &
     if revision != Some(layout.editor_activo().buffer().revision()) {
         return avisar(layout, "Renombrar: el archivo cambió mientras tanto, probá de nuevo");
     }
+    let resultado = aplicar_workspace_edit(layout, estado, &archivos);
+    avisar(layout, format!("Renombrado: {}", resultado.resumen(archivos.len())));
+}
 
+/// Cuánto cambió [`aplicar_workspace_edit`].
+struct ResultadoEdicion {
+    cambios: usize,
+    abiertos_nuevos: usize,
+    fallidos: usize,
+}
+
+impl ResultadoEdicion {
+    fn resumen(&self, archivos: usize) -> String {
+        let mut aviso = format!("{} cambios en {archivos} archivo(s)", self.cambios);
+        if self.abiertos_nuevos > 0 {
+            aviso.push_str(&format!(", {} abierto(s) en pestañas sin guardar", self.abiertos_nuevos));
+        }
+        if self.fallidos > 0 {
+            aviso.push_str(&format!(" ({} no se pudieron aplicar)", self.fallidos));
+        }
+        aviso
+    }
+}
+
+/// Aplica los cambios de un `WorkspaceEdit` (renombrar, acciones
+/// rápidas): en los archivos ya abiertos (en cualquier pestaña o panel)
+/// ahí mismo, un paso de deshacer por archivo; los que no, se abren en
+/// pestañas nuevas con los cambios sin guardar — `tcode` nunca escribe al
+/// disco algo que no se vio. Deja activo el documento que lo estaba.
+fn aplicar_workspace_edit(layout: &mut PanelLayout, estado: &mut EstadoApp, archivos: &[EdicionArchivo]) -> ResultadoEdicion {
     let original = layout.editor_activo().buffer().ruta().map(Path::to_path_buf);
-    let (mut cambios, mut abiertos_nuevos, mut fallidos) = (0, 0, 0);
-    for archivo in &archivos {
+    let mut resultado = ResultadoEdicion { cambios: 0, abiertos_nuevos: 0, fallidos: 0 };
+    for archivo in archivos {
         let aplicar = |editor: &mut Editor| {
             let texto = editor.buffer().a_texto();
             let ediciones: Vec<(std::ops::Range<usize>, String)> = archivo
@@ -557,34 +636,102 @@ fn aplicar_renombrado(layout: &mut PanelLayout, estado: &mut EstadoApp, valor: &
             if panel.editor.buffer().ruta().is_some_and(|r| mismo_archivo(r, &archivo.ruta)) {
                 encontrado = true;
                 if !aplicar(&mut panel.editor) {
-                    fallidos += 1;
+                    resultado.fallidos += 1;
                 }
             }
         }
         if !encontrado {
             if activar_archivo(layout, estado, &archivo.ruta) {
-                abiertos_nuevos += 1;
+                resultado.abiertos_nuevos += 1;
                 if !aplicar(layout.editor_activo_mut()) {
-                    fallidos += 1;
+                    resultado.fallidos += 1;
                 }
             } else {
-                fallidos += 1;
+                resultado.fallidos += 1;
             }
         }
-        cambios += archivo.ediciones.len();
+        resultado.cambios += archivo.ediciones.len();
     }
     if let Some(original) = original {
         activar_archivo(layout, estado, &original);
     }
+    resultado
+}
 
-    let mut aviso = format!("Renombrado: {cambios} cambios en {} archivo(s)", archivos.len());
-    if abiertos_nuevos > 0 {
-        aviso.push_str(&format!(", {abiertos_nuevos} abierto(s) en pestañas sin guardar"));
+/// Parámetros de `textDocument/codeAction` (además del documento): el
+/// rango de la selección del cursor principal (o el cursor solo) y los
+/// diagnósticos de esas líneas, tal como los mandó el servidor.
+fn parametros_acciones(layout: &PanelLayout) -> Value {
+    let panel = layout.panel_activo();
+    let editor = &panel.editor;
+    let principal = &editor.cursores()[0];
+    let (inicio, fin) = if (principal.ancla.linea, principal.ancla.columna) <= (principal.cursor.linea, principal.cursor.columna) {
+        (principal.ancla, principal.cursor)
+    } else {
+        (principal.cursor, principal.ancla)
+    };
+    let posicion = |c: tcode_core::Cursor| {
+        let linea = editor.buffer().linea_texto(c.linea);
+        let prefijo: String = linea.chars().take(c.columna).collect();
+        tcode_lsp::posicion_en_linea(c.linea, &prefijo)
+    };
+    let diagnosticos: Vec<_> = panel
+        .diagnosticos
+        .iter()
+        .filter(|d| d.linea_inicio as usize <= fin.linea && d.linea_fin as usize >= inicio.linea)
+        .map(|d| &d.original)
+        .collect();
+    json!({
+        "range": { "start": posicion(inicio), "end": posicion(fin) },
+        "context": { "diagnostics": diagnosticos, "triggerKind": 1 },
+    })
+}
+
+/// Llegaron las acciones rápidas: la lista para elegir (`Enter` aplica).
+fn abrir_acciones(layout: &mut PanelLayout, estado: &mut EstadoApp, valor: &Value) {
+    let acciones = tcode_lsp::parsear_acciones(valor);
+    if acciones.is_empty() {
+        return avisar(layout, "No hay acciones rápidas acá");
     }
-    if fallidos > 0 {
-        aviso.push_str(&format!(" ({fallidos} no se pudieron aplicar)"));
+    let entradas = acciones
+        .iter()
+        .enumerate()
+        .map(|(i, a)| EntradaUbicacion {
+            etiqueta: if a.preferida { format!("{} (recomendada)", a.titulo) } else { a.titulo.clone() },
+            ruta: PathBuf::new(),
+            linea: i as u32,
+            caracter: 0,
+        })
+        .collect();
+    estado.funciones_lsp.lista.abrir("Acciones rápidas", entradas);
+    estado.funciones_lsp.acciones = Some(acciones);
+}
+
+/// `Enter` (o clic) en la lista: aplica la acción rápida si la lista las
+/// mostraba, o salta a la ubicación.
+fn elegir_de_lista(entrada: EntradaUbicacion, layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let Some(acciones) = estado.funciones_lsp.acciones.take() else {
+        return saltar_a(layout, estado, entrada.ruta, entrada.linea, entrada.caracter);
+    };
+    let Some(accion) = acciones.into_iter().nth(entrada.linea as usize) else { return };
+    let revision = estado.funciones_lsp.revision_acciones.take();
+    if revision != Some(layout.editor_activo().buffer().revision()) {
+        return avisar(layout, "Acción: el archivo cambió mientras tanto, probá de nuevo");
     }
-    avisar(layout, aviso);
+    if let Some(edicion) = &accion.edicion {
+        match tcode_lsp::parsear_workspace_edit(edicion) {
+            Ok(archivos) => {
+                let resultado = aplicar_workspace_edit(layout, estado, &archivos);
+                avisar(layout, format!("{}: {}", accion.titulo, resultado.resumen(archivos.len())));
+            }
+            Err(error) => return avisar(layout, format!("Acción: {error}")),
+        }
+    }
+    // El comando va después de los cambios (así lo pide la spec); lo que
+    // cambie llega como `workspace/applyEdit`.
+    if let Some(comando) = accion.comando {
+        estado.funciones_lsp.pedido = Some(Pedido::EjecutarComando(comando));
+    }
 }
 
 /// Teclas que capturan la lista de ubicaciones, el prompt de renombrar,
@@ -603,7 +750,7 @@ pub fn manejar_tecla(key: KeyEvent, layout: &mut PanelLayout, estado: &mut Estad
             KeyCode::Backspace => funciones.lista.borrar(),
             KeyCode::Enter => {
                 if let Some(entrada) = funciones.lista.confirmar() {
-                    saltar_a(layout, estado, entrada.ruta, entrada.linea, entrada.caracter);
+                    elegir_de_lista(entrada, layout, estado);
                 }
             }
             KeyCode::Char(c) if sin_modificadores(key) => funciones.lista.escribir(c),
@@ -754,7 +901,7 @@ pub fn clic_en_lista(indice: usize, layout: &mut PanelLayout, estado: &mut Estad
     let actual = lista.seleccion();
     crate::mouse::llevar_seleccion(lista, actual, indice, EstadoListaUbicaciones::mover_arriba, EstadoListaUbicaciones::mover_abajo);
     if let Some(entrada) = estado.funciones_lsp.lista.confirmar() {
-        saltar_a(layout, estado, entrada.ruta, entrada.linea, entrada.caracter);
+        elegir_de_lista(entrada, layout, estado);
     }
 }
 

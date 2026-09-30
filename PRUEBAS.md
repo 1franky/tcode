@@ -1095,6 +1095,20 @@ desde esa carpeta salvo que se diga otra cosa.
 - [ ] **Dos instancias.** Con un `tcode` abierto y con cambios en la carpeta, abrir otro en la misma carpeta: no ofrece recuperar nada.
 - [ ] **Velocidad.** Mantener apretada una tecla en un archivo de ~10.000 líneas: tipea igual de fluido que en `develop` (el respaldo se escribe en otro hilo).
 
+## Acciones rápidas del LSP (BACKLOG.md P2 #23, primera parte)
+
+Con `HOME` temporal y `rust-analyzer` configurado como comando LSP de
+Rust (con rustup, pasar también `RUSTUP_HOME`/`CARGO_HOME` reales), en un
+proyecto Cargo con `let m: HashMap<i32, i32> = HashMap::new();` sin el
+`use`.
+
+- [ ] **Import.** Con el cursor sobre `HashMap`, `Ctrl+K X` (o `Ctrl+.` con protocolo Kitty) lista "Import `std::collections::HashMap`" y "Qualify as..."; `Enter` en la primera agrega el `use` arriba de todo y la barra dice "1 cambios en 1 archivo(s)". Un `Ctrl+Z` lo deshace entero.
+- [ ] **Selección.** Seleccionar una expresión (`Shift+flechas`) y `Ctrl+K X`: aparecen refactors como "Extract into variable"; aplicarlo cambia el código como corresponde.
+- [ ] **Sin acciones.** En una línea sin nada que ofrecer: "No hay acciones rápidas acá". En un `.txt`: "LSP: sin LSP para este archivo".
+- [ ] **Archivo cambiado.** Si el archivo cambia entre pedir las acciones y elegir una (por ejemplo, un formateo al guardar de otro panel sobre el mismo archivo), no se aplica nada y la barra avisa "el archivo cambió mientras tanto".
+- [ ] **Comando del servidor.** Con un servidor que ofrece acciones como `Command` (por ejemplo, un servidor LSP mínimo de prueba escrito para eso), elegir una: el servidor pide los cambios con `workspace/applyEdit`, `tcode` los aplica y le contesta `applied: true`.
+- [ ] **Mouse.** Un clic en una acción de la lista la aplica.
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).

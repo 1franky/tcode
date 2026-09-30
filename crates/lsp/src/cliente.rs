@@ -34,11 +34,15 @@ struct RegistroLogs {
 type BufferLogs = Arc<Mutex<RegistroLogs>>;
 
 /// Un mensaje que llega desde el servidor LSP, ya distinguido entre
-/// notificación (sin id, como `textDocument/publishDiagnostics`) y
-/// respuesta a un request que mandamos nosotros.
+/// notificación (sin id, como `textDocument/publishDiagnostics`),
+/// request del servidor hacia nosotros (con `method` e `id`, como
+/// `workspace/applyEdit`: espera que se le conteste con
+/// [`Cliente::responder`]) y respuesta a un request que mandamos
+/// nosotros.
 #[derive(Debug)]
 pub enum MensajeEntrante {
     Notificacion { metodo: String, params: Value },
+    Peticion { id: Value, metodo: String, params: Value },
     Respuesta { id: i64, resultado: std::result::Result<Value, Value> },
 }
 
@@ -117,6 +121,12 @@ impl Cliente {
         let mensaje = json!({ "jsonrpc": "2.0", "id": id, "method": metodo, "params": params });
         escribir_mensaje(&mut self.stdin, &mensaje).await?;
         Ok(id)
+    }
+
+    /// Contesta un request del servidor ([`MensajeEntrante::Peticion`]).
+    pub async fn responder(&mut self, id: &Value, resultado: Value) -> Result<()> {
+        let mensaje = json!({ "jsonrpc": "2.0", "id": id, "result": resultado });
+        escribir_mensaje(&mut self.stdin, &mensaje).await
     }
 
     pub async fn notificacion(&mut self, metodo: &str, params: impl Serialize) -> Result<()> {
@@ -208,14 +218,16 @@ async fn leer_en_bucle(mut reader: BufReader<ChildStdout>, tx: mpsc::UnboundedSe
         // petición nuestra con el mismo número; con una sola petición en
         // vuelo (`initialize`) daba igual, pero `textDocument/formatting`
         // (BACKLOG.md P2 #5) correlaciona por id y podía tomar un request
-        // ajeno por su respuesta. Los requests del servidor se pasan como
-        // notificación: `tcode` no responde ninguno todavía (igual que
-        // antes), y quien procesa los mensajes ignora los métodos que no
+        // ajeno por su respuesta. Quien procesa los mensajes contesta los
+        // requests que entiende (`workspace/applyEdit`, BACKLOG.md P2 #23)
+        // e ignora el resto, igual que los métodos de notificación que no
         // conoce.
         let mensaje = if let Some(metodo) = valor.get("method").and_then(Value::as_str) {
-            MensajeEntrante::Notificacion {
-                metodo: metodo.to_string(),
-                params: valor.get("params").cloned().unwrap_or(Value::Null),
+            let metodo = metodo.to_string();
+            let params = valor.get("params").cloned().unwrap_or(Value::Null);
+            match valor.get("id") {
+                Some(id) if !id.is_null() => MensajeEntrante::Peticion { id: id.clone(), metodo, params },
+                _ => MensajeEntrante::Notificacion { metodo, params },
             }
         } else if let Some(id) = valor.get("id").and_then(Value::as_i64) {
             match valor.get("error") {
@@ -378,7 +390,7 @@ mod tests {
                 assert_eq!(metodo, "prueba/eco");
                 assert_eq!(params, json!({ "hola": "mundo" }));
             }
-            MensajeEntrante::Respuesta { .. } => panic!("se esperaba una notificación, no una respuesta"),
+            otro => panic!("se esperaba una notificación, no {otro:?}"),
         }
 
         // `matar`, no `cerrar`: este test prueba el framing del eco, no
@@ -392,7 +404,7 @@ mod tests {
     /// Un request CON `method` e `id` (lo que `cat` devuelve al hacer eco
     /// de una `peticion` nuestra — equivalente a un request del servidor
     /// hacia el cliente) no se tiene que confundir con la respuesta a una
-    /// petición propia con el mismo id: llega como notificación.
+    /// petición propia con el mismo id: llega como `Peticion`.
     #[cfg(unix)]
     #[tokio::test]
     async fn un_request_del_servidor_con_id_no_se_toma_por_una_respuesta() {
@@ -400,8 +412,11 @@ mod tests {
         cliente.peticion("workspace/configuration", json!({ "items": [] })).await.unwrap();
 
         match cliente.receptor.recv().await.expect("cat debería hacer eco del mensaje") {
-            MensajeEntrante::Notificacion { metodo, .. } => assert_eq!(metodo, "workspace/configuration"),
-            MensajeEntrante::Respuesta { .. } => panic!("un mensaje con `method` nunca es una respuesta"),
+            MensajeEntrante::Peticion { metodo, id, .. } => {
+                assert_eq!(metodo, "workspace/configuration");
+                assert_eq!(id, json!(1));
+            }
+            otro => panic!("un mensaje con `method` e `id` es un request del servidor, no {otro:?}"),
         }
         cliente.matar().await;
     }

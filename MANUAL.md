@@ -76,6 +76,7 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+K I` | Tipo y documentación del símbolo bajo el cursor (hover) |
 | `Ctrl+Espacio` (o `Ctrl+K Espacio`) | Autocompletar |
 | `F2` (o `Ctrl+K Shift+R`) | Renombrar símbolo (en la tabla de un CSV, `F2` edita la celda) |
+| `Ctrl+.` (o `Ctrl+K X`) | Acciones rápidas del LSP: arreglos, imports, refactors |
 | `Ctrl+K Ctrl+T` | Selector de temas (con preview en vivo) |
 | `Ctrl+K Ctrl+L` | Recargar `config.toml`/`keymap.toml` sin reiniciar |
 
@@ -935,6 +936,7 @@ soporta renombrar"):
 | `Ctrl+K I` | **Hover**: tipo y documentación del símbolo bajo el cursor en un recuadro debajo (el markdown se muestra como texto, hasta 20 líneas). Se cierra con cualquier tecla. |
 | `Ctrl+Espacio` o `Ctrl+K Espacio` | **Autocompletar** a mano. |
 | `F2` o `Ctrl+K Shift+R` | **Renombrar símbolo**: pide el nombre nuevo (precargado con el actual), `Enter` confirma. |
+| `Ctrl+.` o `Ctrl+K X` | **Acciones rápidas**: lo que el servidor ofrece para el cursor o la selección (agregar un `use`/`import`, corregir un error, extraer una variable...). La recomendada va primero; se filtra escribiendo, `Enter` (o un clic) la aplica. `Ctrl+.` solo llega con protocolo Kitty; `Ctrl+K X` en cualquier terminal. |
 
 **Autocompletado**: además de a mano, la lista aparece sola al tipear un
 carácter de disparo del servidor (el `.` de un método, `::` en Rust) o
@@ -952,6 +954,14 @@ pyright lo respetan). Solo con un cursor (no con multi-cursor) y, en modo
 VIM, en modo Insertar. Pedir la lista nunca frena el tipeo: se pide en
 segundo plano y, si llega cuando ya se siguió escribiendo otra cosa, se
 descarta.
+
+**Acciones rápidas**: los cambios se aplican igual que los de renombrar
+(ver abajo), un paso de deshacer por archivo. Algunas acciones son un
+comando del servidor (pyright, por ejemplo, no ofrece casi ninguna —
+"Organizar imports" es de Pylance); en ese caso el servidor calcula los
+cambios y se los manda a `tcode`, que los aplica igual. Si el archivo
+cambió entre pedir las acciones y elegir una, no se aplica nada: hay que
+pedirlas de nuevo.
 
 **Renombrar** aplica los cambios del servidor en todos los archivos que
 toque: los que ya están abiertos (en cualquier pestaña o panel) se editan

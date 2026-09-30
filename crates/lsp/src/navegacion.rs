@@ -24,6 +24,8 @@ pub struct CapacidadesLsp {
     pub hover: bool,
     pub renombrar: bool,
     pub completado: bool,
+    /// `codeActionProvider` (BACKLOG.md P2 #23).
+    pub acciones: bool,
     /// `completionProvider.triggerCharacters`: tipear uno pide completado
     /// en el acto, sin esperar la pausa (el `.` de un método, `::`...).
     pub disparadores_completado: Vec<char>,
@@ -50,6 +52,7 @@ impl CapacidadesLsp {
             // `completionProvider` es siempre un objeto de opciones (no
             // hay forma booleana en la spec): su sola presencia es un sí.
             completado: capacidades["completionProvider"].is_object(),
+            acciones: anuncia("codeActionProvider"),
             disparadores_completado,
         }
     }
