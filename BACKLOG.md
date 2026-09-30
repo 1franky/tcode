@@ -115,16 +115,6 @@ son gaps nuevos, anotadas para no redescubrirlas):
   muchos errores de sintaxis el re-parseo tiene un tope de 250 ms: los
   colores de lo recién editado quedan aproximados hasta el reintento.
 
-### 20. Restaurar la sesión anterior
-
-Reabrir pestañas, splits y posición de los cursores de la última vez
-(por proyecto).
-
-### 21. Recuperación ante cierres inesperados
-
-Copias de respaldo periódicas de los buffers con cambios sin guardar
-(fuera del proyecto) y ofrecer recuperarlas al reabrir.
-
 ### 23. Más funciones de LSP
 
 Acciones rápidas (`textDocument/codeAction`: quick fixes, imports),
@@ -192,6 +182,21 @@ Búsqueda con `/`/`?`/`n`/`*`, macros, registros con nombre, `Ctrl+R`.
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-30 — P2 #20 Restaurar la sesión y #21 Recuperación:**
+- **Sesión** por carpeta en `<estado>/sesiones/<huella>.json`
+  (`tcode_config::Sesion`, `Layout::a_sesion`/`desde_sesion`): pestañas,
+  splits, cursores, explorador. Solo al lanzar sin archivo; se guarda al
+  salir y con cada respaldo. Opción `editor.restaurar_sesion`.
+- **Respaldos** en `<estado>/respaldos/<pid>-<nanos>/` con un archivo
+  `bloqueo` bloqueado por el proceso (`File::try_lock`, el SO lo suelta
+  si el proceso muere): así se distingue "vivo" de "se cerró de golpe",
+  también con varias instancias. Escritura en un hilo con clones del
+  `Rope`, tras 1 s sin cambios o cada 5 s. Al arrancar, diálogo
+  `Enter`/`d`/`Esc`.
+- Limitaciones: el tamaño de los splits no se guarda (tcode los reparte
+  por igual); tras recuperar y `Ctrl+Z` hasta el texto del disco, el
+  buffer sigue marcado como modificado (pasa con cualquier deshacer).
 
 **2026-09-30 — todo P0 cerrado:**
 - **P0 #19 Edición básica** (PR #127): comentar/descomentar (`Ctrl+/`),

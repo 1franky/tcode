@@ -111,6 +111,7 @@ pub fn manejar(
         || estado.funciones_lsp.renombrar.is_some()
         || estado.vim.linea_comando.activa()
         || estado.ir_a_linea.activo()
+        || estado.recuperacion.is_some()
         || layout.panel_activo().estado_csv.editando()
         || layout.panel_activo().estado_csv.prompt_filtro().is_some()
     {

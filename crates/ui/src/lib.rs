@@ -15,6 +15,7 @@ mod panel_buscador;
 mod panel_busqueda;
 pub mod panel_busqueda_proyecto;
 mod panel_confirmar_borrado;
+pub mod panel_recuperacion;
 mod panel_guardar_como;
 pub mod panel_ir_a_linea;
 pub mod panel_linea_vim;
