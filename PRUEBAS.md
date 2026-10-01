@@ -516,6 +516,7 @@ que se guardó.
 - [ ] Escribir cualquier cosa después de un error (o `Backspace`): el mensaje de error desaparece del prompt.
 - [ ] `Esc` en cualquier momento: cierra el prompt sin guardar nada y sin modificar el archivo/buffer.
 - [ ] `Ctrl+S` normal (no `Shift`) sobre un archivo que **ya tiene ruta** sigue guardando directo, sin abrir ningún prompt — el cambio solo afecta al caso "buffer sin nombre" de antes.
+- [ ] **Hacia un archivo ya abierto.** Con `a.txt` y `b.txt` en pestañas del mismo panel y `a.txt` también en otro panel, "Guardar como" `a.txt` desde `b.txt`: queda una sola pestaña `a.txt` en este panel (con el contenido de `b.txt`) y el otro panel muestra el contenido nuevo. Si la otra pestaña de `a.txt` tenía cambios sin guardar, no guarda y el prompt avisa.
 
 ## Distribución / instaladores
 

@@ -2732,12 +2732,21 @@ async fn guardar_como_confirmar(layout: &mut PanelLayout, estado: &mut EstadoApp
         return;
     }
     let ruta = ruta.to_string();
+    // Ese archivo abierto en otra pestaña con cambios: guardar encima los
+    // perdería.
+    if let Some(otra) = layout.otro_modificado_con_ruta(std::path::Path::new(&ruta)) {
+        estado.guardar_como.establecer_error(format!("'{otra}' está abierto con cambios sin guardar: guardalo o cerralo antes"));
+        return;
+    }
     formatear_antes_de_guardar(layout, estado).await;
     match layout.editor_activo_mut().guardar_como(ruta.clone()) {
         Ok(()) => {
             let panel = layout.panel_activo_mut();
             panel.ruta_mostrada = ruta;
             panel.aviso_guardado = None;
+            // Las otras pestañas de ese archivo: se cierran (este panel)
+            // o se recargan (otros paneles).
+            layout.tras_guardar_como();
             estado.guardar_como.cerrar();
         }
         Err(e) => estado.guardar_como.establecer_error(e.to_string()),
