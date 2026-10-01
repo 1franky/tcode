@@ -139,9 +139,10 @@ Limitaciones conocidas de estas piezas (no son gaps nuevos):
   al final de un `def` muestra solo el contenedor de afuera (tree-sitter
   no la incluye en el bloque).
 - **Modo VIM**: completo en lo esencial (PR #115) más búsqueda,
-  registros con nombre, macros y `Ctrl+R` (#28); fuera de alcance:
-  marcas, `:s` con grupos (`\1`, `&`) o rangos `a,b`, `:w <ruta>`,
-  `:reg`, `.` sobre operaciones hechas en Visual.
+  registros con nombre, macros y `Ctrl+R` (#28) y marcas `m`/`'`/`` ` ``
+  con `''` (2026-10-01); fuera de alcance: marcas globales (`mA`), `:s`
+  con grupos (`\1`, `&`) o rangos `a,b`, `:w <ruta>`, `:reg`, `.` sobre
+  operaciones hechas en Visual.
 - **Zen / maximizar (#11/#12)**: en zen + maximizado no se ve `[MAX]` (no
   hay statusbar); si la terminal o el sistema se comen `F11`, queda
   `Ctrl+K G`.

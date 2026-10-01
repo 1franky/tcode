@@ -638,6 +638,9 @@ estado; `Esc` lo cancela.
 | `"{a-z}` delante de `y`/`d`/`c`/`p` | Usar ese registro (`"ayy`, `"ap`); `"{A-Z}` agrega al final; `"_` descarta |
 | `q{a-z}` ... `q` | Grabar una macro en ese registro (`qA` agrega al final) |
 | `@{a-z}` / `@@` | Reproducir la macro (con conteo: `3@a`) / la última reproducida |
+| `m{a-z}` | Poner una marca en el cursor (una por letra y por archivo) |
+| `'{a-z}` / `` `{a-z} `` | Ir a la línea de la marca (primer no blanco) / a su posición exacta; sirven detrás de un operador (`d'a`, ``y`a``) |
+| `''` / ``` `` ``` | Volver a donde estaba el cursor antes del último salto (`G`, `gg`, `/`, `n`, `*`, `%`, `{`/`}`, una marca) |
 | `v` / `V` | Modo Visual por caracteres / por líneas |
 | `Esc` | En Insertar, volver a Normal; en Visual, salir sin hacer nada |
 
@@ -702,7 +705,11 @@ la barra dice "grabando @a". Las macros y los registros de texto son
 espacios separados (`"ap` no pega una macro). Una macro que se llama a sí
 misma se corta sola.
 
-No hay marcas (`m`/`'`), ni `:s` con grupos (`\1`, `&`) o rangos `a,b`,
+Las marcas siguen al texto: si se agregan o borran líneas arriba, se
+corren con ellas; si se borra el texto donde estaba una, queda donde
+empezaba lo borrado. No hay marcas globales (`mA`, entre archivos).
+
+No hay `:s` con grupos (`\1`, `&`) o rangos `a,b`,
 ni `:w <ruta>`, ni `:reg`; `.` no repite operaciones hechas en Visual.
 Ver PRUEBAS.md para la lista completa de limitaciones.
 

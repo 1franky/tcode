@@ -24,7 +24,11 @@ pub enum Alcance {
 
 pub fn alcance(m: Movimiento) -> Alcance {
     match m {
-        Movimiento::Arriba | Movimiento::Abajo | Movimiento::InicioArchivo | Movimiento::FinArchivo => Alcance::Lineal,
+        Movimiento::Arriba
+        | Movimiento::Abajo
+        | Movimiento::InicioArchivo
+        | Movimiento::FinArchivo
+        | Movimiento::IrMarca { exacta: false, .. } => Alcance::Lineal,
         Movimiento::FinLinea | Movimiento::FinPalabra { .. } | Movimiento::ParejaCorchete => Alcance::Inclusivo,
         Movimiento::BuscarCaracter(b) if !b.atras => Alcance::Inclusivo,
         _ => Alcance::Exclusivo,
@@ -372,9 +376,10 @@ pub fn calcular(lector: &mut Lector, desde: Cursor, m: Movimiento, veces: usize,
         }
         Movimiento::BuscarCaracter(b) => buscar_caracter(lector, desde, b, veces, false)?,
         // Los resuelve el ejecutor, que tiene la búsqueda guardada.
-        Movimiento::RepetirBusqueda { .. } | Movimiento::BuscarPatron { .. } | Movimiento::BuscarPalabra { .. } => {
-            return None
-        }
+        Movimiento::RepetirBusqueda { .. }
+        | Movimiento::BuscarPatron { .. }
+        | Movimiento::BuscarPalabra { .. }
+        | Movimiento::IrMarca { .. } => return None,
         Movimiento::ParejaCorchete => pareja_corchete(lector, desde)?,
         Movimiento::ParrafoSiguiente => parrafo(lector, desde, true, veces),
         Movimiento::ParrafoAnterior => parrafo(lector, desde, false, veces),

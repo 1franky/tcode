@@ -66,6 +66,10 @@ pub struct Editor {
     /// Snippet recién insertado cuyos campos se recorren con `Tab`
     /// (BACKLOG.md P2 #24, ver [`Editor::insertar_snippet`]).
     snippet: Option<SesionSnippet>,
+    /// Marcas del modo VIM (`ma`, `'a`; BACKLOG.md P3 #28): letra y
+    /// posición en bytes, corrida con cada edición. `'` es la posición de
+    /// antes del último salto (`''`).
+    marcas: Vec<(char, usize)>,
 }
 
 impl Editor {
@@ -77,6 +81,7 @@ impl Editor {
             modo: Modo::Insertar,
             plegado: Plegado::default(),
             snippet: None,
+            marcas: Vec::new(),
         }
     }
 
@@ -88,6 +93,7 @@ impl Editor {
             modo: Modo::Insertar,
             plegado: Plegado::default(),
             snippet: None,
+            marcas: Vec::new(),
         })
     }
 
@@ -177,6 +183,21 @@ impl Editor {
                 false
             }
         }
+    }
+
+    /// Pone (o mueve) la marca `marca` en el byte `posicion`.
+    pub fn poner_marca(&mut self, marca: char, posicion: usize) {
+        match self.marcas.iter_mut().find(|(m, _)| *m == marca) {
+            Some((_, p)) => *p = posicion,
+            None => self.marcas.push((marca, posicion)),
+        }
+    }
+
+    /// El byte de la marca `marca`, si está puesta (recortado al largo
+    /// del texto: deshacer puede haberlo achicado).
+    pub fn marca(&self, marca: char) -> Option<usize> {
+        let largo = self.buffer.len_bytes();
+        self.marcas.iter().find(|(m, _)| *m == marca).map(|(_, p)| (*p).min(largo))
     }
 
     /// Inserta `snippet` reemplazando `rango` (bytes), como UNA edición
@@ -413,6 +434,16 @@ impl Editor {
     fn reemplazar_y_ajustar_pliegues(&mut self, rango: Range<usize>, reemplazo: &str) {
         if let Some(sesion) = &mut self.snippet {
             sesion.ajustar(rango.start, rango.end, reemplazo.len());
+        }
+        // Marcas: una edición antes las corre; si borra el texto donde
+        // estaba una, queda al principio de lo borrado.
+        let delta = reemplazo.len() as isize - rango.len() as isize;
+        for (_, posicion) in &mut self.marcas {
+            if *posicion >= rango.end {
+                *posicion = (*posicion as isize + delta) as usize;
+            } else if *posicion > rango.start {
+                *posicion = rango.start;
+            }
         }
         if self.plegado.esta_vacio() {
             self.buffer.reemplazar_rango_bytes(rango.start, rango.end, reemplazo);
