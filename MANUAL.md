@@ -22,6 +22,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Vistas especiales: Markdown y CSV](#vistas-especiales-markdown-y-csv)
 - [Temas](#temas)
 - [Panel de administración](#panel-de-administración)
+- [Git](#git)
 - [LSP: autocompletado y diagnósticos](#lsp-autocompletado-y-diagnósticos)
 - [Personalizar atajos](#personalizar-atajos)
 - [Dónde vive la configuración](#dónde-vive-la-configuración)
@@ -865,6 +866,30 @@ siguen en el editor; se reintenta en el próximo guardado. En
 `config.toml`: `guardado_automatico = "nunca" | "al_perder_foco" |
 "cada_n_segundos"` y `segundos_guardado_automatico = 30` bajo `[editor]`.
 
+## Git
+
+Si el archivo está en un repo de git y trackeado, el gutter marca en vivo
+las líneas respecto de `HEAD`: `+` agregada, `~` modificada, `-` líneas
+borradas justo antes (se apaga en `Ctrl+,` → Editor → "Indicadores de git
+en el gutter"). Sobre esas marcas:
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+K Ctrl+V` | **Ver el cambio** del bloque del cursor: las líneas como están en `HEAD` (`-`) y como quedaron (`+`). Cualquier tecla lo cierra. |
+| `Ctrl+K Ctrl+R` | **Revertir** el bloque del cursor a como está en `HEAD`. Es una edición más: `Ctrl+Z` la deshace, y no se guarda sola. |
+| `Alt+F5` / `Shift+Alt+F5` (o `Ctrl+K Ctrl+N` / `Ctrl+K Ctrl+B`) | Ir al **cambio siguiente / anterior** (da la vuelta al llegar al final). |
+| `Ctrl+K Ctrl+G` | Prende/apaga el **blame en línea**: al final de la línea del cursor, atenuado, quién la cambió por última vez, hace cuánto y el mensaje del commit ("Sin commitear" si es un cambio tuyo). Queda guardado (`Ctrl+,` → Editor → "Git: blame en la línea del cursor"). |
+
+El blame aparece cuando el cursor se queda quieto un momento en una
+línea (moverse con las flechas no lanza un `git blame` por tecla), tiene
+en cuenta los cambios sin guardar, y no se muestra si no entra al lado
+del código.
+
+Un bloque de líneas borradas se ve y se revierte desde la línea de su
+marca `-`. Todo compara con `HEAD`, no con el índice (lo que está en
+`git add` cuenta como cambio). En un archivo sin commitear o fuera de un
+repo, los comandos avisan que no hay base.
+
 ## LSP: autocompletado y diagnósticos
 
 `tcode` no instala servidores LSP por vos — si el binario correspondiente
@@ -947,11 +972,9 @@ seguir escribiendo la filtra, `↑`/`↓` eligen, `Tab` o `Enter` aceptan y
 `Esc` la cierra (cualquier otra tecla que no sea parte del nombre
 también). Aceptar reemplaza lo escrito de la palabra por el item (más un
 `use`/`import` si el servidor lo agrega) en un solo paso: un `Ctrl+Z` lo
-deshace entero. Sin la lista abierta, `Tab` indenta como siempre. Los
-snippets se insertan como texto plano: `tcode` no tiene saltos entre
-placeholders, así que `foo(${1:a})` queda `foo(a)` y el cursor al final
-(igual, `tcode` le pide al servidor texto sin snippets, y rust-analyzer y
-pyright lo respetan). Solo con un cursor (no con multi-cursor) y, en modo
+deshace entero. Sin la lista abierta, `Tab` indenta como siempre. Un
+item que es un snippet (una función con sus argumentos, un `match`...) se
+inserta con sus campos: ver [Snippets](#snippets). Solo con un cursor (no con multi-cursor) y, en modo
 VIM, en modo Insertar. Pedir la lista nunca frena el tipeo: se pide en
 segundo plano y, si llega cuando ya se siguió escribiendo otra cosa, se
 descarta.
@@ -1001,6 +1024,49 @@ salto, y también funciona con el foco en el explorador (el foco pasa al
 editor). Solo se ven los archivos abiertos: el LSP no informa los que no
 se abrieron. Sin protocolo Kitty, `Ctrl+Shift+M` llega como `Enter`: usar
 `Ctrl+K Q`.
+
+### Snippets
+
+Un snippet es un texto con **campos** que se recorren con `Tab`: al
+insertarlo queda seleccionado el primero; lo que escribís lo reemplaza,
+`Tab` pasa al siguiente y `Shift+Tab` vuelve al anterior. Al pasar el
+último, el cursor queda donde termina el snippet. Un campo que aparece
+varias veces se edita en todos los lugares a la vez (son varios cursores).
+`Esc`, deshacer o mover el cursor fuera del campo terminan el snippet, y
+`Tab` vuelve a indentar.
+
+Vienen de dos lados:
+
+- **El LSP**: los items del autocompletado que son snippets (rust-analyzer
+  completa `foo(…)` con un campo por argumento).
+- **Los tuyos**: un archivo por lenguaje en la carpeta de config,
+  `snippets/<lenguaje>.toml` (`rust.toml`, `python.toml`... — los nombres
+  de `[lenguajes]`), más `snippets/global.toml` para todos. Se expanden
+  escribiendo el prefijo y `Tab`:
+
+```toml
+[[snippet]]
+prefijo = "fn"
+descripcion = "Función"
+cuerpo = "fn ${1:nombre}(${2}) -> ${3:()} {\n\t$0\n}"
+
+[[snippet]]
+prefijo = "main"
+cuerpo = """
+if __name__ == "__main__":
+	${1:main()}
+"""
+```
+
+La sintaxis es la de VSCode: `$1`, `${1:valor}`, `${1|uno,dos|}`
+(opciones: se inserta la primera), `$0` (dónde termina el cursor), y las
+variables `$TM_FILENAME`, `$TM_FILENAME_BASE`, `$TM_DIRECTORY`,
+`$TM_FILEPATH`, `$TM_LINE_NUMBER`, `$TM_CURRENT_LINE` (`${VAR:defecto}`
+si no hay valor). Cada `\t` se convierte en la indentación del archivo
+y las líneas siguientes toman la sangría de la línea donde se expandió.
+El prefijo tiene que estar al principio de una palabra (`fn` no se
+expande en `confn`). Después de editar los archivos, `Ctrl+K Ctrl+L`
+(recargar config) los vuelve a leer.
 
 ### Formatear al guardar
 

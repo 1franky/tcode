@@ -1,24 +1,52 @@
 # Plan de pruebas manuales — tcode
 
 Checklist para probar `tcode` de punta a punta antes de liberar una nueva
-versión. Cubre todo lo implementado hasta la fecha: M0-M4 completos y
-liberados, más piezas post-M4 (Guardar como, LSP robusto, ajuste de
-línea, manual de uso, fixes de Windows, salto rápido del explorador,
-scroll horizontal en CSV, modo VIM opcional, tema de alto contraste —
-ver [PLAN.md](./PLAN.md) §11 para el detalle de cada milestone). Cada
-sección se va agregando/actualizando pieza por pieza, a medida que se
-mergea a `develop` — no es un documento que se escribe una sola vez.
+versión. Cubre todo lo implementado hasta v0.13.0: los milestones de
+[PLAN.md](./PLAN.md) §11 y todo lo cerrado después en
+[BACKLOG.md](./BACKLOG.md) (ver "Hecho recientemente" ahí), con una
+sección por pieza al final del documento. Cada sección se agrega o
+actualiza a medida que su pieza se mergea a `develop`: no es un documento
+que se escribe una sola vez.
 
 No hace falta correrlo entero en cada versión — como mínimo, correr la
 sección de la pieza que cambió más el bug conocido de Windows. Antes de
 mergear `develop` → `main` y taggear, conviene pasar al menos una vez por
 todo, en la plataforma donde se vaya a usar principalmente.
 
+## Qué probar en v0.13.0
+
+Lo nuevo desde v0.12.0 (#137 y #138), cada uno con su sección más abajo:
+
+- [Bloques de cambios de git](#bloques-de-cambios-de-git-backlogmd-p2-25-primera-parte):
+  ver, revertir y recorrer los cambios respecto de `HEAD`.
+- [Blame en línea](#blame-en-línea-backlogmd-p2-25-segunda-parte).
+- [Snippets con saltos entre campos](#snippets-con-saltos-entre-campos-backlogmd-p2-24):
+  propios por lenguaje y los del autocompletado del LSP.
+
+Y, porque esas piezas tocan teclas y vistas compartidas, repasar:
+
+- **`Tab` / `Shift+Tab` / `Esc`**: con la lista de autocompletado abierta,
+  `Tab` acepta; sin lista ni snippet, indenta; en la tabla de un CSV,
+  salta de celda; en modo VIM (Normal), `Esc` sigue funcionando como
+  siempre.
+- **Vista de código**: con el blame prendido, la línea del cursor con un
+  diagnóstico sigue subrayada (el texto del blame no), y el ajuste de
+  línea, la regla vertical y el mouse se comportan igual que antes.
+- **Popups**: "ver cambio" de git, hover, ayuda de firma y completado no
+  quedan abiertos a la vez de forma rara; un clic los cierra.
+
 ## Cómo instalar la versión a probar
 
 - **Linux/macOS**: `curl -fsSL https://raw.githubusercontent.com/1franky/tcode/main/install/linux.sh | bash`
 - **Windows**: `irm https://raw.githubusercontent.com/1franky/tcode/main/install/windows.ps1 | iex`
 - **Desde código fuente** (para probar `develop` antes de liberar): `cargo build --release` y usar `target/release/tcode`.
+
+**Sesión guardada:** desde v0.12.0, `tcode` sin argumentos restaura las
+pestañas de la última vez en esa carpeta. Las pruebas que esperan
+arrancar con un "[Sin nombre]" vacío asumen una carpeta sin sesión
+guardada: usar `HOME` apuntando a una carpeta temporal (lo que además deja
+intacta la config real), o apagar `Ctrl+,` → Editor → "Restaurar la
+sesión anterior".
 
 Para cada prueba, anotar: ✅ funcionó / ❌ falló (con qué se rompió) / ⚠️
 funcionó pero con algo raro. Sistema operativo y terminal usados importan
@@ -29,7 +57,7 @@ abajo, es donde más problemas aparecieron).
 
 ## M0 — Fundamentos
 
-- [ ] Abrir `tcode` sin argumentos: arranca con un buffer vacío ("[Sin nombre]").
+- [ ] Abrir `tcode` sin argumentos en una carpeta sin sesión guardada (ver "Sesión guardada" arriba): arranca con un buffer vacío ("[Sin nombre]").
 - [ ] Abrir `tcode ruta/a/archivo.txt`: carga el contenido correcto.
 - [ ] Escribir texto, moverse con las flechas, `Home`/`End`, `Ctrl+Home`/`Ctrl+End`.
 - [ ] `Enter` inserta un salto de línea real (no rompe el archivo).
@@ -1004,7 +1032,7 @@ proyecto y con `HOME` temporal. Si `HOME` es temporal, `rust-analyzer`
 - [ ] `F12` sobre algo sin definición (un número, un espacio): "No se encontró la definición".
 - [ ] `c.` en Python (con `c` una instancia) o `p.` en Rust: tras un instante aparece la lista de métodos/campos bajo el cursor, con tipo y firma. Seguir escribiendo filtra (letras coincidentes en negrita); una letra que no coincide con nada la cierra.
 - [ ] `↑`/`↓` recorren la lista (dando la vuelta), `Tab` o `Enter` aceptan: se reemplaza lo escrito de la palabra; `Ctrl+Z` deshace la aceptación entera en un paso. `Esc` cierra sin tocar nada.
-- [ ] Sin lista abierta, `Tab` indenta como siempre; `Enter` inserta salto de línea.
+- [ ] Sin lista abierta, `Tab` indenta como siempre (salvo dentro de un snippet o justo después del prefijo de uno propio, ver [Snippets](#snippets-con-saltos-entre-campos-backlogmd-p2-24)); `Enter` inserta salto de línea.
 - [ ] Escribir un nombre a medias y esperar: aparece la lista sola. Tipear de corrido (sin pausas) no la abre en cada letra.
 - [ ] `Ctrl+Espacio` (o `Ctrl+K Espacio`) la abre a mano; en un lugar sin sugerencias dice "Sin sugerencias".
 - [ ] Con multi-cursor, o en modo Normal de VIM, no aparece la lista.
@@ -1119,6 +1147,38 @@ Con `HOME` temporal y pyright, en un `.py` con
 - [ ] **Cerrar.** Con la firma a la vista, `Esc` la cierra (en modo VIM además pasa a Normal); una flecha o un atajo también.
 - [ ] **A mano.** Con el cursor adentro de una llamada ya escrita, `Ctrl+K ,` la muestra; afuera de una llamada, "Sin firma para mostrar acá". En un `.txt`, "LSP: sin LSP para este archivo".
 - [ ] **Rust.** Con rust-analyzer: `String::with_capacity(` muestra la firma con el nombre de la función.
+
+## Bloques de cambios de git (BACKLOG.md P2 #25, primera parte)
+
+En un repo con un archivo commiteado de 6 líneas, modificado para que
+tenga una línea cambiada, una agregada y la última borrada.
+
+- [ ] **Navegar.** `Ctrl+K Ctrl+N` (o `Alt+F5`) va a la línea cambiada, a la agregada y a la de la marca `-`, diciendo "cambio i de 3"; desde la última vuelve a la primera. `Ctrl+K Ctrl+B` (o `Shift+Alt+F5`) al revés.
+- [ ] **Ver.** `Ctrl+K Ctrl+V` en la línea cambiada muestra `- original` y `+ nueva` con los colores del gutter; en la de la marca `-`, la línea borrada. `Esc` lo cierra sin hacer nada más; otra tecla lo cierra y hace lo suyo.
+- [ ] **Revertir.** `Ctrl+K Ctrl+R` en cada bloque lo deja como en `HEAD` (la marca del gutter desaparece); la borrada vuelve a aparecer. `Ctrl+Z` deshace cada reversión.
+- [ ] **Sin base.** En un archivo sin commitear, en uno fuera de un repo o en una línea sin cambios, los comandos avisan en la barra y no hacen nada.
+
+## Blame en línea (BACKLOG.md P2 #25, segunda parte)
+
+En el mismo repo de la sección anterior.
+
+- [ ] **Prender.** `Ctrl+K Ctrl+G`: "blame en línea prendido"; enseguida, al final de la línea del cursor, atenuado y en itálica, "Autor, hace X · mensaje del commit".
+- [ ] **Moverse.** En una línea modificada o agregada dice "Sin commitear"; al moverse, la anotación sigue al cursor (aparece un momento después de dejar de moverse). Mantener apretada una flecha no congela nada.
+- [ ] **Cambios sin guardar.** Agregar líneas arriba sin guardar: las de abajo siguen mostrando su commit correcto (no se corren).
+- [ ] **No tapa código.** En una línea casi tan larga como la ventana, la anotación no aparece (o se corta con `...`).
+- [ ] **Apagar.** `Ctrl+K Ctrl+G` otra vez la saca; al reabrir `tcode` queda como se dejó (`blame_en_linea` en `config.toml`). Fuera de un repo no aparece nada.
+
+## Snippets con saltos entre campos (BACKLOG.md P2 #24)
+
+Con `HOME` temporal y un `snippets/python.toml` en la carpeta de config:
+`prefijo = "def"`, `cuerpo = "def ${1:nombre}(${2:args}):\n\t\"\"\"${3:Doc de $1.}\"\"\"\n\t$0"`.
+
+- [ ] **Expandir.** En un `.py`, dentro de una clase (línea con sangría), escribir `def` + `Tab`: aparece la función con la sangría de la clase, `nombre` seleccionado y la barra dice "2 cursores" (el espejo del docstring).
+- [ ] **Campos.** Escribir `sumar`: cambia también en el docstring. `Tab` selecciona `args`, `Tab` el docstring, `Tab` deja el cursor en la línea del cuerpo, indentado. Otro `Tab` ya indenta.
+- [ ] **Shift+Tab / Esc.** Con un campo seleccionado, `Shift+Tab` vuelve al anterior; `Esc` termina el snippet (el siguiente `Tab` indenta).
+- [ ] **Borde de palabra.** `confdef` + `Tab` no expande (indenta). En un `.txt` (sin `global.toml`), `def` + `Tab` indenta.
+- [ ] **Recargar.** Agregar un snippet al archivo y `Ctrl+K Ctrl+L`: el nuevo prefijo ya expande.
+- [ ] **LSP.** Con rust-analyzer, completar una función con argumentos (`sum` → `sumar(…)` + `Tab`): queda `sumar(primero, segundo)` con `primero` seleccionado; escribir, `Tab`, escribir, `Tab` deja el cursor después del `)`. Un `Ctrl+Z` después de aceptar (sin escribir) vuelve a `sum`.
 
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de

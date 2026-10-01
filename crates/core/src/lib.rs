@@ -16,6 +16,7 @@ pub mod estado_ir_a_linea;
 pub mod estado_vim;
 pub mod history;
 pub mod plegado;
+pub mod snippet;
 pub mod vim;
 
 pub use buffer::{Buffer, Eol};
@@ -35,6 +36,7 @@ pub use estado_ir_a_linea::{interpretar_ir_a_linea, EstadoIrALinea};
 pub use estado_vim::EstadoVim;
 pub use vim::EstadoLineaComando;
 pub use history::Historia;
+pub use snippet::{adaptar_sangria, parsear as parsear_snippet, SesionSnippet, Snippet};
 pub use plegado::{linea_de_ordinal, ordinal_visible, tramo_que_oculta, Plegado, Pliegue};
 
 #[cfg(test)]

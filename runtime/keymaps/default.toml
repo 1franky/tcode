@@ -241,6 +241,18 @@
 # Panel de problemas (BACKLOG.md P2 #22): Ctrl+Shift+M y F8/Shift+F8 como
 # en VSCode. Sin protocolo Kitty, Ctrl+Shift+M pierde el Shift y llega
 # como Ctrl+M (= Enter): el chord con Ctrl+K es la alternativa universal.
+# Bloques de cambios respecto de HEAD (BACKLOG.md P2 #25), con los atajos
+# de VSCode: Ctrl+K Ctrl+R revierte; Alt+F5/Shift+Alt+F5 recorren (no
+# todas las terminales mandan Alt+F5: Ctrl+K Ctrl+N / Ctrl+K Ctrl+B).
+"Ctrl+K Ctrl+V"  = "git.ver_cambio"
+"Ctrl+K Ctrl+R"  = "git.revertir_cambio"
+"Alt+F5"         = "git.siguiente_cambio"
+"Shift+Alt+F5"   = "git.anterior_cambio"
+"Ctrl+K Ctrl+N"  = "git.siguiente_cambio"
+"Ctrl+K Ctrl+B"  = "git.anterior_cambio"
+# Blame en línea (apagado por defecto): GitLens no tiene atajo propio;
+# Ctrl+K Ctrl+G ("git") lo prende y apaga.
+"Ctrl+K Ctrl+G"  = "git.alternar_blame"
 "Ctrl+Shift+M"   = "problemas.ver"
 "Ctrl+K Q"       = "problemas.ver"
 "F8"             = "problemas.siguiente"

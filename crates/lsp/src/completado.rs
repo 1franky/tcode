@@ -35,6 +35,11 @@ pub struct ItemCompletado {
     /// `additionalTextEdits` (un `use`/`import` al principio del archivo,
     /// típicamente), ya sin marcas de snippet.
     pub adicionales: Vec<(Range, String)>,
+    /// El texto principal tal como vino si es un snippet (con `$1`,
+    /// `${1:valor}`...), para insertarlo con sus campos (BACKLOG.md P2
+    /// #24); `insertar` es su versión en texto plano (para filtrar y
+    /// como respaldo).
+    pub snippet: Option<String>,
 }
 
 /// Parsea la respuesta a `textDocument/completion`
@@ -55,8 +60,7 @@ pub fn parsear_completado(resultado: &Value) -> (Vec<ItemCompletado>, bool) {
 
 fn parsear_item(item: &Value) -> Option<ItemCompletado> {
     let etiqueta = item["label"].as_str()?.to_string();
-    // `insertTextFormat` 2 = snippet: `tcode` anuncia no soportarlos,
-    // pero un servidor puede mandarlos igual.
+    // `insertTextFormat` 2 = snippet.
     let es_snippet = item["insertTextFormat"].as_u64() == Some(2);
     let limpiar = |texto: &str| {
         let texto = texto.replace("\r\n", "\n");
@@ -65,11 +69,9 @@ fn parsear_item(item: &Value) -> Option<ItemCompletado> {
     let edicion = &item["textEdit"];
     let rango_edicion = edicion.get("range").or_else(|| edicion.get("insert"));
     let rango = rango_edicion.and_then(rango_de);
-    let insertar = edicion["newText"]
-        .as_str()
-        .or_else(|| item["insertText"].as_str())
-        .map(limpiar)
-        .unwrap_or_else(|| etiqueta.clone());
+    let crudo = edicion["newText"].as_str().or_else(|| item["insertText"].as_str());
+    let snippet = crudo.filter(|_| es_snippet).map(|t| t.replace("\r\n", "\n"));
+    let insertar = crudo.map(limpiar).unwrap_or_else(|| etiqueta.clone());
     let adicionales = item["additionalTextEdits"]
         .as_array()
         .map(|lista| {
@@ -90,6 +92,7 @@ fn parsear_item(item: &Value) -> Option<ItemCompletado> {
         insertar,
         rango,
         adicionales,
+        snippet,
         etiqueta,
     })
 }
@@ -136,8 +139,9 @@ fn nombre_tipo(kind: u64) -> &'static str {
 
 /// Texto plano de un snippet LSP: `$1`/`$0` desaparecen, `${1:valor}` y
 /// `${1|a,b|}` dejan su valor por defecto (la primera opción), y `\$`,
-/// `\}`, `\\` quedan como el carácter solo. `tcode` no tiene saltos entre
-/// placeholders: el cursor queda al final de lo insertado.
+/// `\}`, `\\` quedan como el carácter solo. Es lo que se usa para filtrar
+/// y mostrar; al aceptar, el snippet se inserta con sus campos
+/// (`ItemCompletado::snippet`, `tcode_core::snippet`).
 pub fn snippet_a_texto(snippet: &str) -> String {
     fn procesar(caracteres: &mut std::iter::Peekable<std::str::Chars>, salida: &mut String, dentro: bool) {
         while let Some(c) = caracteres.next() {

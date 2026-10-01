@@ -92,6 +92,7 @@ pub fn manejar(
             // de `Ctrl+W` (ver `EstadoApp::cierre_pedido`).
             layout.panel_activo_mut().mensaje_estado = None;
             estado.cierre_armado = estado.cierre_pedido.take();
+            estado.cambio_git = None;
             estado.confirmar_salida = false;
             contar_clic(&mut estado.mouse, boton, x, y)
         }

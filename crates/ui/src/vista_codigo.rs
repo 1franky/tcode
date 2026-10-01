@@ -199,6 +199,11 @@ fn ajustar_scroll_con_ajuste(
     ((linea, subfila), alto_visible - 1)
 }
 
+/// Separación entre el código y una anotación al final de la línea, y lo
+/// mínimo que tiene que entrar de la anotación para mostrarla.
+const ESPACIO_ANOTACION: &str = "    ";
+const ANCHO_MINIMO_ANOTACION: usize = 12;
+
 /// Dibuja el contenido del archivo (coloreado por tree-sitter si la
 /// extensión corresponde a uno de los lenguajes de M1, PLAN.md §11),
 /// resalta la(s) línea(s) con cursor, subraya las líneas con diagnósticos
@@ -249,6 +254,7 @@ pub fn dibujar(
     ajuste_linea: bool,
     columna_regla: Option<usize>,
     marcas_git: Option<&[Option<MarcaGit>]>,
+    anotacion: Option<(usize, &str)>,
 ) -> ZonaCodigo {
     estado.posicion_cursor = None;
     let buffer = editor.buffer();
@@ -449,6 +455,31 @@ pub fn dibujar(
                 });
             }
 
+            // Anotación al final de la línea (blame en línea, BACKLOG.md P2
+            // #25): texto virtual atenuado después del código, en la
+            // última fila de la línea y solo si entra (nunca empuja ni
+            // tapa código). Antes del relleno de "línea actual", para
+            // tomar ese fondo; fuera del subrayado de diagnósticos.
+            let mut fin_codigo = None;
+            if let Some((linea_anotada, texto)) = anotacion {
+                if linea_anotada == fila.idx_linea && fila.fin == linea.len() {
+                    let ocupado: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                    let libre = ancho_visible.saturating_sub(ocupado + ESPACIO_ANOTACION.len());
+                    if libre >= ANCHO_MINIMO_ANOTACION {
+                        fin_codigo = Some(spans.len());
+                        let texto: String = if texto.chars().count() > libre {
+                            format!("{}...", texto.chars().take(libre - 3).collect::<String>())
+                        } else {
+                            texto.to_string()
+                        };
+                        spans.push(Span::styled(
+                            format!("{ESPACIO_ANOTACION}{texto}"),
+                            Style::default().fg(paleta.numero_linea).add_modifier(Modifier::ITALIC),
+                        ));
+                    }
+                }
+            }
+
             if lineas_con_cursor.contains(&fila.idx_linea) {
                 // Se añade un span final de relleno para que el resaltado
                 // de la línea actual cubra todo el ancho, no solo el
@@ -473,7 +504,8 @@ pub fn dibujar(
             }
             if let Some(severidad) = severidad_mas_grave_en_linea(diagnosticos, fila.idx_linea) {
                 let color = color_severidad(paleta, severidad);
-                for span in &mut spans {
+                let hasta = fin_codigo.unwrap_or(spans.len());
+                for span in &mut spans[..hasta] {
                     // Subraya sin tocar el color del texto (preserva el
                     // resaltado de sintaxis): `underline_color` separa el
                     // color del subrayado del color del texto.

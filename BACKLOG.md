@@ -123,16 +123,6 @@ y ayuda de firma (`signatureHelp`, sola al tipear `(`/`,`, o
 virtual en la vista de código, lo que toca el mapeo de columnas del
 cursor, el mouse y el ajuste de línea: evaluarlos aparte.
 
-### 24. Snippets con saltos entre campos
-
-Propios por lenguaje y los que manda el LSP (hoy se insertan como texto
-plano, sin placeholders).
-
-### 25. Git más completo
-
-Ver el diff de un bloque contra `HEAD`, revertir un bloque, blame en
-línea.
-
 ---
 
 ## P3 — Bloqueado o reconsiderar si debería estar en el plan
@@ -185,6 +175,28 @@ Búsqueda con `/`/`?`/`n`/`*`, macros, registros con nombre, `Ctrl+R`.
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-30 — P2 #24 Snippets con saltos entre campos:** motor en
+`tcode_core::snippet` (sintaxis LSP/VSCode: campos, anidados, espejos,
+opciones, `$0`, variables `TM_*`, escapes) + `Editor::insertar_snippet`
+con una `SesionSnippet` cuyos rangos ajusta `reemplazar_y_ajustar_pliegues`
+(el embudo de toda edición); los espejos son varios cursores. `Tab`/
+`Shift+Tab` recorren, `Esc`/deshacer/salir del campo terminan. Fuentes:
+completado del LSP (`snippetSupport` prendido) y snippets propios en
+`<config>/snippets/<lenguaje>.toml` + `global.toml`, expandidos con
+prefijo + `Tab`. Limitaciones: las transformaciones
+(`${1/regex/formato/}`) se ignoran; las opciones (`${1|a,b|}`) insertan
+la primera sin menú para elegir; no hay variables de fecha.
+
+**2026-09-30 — P2 #25 Git más completo:** ver el diff del bloque del
+cursor (`Ctrl+K Ctrl+V`), revertirlo (`Ctrl+K Ctrl+R`), ir al cambio
+siguiente/anterior (`Alt+F5`/`Shift+Alt+F5`, `Ctrl+K Ctrl+N`/`Ctrl+K
+Ctrl+B`) — `tcode_fs::bloques_git`, el mismo diff del gutter con rangos de
+bytes — y blame en línea (`Ctrl+K Ctrl+G`, `editor.blame_en_linea`):
+`git blame --porcelain --contents -` con el texto del buffer en un hilo,
+tras 300 ms quieto en la línea; se dibuja como `PanelEditor::anotacion`.
+Limitaciones: compara con `HEAD`, no con el índice; el blame no se ve si
+no entra al lado del código.
 
 **2026-09-30 — P2 #20 Restaurar la sesión y #21 Recuperación:**
 - **Sesión** por carpeta en `<estado>/sesiones/<huella>.json`

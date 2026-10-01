@@ -37,6 +37,11 @@ pub struct ConfigEditor {
     /// archivos fuera de un repo o sin trackear (ni siquiera reserva la
     /// columna, ver `tcode_ui::vista_codigo`).
     pub indicadores_git: bool,
+    /// Blame en línea (BACKLOG.md P2 #25): autor, fecha y mensaje del
+    /// último commit que tocó la línea del cursor, atenuado al final de
+    /// esa línea. Apagado por defecto (agrega ruido y un `git blame` por
+    /// cada pausa del cursor); `git.alternar_blame` lo prende y apaga.
+    pub blame_en_linea: bool,
     /// Modo VIM (M5, alcance "lo esencial" — sin operadores combinables
     /// como `dw`, sin conteos numéricos, sin `:`): modos Normal/Insertar
     /// con `Esc`/`i`/`a`/`o`, movimientos `hjkl`/`0`/`$`/`gg`/`G`, y
@@ -174,6 +179,7 @@ impl Default for ConfigEditor {
             ajuste_linea: false,
             numeros_de_linea: true,
             indicadores_git: true,
+            blame_en_linea: false,
             modo_vim: false,
             columna_regla: None,
             guardado_automatico: GuardadoAutomatico::Nunca,
@@ -493,6 +499,7 @@ mod tests {
                 ajuste_linea: true,
                 numeros_de_linea: false,
                 indicadores_git: false,
+                blame_en_linea: true,
                 modo_vim: true,
                 columna_regla: Some(80),
                 guardado_automatico: GuardadoAutomatico::CadaNSegundos,

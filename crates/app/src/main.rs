@@ -16,7 +16,9 @@
 //! (`lsp.rs`) sin bloquear ninguno de los dos.
 
 mod formateador;
+mod blame;
 mod funciones_lsp;
+mod git_bloques;
 mod lsp;
 mod mouse;
 mod pliegues;
@@ -24,6 +26,7 @@ mod portapapeles;
 mod problemas;
 mod respaldo;
 mod sesion;
+mod snippets;
 mod vim;
 
 use std::collections::VecDeque;
@@ -459,6 +462,11 @@ struct EstadoApp {
     /// Respaldos de una sesión que se cerró de golpe en esta carpeta,
     /// mientras se pregunta si recuperarlos (diálogo modal al arrancar).
     recuperacion: Option<Vec<tcode_config::Huerfano>>,
+    /// Popup de "ver cambio" de git (BACKLOG.md P2 #25, `git_bloques`):
+    /// se cierra con cualquier tecla o clic.
+    cambio_git: Option<git_bloques::LineasCambio>,
+    /// Blame en línea (BACKLOG.md P2 #25, `blame.rs`).
+    blame: blame::EstadoBlame,
     /// Si esta ejecución guarda la sesión de la carpeta (BACKLOG.md P2
     /// #20, ver `sesion::aplica`).
     guardar_sesion: bool,
@@ -599,6 +607,8 @@ async fn ejecutar(
         respaldo,
         recuperacion,
         guardar_sesion,
+        cambio_git: None,
+        blame: Default::default(),
         ultimo_autoguardado: Instant::now(),
         guardado_pendiente: false,
         resaltador: Resaltador::nuevo(),
@@ -757,6 +767,9 @@ async fn ejecutar(
                     layout.editor_activo().buffer().num_lineas(),
                     &estado.paleta,
                 );
+                if let (Some(lineas), Some(cursor)) = (&estado.cambio_git, layout.panel_activo().estado_ui.posicion_cursor()) {
+                    tcode_ui::panel_lsp::dibujar_cambio_git(frame, frame.area(), cursor, lineas, &estado.paleta);
+                }
                 if let Some(huerfanos) = &estado.recuperacion {
                     tcode_ui::panel_recuperacion::dibujar(frame, frame.area(), &respaldo::nombres(huerfanos), &estado.paleta);
                 }
@@ -895,6 +908,18 @@ async fn ejecutar(
         // descarta, `Esc` lo deja para la próxima vez (suelta el bloqueo
         // sin borrar nada). Descartar pide una tecla distinta de la que
         // recupera, así un `Enter` apurado nunca pierde nada.
+        // `Esc` termina el snippet en curso (y sigue su camino).
+        if key.code == KeyCode::Esc {
+            layout.editor_activo_mut().terminar_snippet();
+        }
+
+        // Popup de "ver cambio" de git: cualquier tecla lo cierra y sigue
+        // su camino, salvo `Esc`, que solo lo cierra.
+        if estado.cambio_git.take().is_some() && key.code == KeyCode::Esc {
+            necesita_redibujado = true;
+            continue;
+        }
+
         if let Some(huerfanos) = estado.recuperacion.take() {
             match key.code {
                 KeyCode::Enter => respaldo::recuperar(huerfanos, layout, &mut estado),
@@ -1609,6 +1634,7 @@ fn necesita_tick(layout: &PanelLayout, estado: &EstadoApp) -> bool {
     estado.logs_lsp.activo()
         || estado.config.editor.guardado_automatico == GuardadoAutomatico::CadaNSegundos
         || estado.respaldo.necesita_tick(layout)
+        || estado.blame.necesita_tick(layout, &estado.config)
 }
 
 /// Un tick del bucle principal: refresca el visor de logs del LSP si
@@ -1616,7 +1642,7 @@ fn necesita_tick(layout: &PanelLayout, estado: &EstadoApp) -> bool {
 /// N segundos" si ya tocaba (P2 #4). Devuelve si cambió algo visible —
 /// si no, el bucle se saltea el próximo dibujo.
 fn procesar_tick(layout: &mut PanelLayout, estado: &mut EstadoApp) -> bool {
-    let mut cambio = false;
+    let mut cambio = estado.blame.tick(layout, &estado.config);
     // Respaldos de lo no guardado (BACKLOG.md P2 #21) y, de paso, la
     // sesión: si `tcode` se cierra de golpe, al volver se reabren las
     // mismas pestañas además de recuperarse los cambios.
@@ -1801,6 +1827,7 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         }
         "config.recargar" => {
             recargar_config_tema_y_keymap(estado, resolvedor);
+            snippets::recargar();
             Accion::Continuar
         }
         "proyecto.confiar" | "proyecto.dejar_de_confiar" => {
@@ -1829,6 +1856,25 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         // sentido en el explorador o en la vista de tabla CSV.
         // Panel de problemas (BACKLOG.md P2 #22): también con el foco en
         // el explorador — saltar lleva el foco al editor.
+        // Bloques de cambios respecto de HEAD (BACKLOG.md P2 #25).
+        "git.ver_cambio" | "git.revertir_cambio" | "git.siguiente_cambio" | "git.anterior_cambio"
+            if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla =>
+        {
+            match id {
+                "git.ver_cambio" => git_bloques::ver(layout, estado),
+                "git.revertir_cambio" => git_bloques::revertir(layout),
+                _ => git_bloques::saltar(id == "git.siguiente_cambio", layout),
+            }
+            Accion::Continuar
+        }
+        // Prende/apaga el blame en línea y lo deja guardado en la config.
+        "git.alternar_blame" => {
+            estado.capas_config.global.editor.blame_en_linea = !estado.config.editor.blame_en_linea;
+            guardar_config_global(estado);
+            let aviso = if estado.config.editor.blame_en_linea { "Git: blame en línea prendido" } else { "Git: blame en línea apagado" };
+            layout.panel_activo_mut().mensaje_estado = Some(aviso.to_string());
+            Accion::Continuar
+        }
         "problemas.ver" => {
             problemas::ver(layout, estado);
             Accion::Continuar
@@ -2258,6 +2304,18 @@ fn ejecutar_comando(
         return ejecutar_comando_csv(comando, layout);
     }
 
+    // `Tab`: el campo siguiente de un snippet en curso, o expandir un
+    // snippet propio si el cursor está justo después de su prefijo, o
+    // indentar (BACKLOG.md P2 #24). El completado abierto se queda con
+    // el `Tab` antes de llegar acá (`funciones_lsp::manejar_tecla`).
+    if comando == "editor.indentar_o_autocompletar" {
+        let ruta = layout.panel_activo().ruta_mostrada.clone();
+        let editor = layout.editor_activo_mut();
+        if !editor.siguiente_campo() && !snippets::expandir_prefijo(editor, &ruta, config) {
+            insertar_tabulacion(editor, config);
+        }
+        return Accion::Continuar;
+    }
     let editor = layout.editor_activo_mut();
     match comando {
         "cursor.arriba" => editor.mover_arriba(),
@@ -2277,7 +2335,10 @@ fn ejecutar_comando(
         "editor.borrar_atras" => editor.borrar_atras(),
         "editor.borrar_adelante" => editor.borrar_adelante(),
         "editor.nueva_linea" => editor.insertar_char('\n'),
-        "editor.indentar_o_autocompletar" => insertar_tabulacion(editor, config),
+        // Fuera de un snippet, `Shift+Tab` no hace nada en el texto.
+        "editor.desindentar" => {
+            editor.anterior_campo();
+        }
         // Edición básica (BACKLOG.md P0 #19): cada una es un solo paso
         // de deshacer y actúa sobre todos los cursores.
         "editor.mover_lineas_arriba" => {
