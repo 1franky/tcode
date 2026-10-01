@@ -1120,6 +1120,16 @@ Con `HOME` temporal y pyright, en un `.py` con
 - [ ] **A mano.** Con el cursor adentro de una llamada ya escrita, `Ctrl+K ,` la muestra; afuera de una llamada, "Sin firma para mostrar acá". En un `.txt`, "LSP: sin LSP para este archivo".
 - [ ] **Rust.** Con rust-analyzer: `String::with_capacity(` muestra la firma con el nombre de la función.
 
+## Bloques de cambios de git (BACKLOG.md P2 #25, primera parte)
+
+En un repo con un archivo commiteado de 6 líneas, modificado para que
+tenga una línea cambiada, una agregada y la última borrada.
+
+- [ ] **Navegar.** `Ctrl+K Ctrl+N` (o `Alt+F5`) va a la línea cambiada, a la agregada y a la de la marca `-`, diciendo "cambio i de 3"; desde la última vuelve a la primera. `Ctrl+K Ctrl+B` (o `Shift+Alt+F5`) al revés.
+- [ ] **Ver.** `Ctrl+K Ctrl+V` en la línea cambiada muestra `- original` y `+ nueva` con los colores del gutter; en la de la marca `-`, la línea borrada. `Esc` lo cierra sin hacer nada más; otra tecla lo cierra y hace lo suyo.
+- [ ] **Revertir.** `Ctrl+K Ctrl+R` en cada bloque lo deja como en `HEAD` (la marca del gutter desaparece); la borrada vuelve a aparecer. `Ctrl+Z` deshace cada reversión.
+- [ ] **Sin base.** En un archivo sin commitear, en uno fuera de un repo o en una línea sin cambios, los comandos avisan en la barra y no hacen nada.
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).

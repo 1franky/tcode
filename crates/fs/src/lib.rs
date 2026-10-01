@@ -29,5 +29,5 @@ pub use busqueda_proyecto::{
 };
 pub use estado_prompt::{EstadoConfirmarBorrado, EstadoPromptExplorador, ModoPromptExplorador};
 pub use explorador::{partes_ruta_en_proyecto, raiz_por_defecto, Explorador};
-pub use git::{calcular_marcas, leer_base_head, DiffGit, MarcaGit, VigiaHead, INTERVALO_REVISION_HEAD};
+pub use git::{bloques_git, calcular_marcas, leer_base_head, BloqueGit, DiffGit, MarcaGit, VigiaHead, INTERVALO_REVISION_HEAD};
 pub use nodo::Nodo;

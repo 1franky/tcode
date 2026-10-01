@@ -215,6 +215,30 @@ pub fn dibujar_firma(frame: &mut Frame, area_total: Rect, cursor: (u16, u16), fi
     );
 }
 
+/// Popup de "ver cambio" de git (BACKLOG.md P2 #25) junto al cursor: las
+/// líneas borradas con `-` y las agregadas con `+`, en los colores del
+/// gutter. Mismo lugar que el hover.
+pub fn dibujar_cambio_git(frame: &mut Frame, area_total: Rect, cursor: (u16, u16), lineas: &[(bool, String)], paleta: &Paleta) {
+    let estilo_base = Style::default().bg(paleta.fondo).fg(paleta.texto);
+    let contenido: Vec<Line> = lineas
+        .iter()
+        .map(|(agregada, texto)| {
+            let (signo, color) = if *agregada { ('+', paleta.git_agregada) } else { ('-', paleta.git_borrada) };
+            Line::styled(recortar(&format!("{signo} {}", texto.replace('\t', "    ")), ANCHO_HOVER), estilo_base.fg(color))
+        })
+        .collect();
+    let ancho = contenido.iter().map(Line::width).max().unwrap_or(0) as u16 + 2;
+    let alto = contenido.len().max(1) as u16 + 2;
+    let Some(area) = area_junto_al_cursor(area_total, cursor, ancho.max(28), alto) else { return };
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(contenido).style(estilo_base).block(
+            Block::default().borders(Borders::ALL).border_set(crate::BORDE_ASCII).title(" Cambio respecto de HEAD ").style(estilo_base),
+        ),
+        area,
+    );
+}
+
 /// Lista de ubicaciones (varias definiciones, o las referencias):
 /// el mismo overlay de "escribir para filtrar" que el selector de
 /// símbolos.

@@ -130,8 +130,9 @@ plano, sin placeholders).
 
 ### 25. Git más completo
 
-Ver el diff de un bloque contra `HEAD`, revertir un bloque, blame en
-línea.
+Hecho: ver el diff del bloque del cursor (`Ctrl+K Ctrl+V`), revertirlo
+(`Ctrl+K Ctrl+R`) e ir al cambio siguiente/anterior (`Alt+F5`/`Ctrl+K
+Ctrl+N`...). Falta: blame en línea.
 
 ---
 
