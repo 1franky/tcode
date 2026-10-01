@@ -1025,6 +1025,7 @@ apuntando a una carpeta temporal.
 - [ ] `Alt+Enter` mientras todavía busca, o con la búsqueda cortada en el tope: no reemplaza y explica por qué.
 - [ ] Pegar texto (bracketed paste) con la vista abierta: se escribe en el campo activo, no en el archivo.
 - [ ] `Esc` con la búsqueda en curso: cierra, y la CPU vuelve a reposo enseguida.
+- [ ] **Grupos.** Con regex (`Alt+R`), buscar `([a-z])(\d)` y reemplazar por `$2$1` en un archivo abierto (`a1`) y uno cerrado (`c3`): quedan `1a` (en el buffer, sin guardar) y `3c` (en disco). Sin regex, `$1` se escribe tal cual.
 
 ## Ir a definición, autocompletado, hover, referencias y renombrar (LSP)
 

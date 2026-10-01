@@ -156,20 +156,33 @@ fn limite_char(texto: &str, mut byte: usize) -> usize {
 }
 
 /// Las ediciones `(rango, texto nuevo)` que reemplazan cada coincidencia
-/// de `re` en `texto` por `reemplazo`, tal cual — sin expandir `$1`, igual
-/// que el reemplazo de `Ctrl+H`. Rangos sobre `texto`, sin solaparse y en
-/// orden: lo que espera `Editor::aplicar_ediciones` (un solo paso de
-/// deshacer).
-pub fn ediciones_de_reemplazo(texto: &str, re: &Regex, reemplazo: &str) -> Vec<(Range<usize>, String)> {
-    re.find_iter(texto)
-        .filter(|m| m.start() != m.end())
-        .map(|m| (m.start()..m.end(), reemplazo.to_string()))
+/// de `re` en `texto` por `reemplazo`. Con `grupos` (la búsqueda es un
+/// regex), `reemplazo` puede usar lo que capturó cada coincidencia: `$1`,
+/// `${1}`, `${nombre}`, `$0` (todo) y `$$` (un `$`); sin regex es literal.
+/// Rangos sobre `texto`, sin solaparse y en orden: lo que espera
+/// `Editor::aplicar_ediciones` (un solo paso de deshacer).
+pub fn ediciones_de_reemplazo(texto: &str, re: &Regex, reemplazo: &str, grupos: bool) -> Vec<(Range<usize>, String)> {
+    re.captures_iter(texto)
+        .filter_map(|caps| {
+            let m = caps.get(0)?;
+            if m.start() == m.end() {
+                return None;
+            }
+            let nuevo = if grupos {
+                let mut nuevo = String::new();
+                caps.expand(reemplazo, &mut nuevo);
+                nuevo
+            } else {
+                reemplazo.to_string()
+            };
+            Some((m.start()..m.end(), nuevo))
+        })
         .collect()
 }
 
 /// `texto` con todas las coincidencias reemplazadas, y cuántas eran.
-pub fn reemplazar_en_texto(texto: &str, re: &Regex, reemplazo: &str) -> (String, usize) {
-    let ediciones = ediciones_de_reemplazo(texto, re, reemplazo);
+pub fn reemplazar_en_texto(texto: &str, re: &Regex, reemplazo: &str, grupos: bool) -> (String, usize) {
+    let ediciones = ediciones_de_reemplazo(texto, re, reemplazo, grupos);
     let mut salida = String::with_capacity(texto.len());
     let mut ultimo = 0;
     for (rango, nuevo) in &ediciones {
@@ -202,11 +215,11 @@ fn leer_texto(ruta: &Path) -> Option<String> {
 /// forma atómica ([`escribir_atomico`]). Los `\r\n` quedan como estaban:
 /// se trabaja sobre el texto crudo. Devuelve cuántas reemplazó (0 = el
 /// archivo no se tocó).
-pub fn reemplazar_en_archivo(ruta: &Path, re: &Regex, reemplazo: &str) -> Result<usize> {
+pub fn reemplazar_en_archivo(ruta: &Path, re: &Regex, reemplazo: &str, grupos: bool) -> Result<usize> {
     let Some(texto) = leer_texto(ruta) else {
         bail!("'{}' no se puede leer como texto", ruta.display());
     };
-    let (nuevo, cantidad) = reemplazar_en_texto(&texto, re, reemplazo);
+    let (nuevo, cantidad) = reemplazar_en_texto(&texto, re, reemplazo, grupos);
     if cantidad > 0 && nuevo != texto {
         escribir_atomico(ruta, &nuevo)?;
     }
@@ -760,11 +773,16 @@ mod tests {
     }
 
     #[test]
-    fn reemplaza_literal_sin_expandir_grupos() {
+    fn con_regex_expande_grupos_y_sin_regex_es_literal() {
         let regex = OpcionesBusqueda { regex: true, ..Default::default() };
-        let (nuevo, n) = reemplazar_en_texto("a1 b2 c3", &re(r"[a-z](\d)", regex), "$1");
-        assert_eq!(n, 3);
-        assert_eq!(nuevo, "$1 $1 $1");
+        let patron = re(r"([a-z])(?P<n>\d)", regex);
+        let (nuevo, n) = reemplazar_en_texto("a1 b2 c3", &patron, "${n}$1", true);
+        assert_eq!((nuevo.as_str(), n), ("1a 2b 3c", 3));
+        // `$0` es todo; `$$` un `$`.
+        assert_eq!(reemplazar_en_texto("a1", &patron, "[$0] $$", true).0, "[a1] $");
+        // Sin regex, `$1` es texto como cualquier otro.
+        let literal = re("a1", OpcionesBusqueda::default());
+        assert_eq!(reemplazar_en_texto("a1 a1", &literal, "$1", false).0, "$1 $1");
     }
 
     #[test]
@@ -876,14 +894,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ruta = dir.path().join("a.txt");
         std::fs::write(&ruta, "foo\r\nbar foo\r\n").unwrap();
-        assert_eq!(reemplazar_en_archivo(&ruta, &literal("foo"), "xy").unwrap(), 2);
+        assert_eq!(reemplazar_en_archivo(&ruta, &literal("foo"), "xy", false).unwrap(), 2);
         assert_eq!(std::fs::read_to_string(&ruta).unwrap(), "xy\r\nbar xy\r\n");
         // No quedan temporales en la carpeta.
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
         // Un binario no se toca.
         let binario = dir.path().join("b.bin");
         std::fs::write(&binario, b"foo\0").unwrap();
-        assert!(reemplazar_en_archivo(&binario, &literal("foo"), "x").is_err());
+        assert!(reemplazar_en_archivo(&binario, &literal("foo"), "x", false).is_err());
         assert_eq!(std::fs::read(&binario).unwrap(), b"foo\0");
     }
 

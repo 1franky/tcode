@@ -67,7 +67,8 @@ cerraron, ver "Hecho recientemente". Limitaciones conocidas:
   tcode). Con varios cursores, una línea por cursor se reparte (desde
   2026-10-01); otra cantidad de líneas se pega entera en cada uno.
 - **Búsqueda en el proyecto (#16)**: la lista no se refresca sola tras
-  editar; reemplazo literal (sin `$1`); en archivos cerrados el reemplazo
+  editar; el reemplazo expande `$1`/`${nombre}` solo con regex (desde
+  2026-10-01; el de `Ctrl+H` sigue literal); en archivos cerrados el reemplazo
   se escribe a disco y no se puede deshacer (la confirmación lo avisa);
   archivos de más de 4 MB o no UTF-8 no se buscan.
 - **LSP (#17)**: completado solo con un cursor (y en VIM solo en
