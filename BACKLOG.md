@@ -66,7 +66,8 @@ cerraron, ver "Hecho recientemente". Limitaciones conocidas:
   `Ctrl+V` no puede leer el portapapeles local (pega lo copiado dentro de
   tcode); con varios cursores se pega el texto entero en cada uno.
 - **Búsqueda en el proyecto (#16)**: la lista no se refresca sola tras
-  editar; reemplazo literal (sin `$1`); en archivos cerrados el reemplazo
+  editar; el reemplazo expande `$1`/`${nombre}` solo con regex (desde
+  2026-10-01; el de `Ctrl+H` sigue literal); en archivos cerrados el reemplazo
   se escribe a disco y no se puede deshacer (la confirmación lo avisa);
   archivos de más de 4 MB o no UTF-8 no se buscan.
 - **LSP (#17)**: snippets sin saltos entre placeholders; completado solo

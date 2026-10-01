@@ -3592,6 +3592,8 @@ fn reemplazar_en_proyecto(layout: &mut PanelLayout, estado: &mut EstadoApp) {
         return;
     };
     let reemplazo = estado.busqueda_proyecto.reemplazo().to_string();
+    // Con regex, `$1`/`${nombre}` usan lo que capturó cada coincidencia.
+    let grupos = estado.busqueda_proyecto.opciones().regex;
     let rutas: Vec<PathBuf> = estado.busqueda_proyecto.archivos().iter().map(|a| a.ruta.clone()).collect();
     // Rutas canónicas de los documentos abiertos, en el mismo orden que
     // `paneles_mut` (una sola vez, no por archivo de la lista).
@@ -3613,7 +3615,7 @@ fn reemplazar_en_proyecto(layout: &mut PanelLayout, estado: &mut EstadoApp) {
                 continue;
             }
             abierto = true;
-            let ediciones = tcode_fs::ediciones_de_reemplazo(&panel.editor.buffer().a_texto(), &re, &reemplazo);
+            let ediciones = tcode_fs::ediciones_de_reemplazo(&panel.editor.buffer().a_texto(), &re, &reemplazo, grupos);
             if panel.editor.aplicar_ediciones(&ediciones) {
                 reemplazadas = reemplazadas.max(ediciones.len());
             }
@@ -3621,7 +3623,7 @@ fn reemplazar_en_proyecto(layout: &mut PanelLayout, estado: &mut EstadoApp) {
         if abierto {
             en_buffers += usize::from(reemplazadas > 0);
         } else {
-            match tcode_fs::reemplazar_en_archivo(ruta, &re, &reemplazo) {
+            match tcode_fs::reemplazar_en_archivo(ruta, &re, &reemplazo, grupos) {
                 Ok(n) => reemplazadas = n,
                 Err(_) => fallidos += 1,
             }

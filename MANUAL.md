@@ -330,8 +330,11 @@ editor nunca se congela) y cada tecla nueva cancela la búsqueda anterior.
   la misma lista con la misma selección, para ir al siguiente resultado.
   La lista no se actualiza sola si después editás: cualquier cambio en
   la consulta, el filtro o las opciones vuelve a buscar.
-- **Reemplazar todo** usa el texto del campo Reemplazar tal cual (igual
-  que `Ctrl+H`: `$1` no se expande). Antes de hacer nada muestra cuántas
+- **Reemplazar todo** usa el texto del campo Reemplazar. Con regex
+  (`Alt+R`) puede usar lo que capturó cada coincidencia: `$1`, `${1}`,
+  `${nombre}` (grupos con nombre, `(?P<nombre>...)`), `$0` (todo) y `$$`
+  (un `$`) — p. ej. buscar `(\w+)=(\w+)` y reemplazar por `$2=$1`. Sin
+  regex es literal. Antes de hacer nada muestra cuántas
   coincidencias en cuántos archivos y espera `y` (cualquier otra tecla
   cancela). Solo se puede con la búsqueda terminada y sin haber llegado
   al tope. Cada archivo se vuelve a buscar en el momento de reemplazar,
