@@ -79,6 +79,7 @@ medio cancela esa confirmación pendiente.
 | `F2` (o `Ctrl+K Shift+R`) | Renombrar símbolo (en la tabla de un CSV, `F2` edita la celda) |
 | `Ctrl+.` (o `Ctrl+K X`) | Acciones rápidas del LSP: arreglos, imports, refactors |
 | `Ctrl+Shift+Espacio` (o `Ctrl+K ,`) | Ayuda de firma (también aparece sola al tipear `(` o `,`) |
+| `Ctrl+K Ctrl+I` | Mostrar/ocultar los inlay hints (tipos y nombres de parámetros dentro del código) |
 | `Ctrl+K Ctrl+T` | Selector de temas (con preview en vivo) |
 | `Ctrl+K Ctrl+L` | Recargar `config.toml`/`keymap.toml` sin reiniciar |
 
@@ -1001,6 +1002,18 @@ inserta con sus campos: ver [Snippets](#snippets). Solo con un cursor (no con mu
 VIM, en modo Insertar. Pedir la lista nunca frena el tipeo: se pide en
 segundo plano y, si llega cuando ya se siguió escribiendo otra cosa, se
 descarta.
+
+**Inlay hints**: con un servidor que los ofrezca (rust-analyzer sí,
+pyright no), dentro del código aparecen atenuados y en itálica el tipo
+inferido de una variable (`let total: i32 = …`) y el nombre de cada
+parámetro en una llamada (`sumar(primero: 1, segundo: 2)`). No están en el
+archivo: no se guardan, no se copian y el cursor los saltea (un clic
+sobre uno lleva el cursor a su posición). Mientras escribís en una línea
+sus hints se ocultan y vuelven tras una pausa corta; si agregás o sacás
+líneas, se ocultan todos hasta entonces. Vienen prendidos; `Ctrl+K
+Ctrl+I` (o `Ctrl+,` → Editor) los apaga y queda guardado. **Solo sin
+ajuste de línea**: con el ajuste prendido no se muestran (cambiarían por
+dónde se parte cada línea).
 
 **Ayuda de firma**: al tipear `(` o `,` en una llamada (los caracteres
 que anuncie el servidor) aparece arriba del cursor la firma de la

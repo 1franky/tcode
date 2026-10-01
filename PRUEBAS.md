@@ -1193,6 +1193,20 @@ Con el modo VIM prendido y un archivo con varias líneas que tengan `foo`
 - [ ] **Rehacer.** Tres cambios, `uuu`, `Ctrl+R` rehace uno; `2` + `Ctrl+R` dos más. En Insertar, `Ctrl+R` no hace nada de esto.
 - [ ] **Sin modo VIM.** Con el modo apagado, `/`, `n`, `q`, `@`, `"` se escriben como texto.
 
+## Inlay hints del LSP (BACKLOG.md P2 #23, tercera parte)
+
+Con `HOME` temporal y rust-analyzer configurado (ver la sección de
+acciones rápidas), en un proyecto Cargo con
+`fn sumar(primero: i32, segundo: i32) -> i32` y `let total = sumar(1, 2);`.
+
+- [ ] **Aparecen.** Al abrir (después de que rust-analyzer termine de indexar, unos segundos): `let total: i32 = sumar(primero: 1, segundo: 2);`, con los hints atenuados en itálica.
+- [ ] **Cursor y clics.** Moverse con las flechas por esa línea: el cursor se ve siempre sobre el carácter real (nunca sobre un hint). Clic sobre el `2`: la barra dice la columna del `2` en el texto. Clic sobre `segundo:`: el cursor va al `2`.
+- [ ] **Escribir.** Cambiar el `1` por `10`: mientras se escribe, los hints de esa línea desaparecen; tras una pausa vuelven, bien ubicados. Agregar una línea arriba: se ocultan todos un momento y vuelven en su lugar.
+- [ ] **No son texto.** Guardar y mirar el archivo: no tiene los hints. Seleccionar la línea y `Ctrl+C`: se copia sin los hints.
+- [ ] **Apagar.** `Ctrl+K Ctrl+I`: desaparecen y `config.toml` queda con `inlay_hints = false`; otra vez los trae.
+- [ ] **Ajuste de línea.** Con el ajuste de línea prendido no se ven; al apagarlo vuelven.
+- [ ] **Sin soporte.** En un `.py` con pyright no aparece nada ni hay avisos.
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).

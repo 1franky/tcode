@@ -8,6 +8,7 @@ mod breadcrumbs;
 mod editor_tema;
 mod overlay;
 mod paleta;
+pub mod pistas;
 mod paneles;
 mod panel_admin;
 mod panel_archivos;

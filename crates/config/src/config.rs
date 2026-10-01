@@ -42,6 +42,11 @@ pub struct ConfigEditor {
     /// esa línea. Apagado por defecto (agrega ruido y un `git blame` por
     /// cada pausa del cursor); `git.alternar_blame` lo prende y apaga.
     pub blame_en_linea: bool,
+    /// Inlay hints del LSP (BACKLOG.md P2 #23): tipos inferidos y nombres
+    /// de parámetros dentro del código, atenuados. Prendido por defecto
+    /// (como VSCode); solo se ven sin ajuste de línea y con un servidor
+    /// que los ofrezca (rust-analyzer sí, pyright no).
+    pub inlay_hints: bool,
     /// Modo VIM (M5, alcance "lo esencial" — sin operadores combinables
     /// como `dw`, sin conteos numéricos, sin `:`): modos Normal/Insertar
     /// con `Esc`/`i`/`a`/`o`, movimientos `hjkl`/`0`/`$`/`gg`/`G`, y
@@ -180,6 +185,7 @@ impl Default for ConfigEditor {
             numeros_de_linea: true,
             indicadores_git: true,
             blame_en_linea: false,
+            inlay_hints: true,
             modo_vim: false,
             columna_regla: None,
             guardado_automatico: GuardadoAutomatico::Nunca,
@@ -500,6 +506,7 @@ mod tests {
                 numeros_de_linea: false,
                 indicadores_git: false,
                 blame_en_linea: true,
+                inlay_hints: false,
                 modo_vim: true,
                 columna_regla: Some(80),
                 guardado_automatico: GuardadoAutomatico::CadaNSegundos,
