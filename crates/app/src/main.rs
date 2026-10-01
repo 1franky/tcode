@@ -26,6 +26,7 @@ mod portapapeles;
 mod problemas;
 mod respaldo;
 mod sesion;
+mod snippets;
 mod vim;
 
 use std::collections::VecDeque;
@@ -907,6 +908,11 @@ async fn ejecutar(
         // descarta, `Esc` lo deja para la próxima vez (suelta el bloqueo
         // sin borrar nada). Descartar pide una tecla distinta de la que
         // recupera, así un `Enter` apurado nunca pierde nada.
+        // `Esc` termina el snippet en curso (y sigue su camino).
+        if key.code == KeyCode::Esc {
+            layout.editor_activo_mut().terminar_snippet();
+        }
+
         // Popup de "ver cambio" de git: cualquier tecla lo cierra y sigue
         // su camino, salvo `Esc`, que solo lo cierra.
         if estado.cambio_git.take().is_some() && key.code == KeyCode::Esc {
@@ -1821,6 +1827,7 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         }
         "config.recargar" => {
             recargar_config_tema_y_keymap(estado, resolvedor);
+            snippets::recargar();
             Accion::Continuar
         }
         "proyecto.confiar" | "proyecto.dejar_de_confiar" => {
@@ -2297,6 +2304,18 @@ fn ejecutar_comando(
         return ejecutar_comando_csv(comando, layout);
     }
 
+    // `Tab`: el campo siguiente de un snippet en curso, o expandir un
+    // snippet propio si el cursor está justo después de su prefijo, o
+    // indentar (BACKLOG.md P2 #24). El completado abierto se queda con
+    // el `Tab` antes de llegar acá (`funciones_lsp::manejar_tecla`).
+    if comando == "editor.indentar_o_autocompletar" {
+        let ruta = layout.panel_activo().ruta_mostrada.clone();
+        let editor = layout.editor_activo_mut();
+        if !editor.siguiente_campo() && !snippets::expandir_prefijo(editor, &ruta, config) {
+            insertar_tabulacion(editor, config);
+        }
+        return Accion::Continuar;
+    }
     let editor = layout.editor_activo_mut();
     match comando {
         "cursor.arriba" => editor.mover_arriba(),
@@ -2316,7 +2335,10 @@ fn ejecutar_comando(
         "editor.borrar_atras" => editor.borrar_atras(),
         "editor.borrar_adelante" => editor.borrar_adelante(),
         "editor.nueva_linea" => editor.insertar_char('\n'),
-        "editor.indentar_o_autocompletar" => insertar_tabulacion(editor, config),
+        // Fuera de un snippet, `Shift+Tab` no hace nada en el texto.
+        "editor.desindentar" => {
+            editor.anterior_campo();
+        }
         // Edición básica (BACKLOG.md P0 #19): cada una es un solo paso
         // de deshacer y actúa sobre todos los cursores.
         "editor.mover_lineas_arriba" => {

@@ -279,9 +279,8 @@ async fn lanzar_sesion(lenguaje: Lenguaje, comando: ComandoLsp) -> std::result::
     // acciones rápidas (P2 #23), todo sin
     // registro dinámico (`tcode` no responde `client/registerCapability`),
     // para que un servidor que decide qué anunciar según lo que soporta
-    // el cliente lo anuncie de forma estática. El completado declara NO
-    // soportar snippets (el servidor manda texto plano, que es lo que
-    // `tcode` inserta) y el hover prefiere texto plano (el markdown igual
+    // el cliente lo anuncie de forma estática. El completado acepta
+    // snippets (se insertan con sus campos, BACKLOG.md P2 #24) y el hover prefiere texto plano (el markdown igual
     // se muestra como texto, `tcode_lsp::texto_hover`). Los cambios de
     // un renombrado pueden venir como `documentChanges`, pero sin
     // operaciones sobre archivos (crear/renombrar/borrar).
@@ -293,7 +292,7 @@ async fn lanzar_sesion(lenguaje: Lenguaje, comando: ComandoLsp) -> std::result::
             "hover": { "dynamicRegistration": false, "contentFormat": ["plaintext", "markdown"] },
             "completion": {
                 "dynamicRegistration": false,
-                "completionItem": { "snippetSupport": false, "insertReplaceSupport": true },
+                "completionItem": { "snippetSupport": true, "insertReplaceSupport": true },
                 "contextSupport": true,
             },
             "rename": { "dynamicRegistration": false, "prepareSupport": false },

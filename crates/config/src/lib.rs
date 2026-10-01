@@ -16,6 +16,7 @@ mod proyecto;
 mod respaldos;
 mod selector;
 mod sesion;
+mod snippets;
 mod tema;
 
 pub use color::{analizar_color_hex, formatear_color_hex, hsl_a_rgb, rgb_a_hsl};
@@ -38,6 +39,7 @@ pub use proyecto::{
 };
 pub use selector::{EstadoSelectorTema, FiltroTipoTema};
 pub use respaldos::{buscar_huerfanos, directorio_respaldos, CarpetaRespaldos, Huerfano, Respaldo};
+pub use snippets::{cargar_snippets, directorio_snippets, snippet_para_prefijo, SnippetUsuario, SnippetsCargados};
 pub use sesion::{NodoSesion, PestanaSesion, Sesion};
 pub use tema::{
     cargar_tema, descubrir_temas_usuario, duplicar_tema_para_editar, guardar_tema, tema_por_defecto, EstiloToken,
