@@ -1,7 +1,7 @@
 # Plan de pruebas manuales — tcode
 
 Checklist para probar `tcode` de punta a punta antes de liberar una nueva
-versión. Cubre todo lo implementado hasta v0.15.0: los milestones de
+versión. Cubre todo lo implementado hasta v0.16.0: los milestones de
 [PLAN.md](./PLAN.md) §11 y todo lo cerrado después en
 [BACKLOG.md](./BACKLOG.md) (ver "Hecho recientemente" ahí), con una
 sección por pieza al final del documento. Cada sección se agrega o
@@ -13,32 +13,36 @@ sección de la pieza que cambió más el bug conocido de Windows. Antes de
 mergear `develop` → `main` y taggear, conviene pasar al menos una vez por
 todo, en la plataforma donde se vaya a usar principalmente.
 
-## Qué probar en v0.15.0
+## Qué probar en v0.16.0
 
-Lo nuevo desde v0.14.0 (#148 y #149), cada uno con su sección más abajo:
+Arreglos y mejoras chicas desde v0.15.0 (#153 a #158). Cada una agregó un
+paso en la sección que corresponde:
 
-- [Inlay hints del LSP](#inlay-hints-del-lsp-backlogmd-p2-23-tercera-parte):
-  tipos y nombres de parámetros dentro del código (rust-analyzer).
-- [Terminal integrada](#terminal-integrada-backlogmd-p3-26): `Ctrl+K ``
-  (o `Ctrl+``), `Ctrl+Espacio` para volver al editor.
+- **Deshacer hasta el texto del disco quita el `*`** (#153): el paso
+  nuevo en [M0](#m0--fundamentos).
+- **Marcas del modo VIM** (`ma`, `'a`, `` `a ``, `''`; #154): el paso
+  "Marcas" en [Modo VIM: búsqueda, registros, macros y `Ctrl+R`](#modo-vim-búsqueda-registros-macros-y-ctrlr-backlogmd-p3-28).
+- **LSP por defecto para Rust, Go y JavaScript** (#155): abrir un proyecto
+  Cargo (o Go, o JS) **sin configurar nada** y comprobar que el servidor
+  arranca (diagnósticos, `F12`, inlay hints en Rust). Si no está
+  instalado, el panel `Ctrl+,` → Lenguajes / LSP lo muestra.
+- **Pegar una línea por cursor** (#156): el paso "Pegar una línea por
+  cursor" en [Multi-cursor](#m3--multi-cursor-ctrld--ctrlshiftl--ctrlalt).
+- **`$1` en el reemplazo del proyecto con regex** (#157): el paso
+  "Grupos" en [Buscar (y reemplazar) en todo el proyecto](#buscar-y-reemplazar-en-todo-el-proyecto-ctrlshiftfctrlk-b).
+- **"Guardar como" hacia un archivo abierto** (#158): el paso "Hacia un
+  archivo ya abierto" en [Guardar como](#guardar-como-ctrlshifts--ctrlk-s).
 
-**Primero de todo**, en cada plataforma donde se instale el binario de la
-release (sobre todo **Linux**, que se compila estático con musl, y
-**Windows**, que usa ConPTY): que la terminal abra una shell y ejecute un
-comando. Es lo único de esta versión que no se pudo probar antes de
-liberar.
+Y, por regresiones:
 
-Y, porque estas piezas tocan la vista de código y el teclado, repasar:
-
-- **Vista de código** con inlay hints: el cursor, la selección, la
-  búsqueda (`Ctrl+F`), los cursores múltiples y la regla vertical se ven
-  bien en una línea con hints; con ajuste de línea no hay hints y todo
-  sigue como antes.
-- **Teclado**: con la terminal oculta o sin foco, `Ctrl+Espacio` sigue
-  siendo autocompletar y `Ctrl+C`/`Ctrl+K` hacen lo de siempre en el
-  editor.
-- **Overlays**: con la terminal a la vista, la paleta (`F1`), el buscador
-  (`Ctrl+P`) y los popups del LSP se dibujan encima de ella.
+- **Guardado automático y respaldos** después de deshacer: con el
+  guardado automático prendido, deshacer hasta el texto original no
+  vuelve a escribir el archivo; sin cambios pendientes, no hay aviso de
+  recuperación al relanzar.
+- **Pegar con un solo cursor** y **con varios cursores y otra cantidad de
+  líneas**: igual que siempre (todo el texto en cada cursor).
+- **`Ctrl+H`** (reemplazar en el archivo) sigue literal: `$1` se escribe
+  tal cual.
 
 ## Cómo instalar la versión a probar
 
@@ -68,6 +72,7 @@ abajo, es donde más problemas aparecieron).
 - [ ] `Enter` inserta un salto de línea real (no rompe el archivo).
 - [ ] `Backspace`/`Delete` borran correctamente, incluida la fusión de líneas al borrar al inicio/fin de línea.
 - [ ] `Ctrl+Z`/`Ctrl+Y` (deshacer/rehacer) varias veces seguidas, en ambas direcciones.
+- [ ] Escribir algo y deshacer hasta el texto original: la marca `*` desaparece (y `Ctrl+Q` sale sin preguntar); rehacer la vuelve a poner. Guardar con cambios y deshacer más allá de lo guardado: vuelve el `*`.
 - [ ] `Ctrl+S` guarda; volver a abrir el archivo y confirmar que el contenido persistió.
 - [ ] Escribir caracteres UTF-8 (acentos, ñ, emoji) y guardar — no se corrompen.
 - [ ] Barra de estado inferior: `Ln`/`Col` correctos, cuenta total de líneas, marca `*` cuando hay cambios sin guardar.
@@ -249,6 +254,7 @@ guardar.
 - [ ] `Ctrl+Shift+L` (o `Ctrl+K L` si esa combinación no llega en la terminal usada): selecciona TODAS las ocurrencias de una sola vez.
 - [ ] Con varios cursores activos, escribir **más de un carácter seguido** (p. ej. reemplazar una palabra completa): el texto queda correcto en TODAS las posiciones, no se corrompe ni se desordena — este es el caso que específicamente se rompía antes de corregirse, vale la pena probarlo con atención.
 - [ ] Con varios cursores activos, `Backspace`: borra en todas las posiciones a la vez, de forma independiente.
+- [ ] **Pegar una línea por cursor.** Tres cursores (`Ctrl+Alt+↓` dos veces), `Shift+→` dos veces, `Ctrl+C`, `End`, `Ctrl+V`: cada línea recibe lo suyo (`ab-ab`, `cd-cd`, `ef-ef`), no las tres. Un `Ctrl+Z` lo deshace entero. Con dos cursores y tres líneas copiadas, cada cursor recibe las tres.
 - [ ] `Ctrl+Alt+↑` / `Ctrl+Alt+↓`: agrega un cursor una línea arriba/abajo de cada cursor existente, en la misma columna; no hace nada para los cursores que ya están en la primera/última línea.
 - [ ] La barra de estado muestra "N cursores" cuando hay más de uno, y desaparece con uno solo.
 - [ ] `Esc`: colapsa todo a un solo cursor (el principal), sin selección.
@@ -516,6 +522,7 @@ que se guardó.
 - [ ] Escribir cualquier cosa después de un error (o `Backspace`): el mensaje de error desaparece del prompt.
 - [ ] `Esc` en cualquier momento: cierra el prompt sin guardar nada y sin modificar el archivo/buffer.
 - [ ] `Ctrl+S` normal (no `Shift`) sobre un archivo que **ya tiene ruta** sigue guardando directo, sin abrir ningún prompt — el cambio solo afecta al caso "buffer sin nombre" de antes.
+- [ ] **Hacia un archivo ya abierto.** Con `a.txt` y `b.txt` en pestañas del mismo panel y `a.txt` también en otro panel, "Guardar como" `a.txt` desde `b.txt`: queda una sola pestaña `a.txt` en este panel (con el contenido de `b.txt`) y el otro panel muestra el contenido nuevo. Si la otra pestaña de `a.txt` tenía cambios sin guardar, no guarda y el prompt avisa.
 
 ## Distribución / instaladores
 
@@ -1023,6 +1030,7 @@ apuntando a una carpeta temporal.
 - [ ] `Alt+Enter` mientras todavía busca, o con la búsqueda cortada en el tope: no reemplaza y explica por qué.
 - [ ] Pegar texto (bracketed paste) con la vista abierta: se escribe en el campo activo, no en el archivo.
 - [ ] `Esc` con la búsqueda en curso: cierra, y la CPU vuelve a reposo enseguida.
+- [ ] **Grupos.** Con regex (`Alt+R`), buscar `([a-z])(\d)` y reemplazar por `$2$1` en un archivo abierto (`a1`) y uno cerrado (`c3`): quedan `1a` (en el buffer, sin guardar) y `3c` (en disco). Sin regex, `$1` se escribe tal cual.
 
 ## Ir a definición, autocompletado, hover, referencias y renombrar (LSP)
 
@@ -1196,6 +1204,7 @@ Con el modo VIM prendido y un archivo con varias líneas que tengan `foo`
 - [ ] **Registros.** `"ayy` en una línea, `"byy` en otra, ir al final: `"ap` y `"bp` pegan cada una. `"Ayy` en una tercera y `"ap` pega las dos líneas. `"_dd` borra la línea y después `p` pega lo de antes (no la borrada). `"1yy` avisa que el registro no se soporta.
 - [ ] **Macros.** `qa` (la barra dice "grabando @a"), `A!` `Esc` `j`, `q` ("Macro @a grabada"). `2@a` agrega `!` a las dos líneas siguientes; `@@` a una más. Una macro que hace `@` de sí misma se corta con aviso, sin colgar.
 - [ ] **Rehacer.** Tres cambios, `uuu`, `Ctrl+R` rehace uno; `2` + `Ctrl+R` dos más. En Insertar, `Ctrl+R` no hace nada de esto.
+- [ ] **Marcas.** En la línea 5, `ma`; `G`; `'a` vuelve a la línea 5 (primer no blanco) y `` `a `` a la columna exacta. `''` vuelve al final y otra vez `''` a la 5. `d'a` desde abajo borra las líneas hasta la marca. Borrar una línea arriba de la marca y `'a`: sigue en el mismo texto. `'q` sin marca: "La marca q no está puesta".
 - [ ] **Sin modo VIM.** Con el modo apagado, `/`, `n`, `q`, `@`, `"` se escriben como texto.
 
 ## Inlay hints del LSP (BACKLOG.md P2 #23, tercera parte)

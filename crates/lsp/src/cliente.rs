@@ -271,7 +271,15 @@ async fn leer_stderr_en_bucle(reader: BufReader<ChildStderr>, logs: BufferLogs) 
 pub fn comando_para(lenguaje: tcode_syntax::Lenguaje) -> Option<(&'static str, &'static [&'static str])> {
     match lenguaje {
         tcode_syntax::Lenguaje::Python => Some(("pyright-langserver", &["--stdio"])),
-        tcode_syntax::Lenguaje::TypeScript => Some(("typescript-language-server", &["--stdio"])),
+        // El mismo servidor atiende JavaScript y TypeScript (cada uno en su
+        // propia sesión, como cualquier par de lenguajes).
+        tcode_syntax::Lenguaje::TypeScript | tcode_syntax::Lenguaje::JavaScript => {
+            Some(("typescript-language-server", &["--stdio"]))
+        }
+        // Los dos hablan LSP por stdio sin argumentos y encuentran el
+        // proyecto solos (`Cargo.toml` / `go.mod` desde la carpeta).
+        tcode_syntax::Lenguaje::Rust => Some(("rust-analyzer", &[])),
+        tcode_syntax::Lenguaje::Go => Some(("gopls", &[])),
         // clangd sirve tanto a C como a C++ (PLAN.md §6, fila "C/C++") y
         // habla por stdio sin argumentos adicionales.
         tcode_syntax::Lenguaje::C | tcode_syntax::Lenguaje::Cpp => Some(("clangd", &[])),
@@ -309,8 +317,13 @@ mod tests {
     }
 
     #[test]
-    fn comando_para_rust_todavia_no_existe() {
-        assert!(comando_para(tcode_syntax::Lenguaje::Rust).is_none());
+    fn comandos_por_defecto_de_rust_go_y_javascript() {
+        assert_eq!(comando_para(tcode_syntax::Lenguaje::Rust), Some(("rust-analyzer", &[][..])));
+        assert_eq!(comando_para(tcode_syntax::Lenguaje::Go), Some(("gopls", &[][..])));
+        assert_eq!(comando_para(tcode_syntax::Lenguaje::JavaScript).map(|c| c.0), Some("typescript-language-server"));
+        // Sin un valor razonable sin conocer el proyecto.
+        assert!(comando_para(tcode_syntax::Lenguaje::Java).is_none());
+        assert!(comando_para(tcode_syntax::Lenguaje::CSharp).is_none());
     }
 
     #[test]

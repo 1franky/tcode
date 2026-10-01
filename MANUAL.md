@@ -225,7 +225,10 @@ con cualquier clic, igual que con cualquier tecla.
 
 - **Con varios cursores**: se copian las selecciones de todos, en orden y
   unidas por saltos de línea. Si ninguno tiene selección, se copia la
-  línea de cada cursor.
+  línea de cada cursor. Al pegar con varios cursores, si el texto tiene
+  una línea por cursor, a cada uno le toca la suya (copiar tres
+  selecciones y pegarlas en otros tres lugares); si no, cada cursor
+  recibe el texto entero.
 - **Líneas enteras, como en VSCode**: lo copiado sin selección, pegado
   con `Ctrl+V`, se inserta **arriba** de la línea del cursor, no en el
   medio.
@@ -330,8 +333,11 @@ editor nunca se congela) y cada tecla nueva cancela la búsqueda anterior.
   la misma lista con la misma selección, para ir al siguiente resultado.
   La lista no se actualiza sola si después editás: cualquier cambio en
   la consulta, el filtro o las opciones vuelve a buscar.
-- **Reemplazar todo** usa el texto del campo Reemplazar tal cual (igual
-  que `Ctrl+H`: `$1` no se expande). Antes de hacer nada muestra cuántas
+- **Reemplazar todo** usa el texto del campo Reemplazar. Con regex
+  (`Alt+R`) puede usar lo que capturó cada coincidencia: `$1`, `${1}`,
+  `${nombre}` (grupos con nombre, `(?P<nombre>...)`), `$0` (todo) y `$$`
+  (un `$`) — p. ej. buscar `(\w+)=(\w+)` y reemplazar por `$2=$1`. Sin
+  regex es literal. Antes de hacer nada muestra cuántas
   coincidencias en cuántos archivos y espera `y` (cualquier otra tecla
   cancela). Solo se puede con la búsqueda terminada y sin haber llegado
   al tope. Cada archivo se vuelve a buscar en el momento de reemplazar,
@@ -638,6 +644,9 @@ estado; `Esc` lo cancela.
 | `"{a-z}` delante de `y`/`d`/`c`/`p` | Usar ese registro (`"ayy`, `"ap`); `"{A-Z}` agrega al final; `"_` descarta |
 | `q{a-z}` ... `q` | Grabar una macro en ese registro (`qA` agrega al final) |
 | `@{a-z}` / `@@` | Reproducir la macro (con conteo: `3@a`) / la última reproducida |
+| `m{a-z}` | Poner una marca en el cursor (una por letra y por archivo) |
+| `'{a-z}` / `` `{a-z} `` | Ir a la línea de la marca (primer no blanco) / a su posición exacta; sirven detrás de un operador (`d'a`, ``y`a``) |
+| `''` / ``` `` ``` | Volver a donde estaba el cursor antes del último salto (`G`, `gg`, `/`, `n`, `*`, `%`, `{`/`}`, una marca) |
 | `v` / `V` | Modo Visual por caracteres / por líneas |
 | `Esc` | En Insertar, volver a Normal; en Visual, salir sin hacer nada |
 
@@ -702,7 +711,11 @@ la barra dice "grabando @a". Las macros y los registros de texto son
 espacios separados (`"ap` no pega una macro). Una macro que se llama a sí
 misma se corta sola.
 
-No hay marcas (`m`/`'`), ni `:s` con grupos (`\1`, `&`) o rangos `a,b`,
+Las marcas siguen al texto: si se agregan o borran líneas arriba, se
+corren con ellas; si se borra el texto donde estaba una, queda donde
+empezaba lo borrado. No hay marcas globales (`mA`, entre archivos).
+
+No hay `:s` con grupos (`\1`, `&`) o rangos `a,b`,
 ni `:w <ruta>`, ni `:reg`; `.` no repite operaciones hechas en Visual.
 Ver PRUEBAS.md para la lista completa de limitaciones.
 
@@ -964,7 +977,9 @@ correspondiente para que funcione):
 | Lenguaje | Servidor LSP por defecto |
 |---|---|
 | Python | `pyright-langserver --stdio` |
-| TypeScript | `typescript-language-server --stdio` |
+| Rust | `rust-analyzer` (con rustup: `rustup component add rust-analyzer`) |
+| Go | `gopls` |
+| TypeScript / JavaScript | `typescript-language-server --stdio` |
 | C / C++ | `clangd` |
 | Ruby | `solargraph stdio` |
 | PHP | `intelephense --stdio` |
@@ -973,11 +988,10 @@ correspondiente para que funcione):
 | CSS | `vscode-css-language-server --stdio` |
 | SQL | `sqls` |
 
-Rust, JavaScript, Go, Markdown, Java y C# tienen resaltado de sintaxis
-completo pero **sin comando por defecto** — Java (`jdtls`) y C#
-(`omnisharp`) necesitan un directorio de proyecto como argumento que no
-hay forma de adivinar de antemano, y los otros simplemente no tienen uno
-todavía. Para cualquiera de estos (o para apuntar a un comando distinto
+Markdown, Java y C# tienen resaltado de sintaxis completo pero **sin
+comando por defecto** — Java (`jdtls`) y C# (`omnisharp`) necesitan un
+directorio de proyecto como argumento que no hay forma de adivinar de
+antemano. Para cualquiera de estos (o para apuntar a un comando distinto
 del que trae por defecto, como una versión instalada en otra ruta):
 sección "Lenguajes / LSP" del panel de administración, `c` sobre la fila
 del lenguaje, escribí el comando completo con sus argumentos y `Enter`.

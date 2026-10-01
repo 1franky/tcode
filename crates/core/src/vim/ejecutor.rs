@@ -220,7 +220,28 @@ fn resolver_busqueda(vim: &mut EstadoVim, m: Movimiento) -> Option<(Movimiento, 
     }
 }
 
+/// Si `m` es un "salto" (como en VIM: lo que cambia de lugar de golpe):
+/// antes de hacerlo se guarda la posición en la marca `'` (para `''`).
+fn es_salto(m: Movimiento) -> bool {
+    matches!(
+        m,
+        Movimiento::InicioArchivo
+            | Movimiento::FinArchivo
+            | Movimiento::BuscarPatron { .. }
+            | Movimiento::BuscarPalabra { .. }
+            | Movimiento::ParejaCorchete
+            | Movimiento::ParrafoSiguiente
+            | Movimiento::ParrafoAnterior
+            | Movimiento::IrMarca { .. }
+    )
+}
+
 fn destino(editor: &Editor, vim: &mut EstadoVim, m: Movimiento, veces: usize, explicito: bool) -> Option<(Cursor, Movimiento)> {
+    if let Movimiento::IrMarca { marca, exacta } = m {
+        let (linea, columna) = editor.buffer().linea_columna_desde_byte(editor.marca(marca)?);
+        let columna = if exacta { columna } else { Lector::nuevo(editor.buffer()).primer_no_blanco(linea) };
+        return Some((Cursor { linea, columna }, m));
+    }
     if matches!(m, Movimiento::BuscarPatron { .. } | Movimiento::BuscarPalabra { .. }) {
         return buscar(editor, vim, m, veces).ok().map(|(p, _)| (p, m));
     }
@@ -249,6 +270,7 @@ fn rango_de_movimiento_resuelto(
             | Movimiento::BuscarCaracter(_)
             | Movimiento::BuscarPatron { .. }
             | Movimiento::BuscarPalabra { .. }
+            | Movimiento::IrMarca { .. }
     ) {
         let (p, resuelto) = destino(editor, vim, m, veces, explicito)?;
         return Some(rango_entre(&mut Lector::nuevo(editor.buffer()), desde, p, alcance(resuelto)));
@@ -285,19 +307,36 @@ fn mover(editor: &mut Editor, vim: &mut EstadoVim, m: Movimiento, veces: usize, 
         Movimiento::BuscarPatron { .. } | Movimiento::BuscarPalabra { .. } => {
             return match buscar(editor, vim, m, veces) {
                 Ok((p, aviso)) => {
-                    ir_a(editor, p);
+                    saltar(editor, cursor, p);
                     aviso
                 }
                 Err(aviso) => Some(aviso),
             };
         }
+        Movimiento::IrMarca { marca, .. } if editor.marca(marca).is_none() => {
+            return Some(format!("La marca {marca} no está puesta"));
+        }
         _ => {
             if let Some((p, _)) = destino(editor, vim, m, veces, explicito) {
-                ir_a(editor, p);
+                if es_salto(m) {
+                    saltar(editor, cursor, p);
+                } else {
+                    ir_a(editor, p);
+                }
             }
         }
     }
     None
+}
+
+/// Un salto: recuerda dónde estaba el cursor en la marca `'` (si se mueve
+/// de verdad) y va a `destino`.
+fn saltar(editor: &mut Editor, desde: Cursor, destino: Cursor) {
+    if destino != desde {
+        let byte = offset(editor, desde);
+        editor.poner_marca('\'', byte);
+    }
+    ir_a(editor, destino);
 }
 
 /// `n`/`N`/`*`/`#` (BACKLOG.md P3 #28): la posición de la `veces`-ésima
@@ -575,6 +614,10 @@ fn ejecutar_accion(editor: &mut Editor, vim: &mut EstadoVim, accion: Accion, com
         Accion::LineaComando => vim.linea_comando.abrir(),
         Accion::Buscar { atras } => vim.linea_comando.abrir_con_prefijo(if atras { '?' } else { '/' }),
         Accion::Rehacer => (0..veces).for_each(|_| editor.rehacer()),
+        Accion::Marcar(marca) => {
+            let byte = offset(editor, cursor);
+            editor.poner_marca(marca, byte);
+        }
         Accion::IntercambiarExtremos => {}
     }
     None
@@ -897,6 +940,34 @@ mod tests {
         // `/` y `?` abren el prompt con su prefijo.
         let (_, vim, _) = correr("|a\n", "?");
         assert_eq!((vim.linea_comando.activa(), vim.linea_comando.prefijo()), (true, '?'));
+    }
+
+    #[test]
+    fn marcas_saltos_y_operadores() {
+        // `ma`, moverse, `'a` (línea, primer no blanco) y `` `a `` (exacta).
+        let (texto, _, _) = correr("uno\n  do|s\ntres\n", "maG'a");
+        assert_eq!(texto, "uno\n  |dos\ntres\n");
+        let (texto, _, _) = correr("uno\n  do|s\ntres\n", "magg`a");
+        assert_eq!(texto, "uno\n  do|s\ntres\n");
+        // `''` vuelve a antes del último salto (y de ahí, otra vez acá).
+        let (texto, mut vim, mut editor) = correr("a\nb\n|c\nd\n", "gg''");
+        assert_eq!(texto, "a\nb\n|c\nd\n");
+        tipear(&mut editor, &mut vim, "''");
+        assert_eq!(con_cursor(&editor), "|a\nb\nc\nd\n");
+        // `d'a` borra las líneas entre el cursor y la marca.
+        let (texto, _, _) = correr("|uno\ndos\ntres\ncuatro\n", "majjd'a");
+        assert_eq!(texto, "|cuatro\n");
+        // Las marcas siguen al texto: borrar una línea arriba las corre.
+        let (texto, _, _) = correr("uno\ndos\n|tres\n", "mbggdd'b");
+        assert_eq!(texto, "dos\n|tres\n");
+        // Sin marca puesta: aviso, y el operador no hace nada.
+        let mut editor = editor_con("|ab\n");
+        let mut vim = EstadoVim::nuevo();
+        tipear(&mut editor, &mut vim, "'");
+        let aviso = ejecutar_tecla(&mut editor, &mut vim, 'z', &OpcionesVim::default());
+        assert!(aviso.is_some_and(|a| a.contains("no está puesta")));
+        tipear(&mut editor, &mut vim, "d'z");
+        assert_eq!(con_cursor(&editor), "|ab\n");
     }
 
     #[test]

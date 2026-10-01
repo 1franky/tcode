@@ -66,6 +66,10 @@ pub struct Editor {
     /// Snippet recién insertado cuyos campos se recorren con `Tab`
     /// (BACKLOG.md P2 #24, ver [`Editor::insertar_snippet`]).
     snippet: Option<SesionSnippet>,
+    /// Marcas del modo VIM (`ma`, `'a`; BACKLOG.md P3 #28): letra y
+    /// posición en bytes, corrida con cada edición. `'` es la posición de
+    /// antes del último salto (`''`).
+    marcas: Vec<(char, usize)>,
 }
 
 impl Editor {
@@ -77,6 +81,7 @@ impl Editor {
             modo: Modo::Insertar,
             plegado: Plegado::default(),
             snippet: None,
+            marcas: Vec::new(),
         }
     }
 
@@ -88,6 +93,7 @@ impl Editor {
             modo: Modo::Insertar,
             plegado: Plegado::default(),
             snippet: None,
+            marcas: Vec::new(),
         })
     }
 
@@ -177,6 +183,21 @@ impl Editor {
                 false
             }
         }
+    }
+
+    /// Pone (o mueve) la marca `marca` en el byte `posicion`.
+    pub fn poner_marca(&mut self, marca: char, posicion: usize) {
+        match self.marcas.iter_mut().find(|(m, _)| *m == marca) {
+            Some((_, p)) => *p = posicion,
+            None => self.marcas.push((marca, posicion)),
+        }
+    }
+
+    /// El byte de la marca `marca`, si está puesta (recortado al largo
+    /// del texto: deshacer puede haberlo achicado).
+    pub fn marca(&self, marca: char) -> Option<usize> {
+        let largo = self.buffer.len_bytes();
+        self.marcas.iter().find(|(m, _)| *m == marca).map(|(_, p)| (*p).min(largo))
     }
 
     /// Inserta `snippet` reemplazando `rango` (bytes), como UNA edición
@@ -414,6 +435,16 @@ impl Editor {
         if let Some(sesion) = &mut self.snippet {
             sesion.ajustar(rango.start, rango.end, reemplazo.len());
         }
+        // Marcas: una edición antes las corre; si borra el texto donde
+        // estaba una, queda al principio de lo borrado.
+        let delta = reemplazo.len() as isize - rango.len() as isize;
+        for (_, posicion) in &mut self.marcas {
+            if *posicion >= rango.end {
+                *posicion = (*posicion as isize + delta) as usize;
+            } else if *posicion > rango.start {
+                *posicion = rango.start;
+            }
+        }
         if self.plegado.esta_vacio() {
             self.buffer.reemplazar_rango_bytes(rango.start, rango.end, reemplazo);
             return;
@@ -460,6 +491,29 @@ impl Editor {
         }
         let texto = texto.replace("\r\n", "\n").replace('\r', "\n");
         self.editar_cada_cursor(|_, seleccion| (seleccion, texto.clone()));
+    }
+
+    /// Pegar con varios cursores (como VSCode): si `texto` tiene
+    /// exactamente una línea por cursor (sin contar un salto final), a
+    /// cada cursor le toca la suya, en el orden del documento — lo que
+    /// pasa al copiar varias selecciones y pegarlas en otros tantos
+    /// lugares. Una sola edición, un paso de deshacer. `false` (sin tocar
+    /// nada) si no aplica: un solo cursor u otra cantidad de líneas.
+    pub fn pegar_por_cursor(&mut self, texto: &str) -> bool {
+        let texto = texto.replace("\r\n", "\n").replace('\r', "\n");
+        let partes: Vec<String> =
+            texto.strip_suffix('\n').unwrap_or(&texto).split('\n').map(str::to_string).collect();
+        let cantidad = self.cursores.len();
+        if cantidad < 2 || partes.len() != cantidad {
+            return false;
+        }
+        let mut inicios: Vec<usize> = (0..cantidad).map(|i| self.rango_bytes(i).start).collect();
+        inicios.sort_unstable();
+        self.editar_cada_cursor(|_, seleccion| {
+            let k = inicios.binary_search(&seleccion.start).unwrap_or(0);
+            (seleccion, partes[k].clone())
+        });
+        true
     }
 
     /// Backspace: si el cursor tiene selección la borra; si no, borra
@@ -2072,6 +2126,33 @@ mod tests {
         editor.inicio_archivo();
         assert!(!editor.snippet_activo());
         assert!(!editor.siguiente_campo());
+    }
+
+    #[test]
+    fn pegar_una_linea_por_cursor() {
+        // Tres cursores (columna 0 de cada línea) y tres líneas: una cada uno.
+        let mut editor = editor_con("a\nb\nc");
+        editor.agregar_cursor_abajo();
+        editor.agregar_cursor_abajo();
+        assert!(editor.pegar_por_cursor("1\n2\n3\n"));
+        assert_eq!(editor.buffer().a_texto(), "1a\n2b\n3c");
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "a\nb\nc", "un solo paso de deshacer");
+        // Otra cantidad de líneas, o un solo cursor: no aplica.
+        assert!(!editor.pegar_por_cursor("1\n2"));
+        let mut solo = editor_con("x");
+        assert!(!solo.pegar_por_cursor("1"));
+        // Tres selecciones copiadas (se unen con `\n`) y pegadas sobre
+        // otras tres: cada una reemplaza a la suya.
+        let mut editor = editor_con("ab\ncd\nef");
+        editor.agregar_cursor_abajo();
+        editor.agregar_cursor_abajo();
+        editor.seleccionar_derecha();
+        editor.seleccionar_derecha();
+        let copiado = editor.texto_para_copiar();
+        assert_eq!((copiado.texto.as_str(), copiado.lineal), ("ab\ncd\nef", false));
+        assert!(editor.pegar_por_cursor("X\nY\nZ"));
+        assert_eq!(editor.buffer().a_texto(), "X\nY\nZ");
     }
 
     fn editor_con(texto: &str) -> Editor {

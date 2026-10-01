@@ -64,16 +64,18 @@ cerraron, ver "Hecho recientemente". Limitaciones conocidas:
 - **Portapapeles (#15)**: Terminal.app ignora OSC 52 (se usa `pbcopy`);
   tmux necesita `set -g set-clipboard on` para reenviar OSC 52; por SSH
   `Ctrl+V` no puede leer el portapapeles local (pega lo copiado dentro de
-  tcode); con varios cursores se pega el texto entero en cada uno.
+  tcode). Con varios cursores, una línea por cursor se reparte (desde
+  2026-10-01); otra cantidad de líneas se pega entera en cada uno.
 - **Búsqueda en el proyecto (#16)**: la lista no se refresca sola tras
-  editar; reemplazo literal (sin `$1`); en archivos cerrados el reemplazo
+  editar; el reemplazo expande `$1`/`${nombre}` solo con regex (desde
+  2026-10-01; el de `Ctrl+H` sigue literal); en archivos cerrados el reemplazo
   se escribe a disco y no se puede deshacer (la confirmación lo avisa);
   archivos de más de 4 MB o no UTF-8 no se buscan.
-- **LSP (#17)**: snippets sin saltos entre placeholders; completado solo
-  con un cursor (y en VIM solo en Insertar); renombrar sin
-  `prepareRename` ni operaciones sobre archivos; el hover no se desplaza.
-  Rust sigue sin comando LSP por defecto (hay que configurar
-  `rust-analyzer`).
+- **LSP (#17)**: completado solo con un cursor (y en VIM solo en
+  Insertar); renombrar sin `prepareRename` ni operaciones sobre archivos;
+  el hover no se desplaza. Java y C# siguen sin comando LSP por defecto
+  (necesitan datos del proyecto); Rust (`rust-analyzer`), Go (`gopls`) y
+  JavaScript (`typescript-language-server`) lo tienen desde 2026-10-01.
 
 ---
 
@@ -129,8 +131,7 @@ como maximizar el panel activo.
 
 Limitaciones conocidas de estas piezas (no son gaps nuevos):
 
-- **Pestañas (#10)**: "Guardar como" hacia un archivo ya abierto en otra
-  pestaña deja dos pestañas del mismo archivo. Un hilo de git inactivo
+- **Pestañas (#10)**: un hilo de git inactivo
   por pestaña con repo. Con el LSP por lenguaje (PR #112), el mismo
   archivo abierto en dos paneles con buffers distintos manda al servidor
   el texto del panel activo.
@@ -139,9 +140,10 @@ Limitaciones conocidas de estas piezas (no son gaps nuevos):
   al final de un `def` muestra solo el contenedor de afuera (tree-sitter
   no la incluye en el bloque).
 - **Modo VIM**: completo en lo esencial (PR #115) más búsqueda,
-  registros con nombre, macros y `Ctrl+R` (#28); fuera de alcance:
-  marcas, `:s` con grupos (`\1`, `&`) o rangos `a,b`, `:w <ruta>`,
-  `:reg`, `.` sobre operaciones hechas en Visual.
+  registros con nombre, macros y `Ctrl+R` (#28) y marcas `m`/`'`/`` ` ``
+  con `''` (2026-10-01); fuera de alcance: marcas globales (`mA`), `:s`
+  con grupos (`\1`, `&`) o rangos `a,b`, `:w <ruta>`, `:reg`, `.` sobre
+  operaciones hechas en Visual.
 - **Zen / maximizar (#11/#12)**: en zen + maximizado no se ve `[MAX]` (no
   hay statusbar); si la terminal o el sistema se comen `F11`, queda
   `Ctrl+K G`.
@@ -160,6 +162,14 @@ Breakpoints, paso a paso, variables — vía Debug Adapter Protocol.
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-10-01 — Deshacer hasta el texto del disco quita el `*`:** el
+`Buffer` guarda el texto de disco (al abrir y al guardar; un `Rope`
+clonado, O(1)) y `reemplazar_rope` (deshacer/rehacer) compara contra él.
+Antes, cualquier deshacer dejaba el buffer marcado como modificado para
+siempre (y el guardado automático, los respaldos y `Ctrl+Q` lo trataban
+como cambiado). Escribir a mano el mismo texto sigue contando como cambio
+(solo deshacer/rehacer comparan).
 
 **2026-10-01 — P3 #26 Terminal integrada:** crate nuevo `tcode-terminal`
 (`portable-pty` para la PTY/ConPTY + `vt100` 0.15 para interpretar la
@@ -227,8 +237,7 @@ no entra al lado del código.
   `Rope`, tras 1 s sin cambios o cada 5 s. Al arrancar, diálogo
   `Enter`/`d`/`Esc`.
 - Limitaciones: el tamaño de los splits no se guarda (tcode los reparte
-  por igual); tras recuperar y `Ctrl+Z` hasta el texto del disco, el
-  buffer sigue marcado como modificado (pasa con cualquier deshacer).
+  por igual).
 
 **2026-09-30 — todo P0 cerrado:**
 - **P0 #19 Edición básica** (PR #127): comentar/descomentar (`Ctrl+/`),

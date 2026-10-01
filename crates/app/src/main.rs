@@ -2244,7 +2244,9 @@ fn usar_portapapeles(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp)
                 let hay_seleccion = editor.cursores().iter().any(|c| c.tiene_seleccion());
                 if copiado.lineal && !hay_seleccion {
                     editor.pegar_lineas(&copiado.texto);
-                } else {
+                } else if !editor.pegar_por_cursor(&copiado.texto) {
+                    // Con una línea por cursor, a cada uno la suya (ver
+                    // `Editor::pegar_por_cursor`); si no, todo en cada uno.
                     editor.insertar_texto(&copiado.texto);
                 }
                 None
@@ -2732,12 +2734,21 @@ async fn guardar_como_confirmar(layout: &mut PanelLayout, estado: &mut EstadoApp
         return;
     }
     let ruta = ruta.to_string();
+    // Ese archivo abierto en otra pestaña con cambios: guardar encima los
+    // perdería.
+    if let Some(otra) = layout.otro_modificado_con_ruta(std::path::Path::new(&ruta)) {
+        estado.guardar_como.establecer_error(format!("'{otra}' está abierto con cambios sin guardar: guardalo o cerralo antes"));
+        return;
+    }
     formatear_antes_de_guardar(layout, estado).await;
     match layout.editor_activo_mut().guardar_como(ruta.clone()) {
         Ok(()) => {
             let panel = layout.panel_activo_mut();
             panel.ruta_mostrada = ruta;
             panel.aviso_guardado = None;
+            // Las otras pestañas de ese archivo: se cierran (este panel)
+            // o se recargan (otros paneles).
+            layout.tras_guardar_como();
             estado.guardar_como.cerrar();
         }
         Err(e) => estado.guardar_como.establecer_error(e.to_string()),
@@ -3592,6 +3603,8 @@ fn reemplazar_en_proyecto(layout: &mut PanelLayout, estado: &mut EstadoApp) {
         return;
     };
     let reemplazo = estado.busqueda_proyecto.reemplazo().to_string();
+    // Con regex, `$1`/`${nombre}` usan lo que capturó cada coincidencia.
+    let grupos = estado.busqueda_proyecto.opciones().regex;
     let rutas: Vec<PathBuf> = estado.busqueda_proyecto.archivos().iter().map(|a| a.ruta.clone()).collect();
     // Rutas canónicas de los documentos abiertos, en el mismo orden que
     // `paneles_mut` (una sola vez, no por archivo de la lista).
@@ -3613,7 +3626,7 @@ fn reemplazar_en_proyecto(layout: &mut PanelLayout, estado: &mut EstadoApp) {
                 continue;
             }
             abierto = true;
-            let ediciones = tcode_fs::ediciones_de_reemplazo(&panel.editor.buffer().a_texto(), &re, &reemplazo);
+            let ediciones = tcode_fs::ediciones_de_reemplazo(&panel.editor.buffer().a_texto(), &re, &reemplazo, grupos);
             if panel.editor.aplicar_ediciones(&ediciones) {
                 reemplazadas = reemplazadas.max(ediciones.len());
             }
@@ -3621,7 +3634,7 @@ fn reemplazar_en_proyecto(layout: &mut PanelLayout, estado: &mut EstadoApp) {
         if abierto {
             en_buffers += usize::from(reemplazadas > 0);
         } else {
-            match tcode_fs::reemplazar_en_archivo(ruta, &re, &reemplazo) {
+            match tcode_fs::reemplazar_en_archivo(ruta, &re, &reemplazo, grupos) {
                 Ok(n) => reemplazadas = n,
                 Err(_) => fallidos += 1,
             }
