@@ -543,6 +543,52 @@ impl Layout {
         }
     }
 
+    /// "Guardar como" hacia `ruta`: si OTRO documento (cualquier pestaña
+    /// de cualquier panel) es ese archivo y tiene cambios sin guardar,
+    /// su nombre — guardar encima los perdería.
+    pub fn otro_modificado_con_ruta(&self, ruta: &Path) -> Option<String> {
+        let activo = self.panel_activo();
+        self.documentos()
+            .into_iter()
+            .find(|d| !std::ptr::eq(*d, activo) && d.editor.buffer().modificado() && d.es_archivo(ruta))
+            .map(|d| d.ruta_mostrada.clone())
+    }
+
+    /// Después de "Guardar como": el documento activo ya es ese archivo,
+    /// así que las otras pestañas del mismo panel que lo tenían abierto
+    /// sobran (se cierran) y las de otros paneles quedaron con el
+    /// contenido viejo (se recargan del disco, conservando el cursor). Ver
+    /// [`Self::otro_modificado_con_ruta`]: ninguna tiene cambios.
+    pub fn tras_guardar_como(&mut self) {
+        let Some(ruta) = self.editor_activo().buffer().ruta().map(Path::to_path_buf) else { return };
+        let activo = self.activo;
+        for (indice, hoja) in self.hojas_mut().into_iter().enumerate() {
+            if indice == activo {
+                let mut i = 0;
+                while i < hoja.documentos.len() {
+                    if i != hoja.activa && hoja.documentos[i].es_archivo(&ruta) {
+                        hoja.documentos.remove(i);
+                        if i < hoja.activa {
+                            hoja.activa -= 1;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+                continue;
+            }
+            for documento in &mut hoja.documentos {
+                if documento.es_archivo(&ruta) {
+                    if let Ok(mut editor) = Editor::abrir(&ruta) {
+                        let cursor = documento.editor.cursor();
+                        editor.fijar_seleccion(cursor, cursor);
+                        documento.editor = editor;
+                    }
+                }
+            }
+        }
+    }
+
     /// Cuántos documentos (todas las pestañas de todos los paneles)
     /// tienen cambios sin guardar — para que `Ctrl+Q` avise aunque lo
     /// modificado no sea lo que se está viendo.
@@ -1176,6 +1222,36 @@ mod tests {
 
     fn rutas_por_panel(layout: &Layout) -> Vec<Vec<String>> {
         layout.hojas().iter().map(|p| p.documentos.iter().map(|d| d.ruta_mostrada.clone()).collect()).collect()
+    }
+
+    #[test]
+    fn guardar_como_hacia_un_archivo_abierto() {
+        let dir = std::env::temp_dir().join(format!("tcode-test-guardar-como-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
+        std::fs::write(&a, "viejo a\n").unwrap();
+        std::fs::write(&b, "b\n").unwrap();
+        // Panel 0: pestañas a.txt y b.txt (activa b). Panel 1: a.txt.
+        let mut layout = Layout::nuevo(Editor::abrir(&a).unwrap(), a.display().to_string());
+        layout.abrir_en_activo(Editor::abrir(&b).unwrap(), b.display().to_string());
+        layout.dividir(DireccionSplit::Vertical);
+        layout.abrir_en_activo(Editor::abrir(&a).unwrap(), a.display().to_string());
+        layout.ir_a_panel(0);
+        assert_eq!(layout.num_pestanas(), 2);
+        // Nadie tiene cambios: se puede.
+        assert_eq!(layout.otro_modificado_con_ruta(&a), None);
+        // "Guardar como a.txt" desde b.txt.
+        layout.editor_activo_mut().guardar_como(&a).unwrap();
+        layout.tras_guardar_como();
+        assert_eq!(layout.num_pestanas(), 1, "la otra pestaña de a.txt en este panel se cierra");
+        assert_eq!(layout.editor_activo().buffer().a_texto(), "b\n");
+        layout.ir_a_panel(1);
+        assert_eq!(layout.editor_activo().buffer().a_texto(), "b\n", "el otro panel se recarga del disco");
+        // Con cambios en otra pestaña, avisa.
+        layout.editor_activo_mut().insertar_texto("x");
+        layout.ir_a_panel(0);
+        assert!(layout.otro_modificado_con_ruta(&a).is_some());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

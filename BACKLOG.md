@@ -131,8 +131,7 @@ como maximizar el panel activo.
 
 Limitaciones conocidas de estas piezas (no son gaps nuevos):
 
-- **Pestañas (#10)**: "Guardar como" hacia un archivo ya abierto en otra
-  pestaña deja dos pestañas del mismo archivo. Un hilo de git inactivo
+- **Pestañas (#10)**: un hilo de git inactivo
   por pestaña con repo. Con el LSP por lenguaje (PR #112), el mismo
   archivo abierto en dos paneles con buffers distintos manda al servidor
   el texto del panel activo.
