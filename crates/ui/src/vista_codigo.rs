@@ -11,6 +11,7 @@ use tcode_fs::MarcaGit;
 use tcode_lsp::{DiagnosticoSimple, Severidad};
 use tcode_syntax::{Lenguaje, Resaltador, Token};
 
+use crate::pistas::{columna_de_texto, columna_visual, Pista, PistasInlay};
 use crate::zonas::ZonaCodigo;
 use crate::{EstadoUi, Paleta};
 
@@ -255,6 +256,7 @@ pub fn dibujar(
     columna_regla: Option<usize>,
     marcas_git: Option<&[Option<MarcaGit>]>,
     anotacion: Option<(usize, &str)>,
+    pistas: Option<&PistasInlay>,
 ) -> ZonaCodigo {
     estado.posicion_cursor = None;
     let buffer = editor.buffer();
@@ -353,6 +355,15 @@ pub fn dibujar(
     let tramos_visibles = tramos_bytes_visibles(editor, &filas);
     let tokens = calcular_tokens(editor, resaltador, ruta, &tramos_visibles);
     let lineas_con_cursor: Vec<usize> = cursores.iter().map(|c| c.cursor.linea).collect();
+    // Inlay hints (BACKLOG.md P2 #23): solo sin ajuste de línea (con el
+    // ajuste, cambiarían por dónde se parte cada línea).
+    let (revision, num_lineas) = (editor.buffer().revision(), editor.buffer().num_lineas());
+    let pistas_de = |linea: usize| -> &[Pista] {
+        match pistas {
+            Some(p) if !ajuste_linea => p.de_linea(linea, revision, num_lineas, &lineas_con_cursor),
+            _ => &[],
+        }
+    };
 
     let visibles: Vec<Line> = filas
         .iter()
@@ -455,6 +466,16 @@ pub fn dibujar(
                 });
             }
 
+            // Inlay hints: texto virtual antes del carácter de su posición,
+            // después de todo lo que se ubica por la posición en el texto
+            // real (selección, búsqueda, cursores) y antes del relleno de
+            // "línea actual" (que les da su fondo). De derecha a izquierda,
+            // para que insertar uno no corra la posición de los otros.
+            for pista in pistas_de(fila.idx_linea).iter().rev() {
+                let estilo = Style::default().fg(paleta.numero_linea).add_modifier(Modifier::ITALIC);
+                spans = insertar_en_spans(spans, pista.columna, Span::styled(pista.texto.clone(), estilo));
+            }
+
             // Anotación al final de la línea (blame en línea, BACKLOG.md P2
             // #25): texto virtual atenuado después del código, en la
             // última fila de la línea y solo si entra (nunca empuja ni
@@ -526,7 +547,8 @@ pub fn dibujar(
     }
 
     if let (true, Some(fila_cursor)) = (mostrar_cursor, fila_cursor_en_pantalla) {
-        let columna_local = if ajuste_linea { cursor.columna % ancho } else { cursor.columna };
+        let columna_local =
+            if ajuste_linea { cursor.columna % ancho } else { columna_visual(pistas_de(cursor.linea), cursor.columna) };
         let columna = area.x + columna_local as u16;
         let fila_pantalla = area.y + fila_cursor as u16;
         frame.set_cursor_position((columna, fila_pantalla));
@@ -674,7 +696,14 @@ pub struct PosicionClic {
 /// (así un arrastre que se pasa de la pantalla sigue seleccionando); uno
 /// debajo del final del archivo es el final de la última línea. Solo lee
 /// la línea bajo el punto y recorre las filas de la pantalla.
-pub fn posicion_en(editor: &Editor, estado: &EstadoUi, zona: &ZonaCodigo, x: u16, y: u16) -> PosicionClic {
+pub fn posicion_en(
+    editor: &Editor,
+    estado: &EstadoUi,
+    zona: &ZonaCodigo,
+    pistas: Option<&PistasInlay>,
+    x: u16,
+    y: u16,
+) -> PosicionClic {
     let buffer = editor.buffer();
     let ocultos = editor.plegado().tramos_ocultos();
     let num_lineas = buffer.num_lineas();
@@ -704,6 +733,15 @@ pub fn posicion_en(editor: &Editor, estado: &EstadoUi, zona: &ZonaCodigo, x: u16
 
     let texto = buffer.linea_texto(linea);
     let texto_fila: String = if zona.ajuste { texto.chars().skip(inicio).take(ancho).collect() } else { texto };
+    // Sin ajuste de línea, los inlay hints de la línea corren el texto
+    // (ver `dibujar`): se descuentan.
+    let x_rel = match pistas {
+        Some(p) if !zona.ajuste => {
+            let lineas_con_cursor: Vec<usize> = editor.cursores().iter().map(|c| c.cursor.linea).collect();
+            columna_de_texto(p.de_linea(linea, buffer.revision(), num_lineas, &lineas_con_cursor), x_rel)
+        }
+        _ => x_rel,
+    };
     let (indice, pasado) = columna_en_texto(&texto_fila, x_rel);
     let ultima_fila = !zona.ajuste || subfila + 1 == filas_ajuste(linea);
     let plegada = ocultos.iter().any(|t| t.start == linea + 1);
@@ -990,6 +1028,36 @@ fn spans_de_linea<'a>(
 /// haga falta antes de pedir este rango, así que en la práctica esto no
 /// debería devolver `None`, pero no hay motivo para entrar en pánico si
 /// pasara.
+/// Inserta `nuevo` antes del carácter `columna` del contenido de
+/// `spans` (partiendo el span que lo contiene), o al final si la línea es
+/// más corta.
+fn insertar_en_spans<'a>(spans: Vec<Span<'a>>, columna: usize, nuevo: Span<'a>) -> Vec<Span<'a>> {
+    let mut salida = Vec::with_capacity(spans.len() + 2);
+    let mut restante = columna;
+    let mut nuevo = Some(nuevo);
+    for span in spans {
+        if let Some(n) = nuevo.take() {
+            let largo = span.content.chars().count();
+            if restante < largo {
+                let corte = span.content.char_indices().nth(restante).map(|(b, _)| b).unwrap_or(span.content.len());
+                if corte > 0 {
+                    salida.push(Span::styled(span.content[..corte].to_string(), span.style));
+                }
+                salida.push(n);
+                salida.push(Span::styled(span.content[corte..].to_string(), span.style));
+                continue;
+            }
+            restante -= largo;
+            nuevo = Some(n);
+        }
+        salida.push(span);
+    }
+    if let Some(n) = nuevo {
+        salida.push(n);
+    }
+    salida
+}
+
 fn rango_char_en_spans(spans: &[Span], indice_char: usize) -> Option<(usize, usize)> {
     let mut char_actual = 0usize;
     let mut byte_actual = 0usize;
@@ -1063,6 +1131,78 @@ mod tests {
 
     fn texto(spans: &[Span]) -> String {
         spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn inlay_hints_se_dibujan_y_corren_cursor_y_clics() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        use crate::pistas::{Pista, PistasInlay};
+
+        let mut editor = Editor::nuevo();
+        editor.insertar_texto("let x = f(1);");
+        let revision = editor.buffer().revision();
+        let pistas = PistasInlay::nuevas(
+            revision,
+            1,
+            vec![
+                Pista { linea: 0, columna: 5, texto: ": i32".to_string() },
+                Pista { linea: 0, columna: 10, texto: "a: ".to_string() },
+            ],
+        );
+        // Cursor sobre el `1` (columna 10): queda después del hint "a: ".
+        editor.mover_cursor_a_byte(10);
+        let paleta = Paleta::desde_tema(&tcode_config::tema_por_defecto()).unwrap();
+        let mut resaltador = Resaltador::nuevo();
+        let mut estado = EstadoUi::default();
+        let mut terminal = Terminal::new(TestBackend::new(30, 2)).unwrap();
+        #[allow(clippy::too_many_arguments)]
+        fn dibujar_con(
+            terminal: &mut Terminal<TestBackend>,
+            editor: &Editor,
+            estado: &mut EstadoUi,
+            paleta: &Paleta,
+            resaltador: &mut Resaltador,
+            pistas: Option<&PistasInlay>,
+            ajuste: bool,
+        ) -> (String, Option<(u16, u16)>, ZonaCodigo) {
+            let mut zona = None;
+            terminal
+                .draw(|frame| {
+                    zona = Some(dibujar(
+                        frame, frame.area(), editor, estado, paleta, resaltador, "a.txt", true, &[], &[], None, false,
+                        ajuste, None, None, None, pistas,
+                    ));
+                })
+                .unwrap();
+            let fila: String = (0..30).map(|x| terminal.backend().buffer()[(x, 0)].symbol().to_string()).collect();
+            (fila.trim_end().to_string(), estado.posicion_cursor(), zona.unwrap())
+        }
+        let (fila, cursor, z) =
+            dibujar_con(&mut terminal, &editor, &mut estado, &paleta, &mut resaltador, Some(&pistas), false);
+        assert_eq!(fila, "let x: i32 = f(a: 1);");
+        assert_eq!(cursor, Some((18, 0)), "el cursor queda sobre el 1, corrido por los dos hints");
+        // Un clic sobre el `=` (pantalla 11) es la columna 6 del texto; uno
+        // sobre el hint ": i32", su posición.
+        assert_eq!(posicion_en(&editor, &estado, &z, Some(&pistas), 11, 0).columna, 6);
+        assert_eq!(posicion_en(&editor, &estado, &z, Some(&pistas), 7, 0).columna, 5);
+        // Con ajuste de línea o sin hints, el texto tal cual.
+        let con_ajuste = dibujar_con(&mut terminal, &editor, &mut estado, &paleta, &mut resaltador, Some(&pistas), true);
+        assert_eq!(con_ajuste.0, "let x = f(1);");
+        let sin = dibujar_con(&mut terminal, &editor, &mut estado, &paleta, &mut resaltador, None, false);
+        assert_eq!((sin.0.as_str(), sin.1), ("let x = f(1);", Some((10, 0))));
+    }
+
+    #[test]
+    fn insertar_en_spans_parte_el_span_o_agrega_al_final() {
+        let base = || vec![Span::raw("ab"), Span::raw("cdé")];
+        let contenido = |spans: Vec<Span>| spans.iter().map(|s| s.content.to_string()).collect::<Vec<_>>();
+        assert_eq!(contenido(insertar_en_spans(base(), 0, Span::raw("X"))), ["X", "ab", "cdé"]);
+        assert_eq!(contenido(insertar_en_spans(base(), 3, Span::raw("X"))), ["ab", "c", "X", "dé"]);
+        assert_eq!(contenido(insertar_en_spans(base(), 2, Span::raw("X"))), ["ab", "X", "cdé"]);
+        assert_eq!(contenido(insertar_en_spans(base(), 5, Span::raw("X"))), ["ab", "cdé", "X"]);
+        assert_eq!(contenido(insertar_en_spans(base(), 9, Span::raw("X"))), ["ab", "cdé", "X"]);
     }
 
     #[test]
@@ -1387,7 +1527,7 @@ mod tests {
     }
 
     fn clic(editor: &Editor, estado: &EstadoUi, zona: &ZonaCodigo, x: u16, y: u16) -> (usize, usize) {
-        let p = posicion_en(editor, estado, zona, x, y);
+        let p = posicion_en(editor, estado, zona, None, x, y);
         (p.linea, p.columna)
     }
 
@@ -1417,7 +1557,7 @@ mod tests {
         // Más allá del texto de la línea: al final.
         assert_eq!(clic(&editor, &estado, &z, 30, 2), (1, 3));
         // En el gutter: principio de la línea, marcado como gutter.
-        let p = posicion_en(&editor, &estado, &z, 11, 4);
+        let p = posicion_en(&editor, &estado, &z, None, 11, 4);
         assert_eq!((p.linea, p.columna, p.en_gutter), (3, 0, true));
         // Debajo de la última línea: final del archivo.
         assert_eq!(clic(&editor, &estado, &z, 14, 6), (3, 4));
@@ -1453,9 +1593,9 @@ mod tests {
             let z = zona(30, 5, ajuste, false);
             assert_eq!(clic(&editor, &estado, &z, 12, 3).0, siguiente, "ajuste {ajuste}");
             // "fn a() {" mide 8: el marcador ocupa las 5 columnas de después.
-            assert!(posicion_en(&editor, &estado, &z, 10 + 9, 2).sobre_pliegue);
-            assert!(!posicion_en(&editor, &estado, &z, 10 + 14, 2).sobre_pliegue);
-            assert!(!posicion_en(&editor, &estado, &z, 10 + 3, 2).sobre_pliegue);
+            assert!(posicion_en(&editor, &estado, &z, None, 10 + 9, 2).sobre_pliegue);
+            assert!(!posicion_en(&editor, &estado, &z, None, 10 + 14, 2).sobre_pliegue);
+            assert!(!posicion_en(&editor, &estado, &z, None, 10 + 3, 2).sobre_pliegue);
         }
     }
 

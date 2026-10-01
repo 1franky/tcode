@@ -30,6 +30,8 @@ pub struct CapacidadesLsp {
     /// disparo (`(`) y de re-disparo (`,`) juntos: tipear cualquiera pide
     /// la ayuda de firma en el acto.
     pub ayuda_firma: bool,
+    /// `inlayHintProvider` (BACKLOG.md P2 #23).
+    pub pistas_inlay: bool,
     pub disparadores_firma: Vec<char>,
     /// `completionProvider.triggerCharacters`: tipear uno pide completado
     /// en el acto, sin esperar la pausa (el `.` de un método, `::`...).
@@ -59,6 +61,7 @@ impl CapacidadesLsp {
             completado: capacidades["completionProvider"].is_object(),
             acciones: anuncia("codeActionProvider"),
             ayuda_firma: capacidades["signatureHelpProvider"].is_object(),
+            pistas_inlay: anuncia("inlayHintProvider"),
             disparadores_firma: ["triggerCharacters", "retriggerCharacters"]
                 .iter()
                 .filter_map(|campo| capacidades["signatureHelpProvider"][*campo].as_array())

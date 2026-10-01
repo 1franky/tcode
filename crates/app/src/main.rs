@@ -23,6 +23,7 @@ mod lsp;
 mod mouse;
 mod pliegues;
 mod portapapeles;
+mod pistas;
 mod problemas;
 mod respaldo;
 mod sesion;
@@ -469,6 +470,8 @@ struct EstadoApp {
     cambio_git: Option<git_bloques::LineasCambio>,
     /// Blame en línea (BACKLOG.md P2 #25, `blame.rs`).
     blame: blame::EstadoBlame,
+    /// Inlay hints del LSP (BACKLOG.md P2 #23, `pistas.rs`).
+    pistas: pistas::EstadoPistas,
     /// Si esta ejecución guarda la sesión de la carpeta (BACKLOG.md P2
     /// #20, ver `sesion::aplica`).
     guardar_sesion: bool,
@@ -612,6 +615,7 @@ async fn ejecutar(
         guardar_sesion,
         cambio_git: None,
         blame: Default::default(),
+        pistas: Default::default(),
         ultimo_autoguardado: Instant::now(),
         guardado_pendiente: false,
         resaltador: Resaltador::nuevo(),
@@ -689,6 +693,9 @@ async fn ejecutar(
         }
         if estado.funciones_lsp.firma_pedida.is_some() {
             funciones_lsp::enviar_firma(layout, &mut estado).await;
+        }
+        if estado.pistas.por_pedir {
+            pistas::enviar(layout, &mut estado).await;
         }
         if !funciones_lsp::procesar_respuestas(layout, &mut estado) && std::mem::take(&mut solo_respuestas_lsp) {
             omitir_dibujo = true;
@@ -1664,6 +1671,7 @@ fn necesita_tick(layout: &PanelLayout, estado: &EstadoApp) -> bool {
         || estado.config.editor.guardado_automatico == GuardadoAutomatico::CadaNSegundos
         || estado.respaldo.necesita_tick(layout)
         || estado.blame.necesita_tick(layout, &estado.config)
+        || estado.pistas.necesita_tick(layout, estado)
 }
 
 /// Un tick del bucle principal: refresca el visor de logs del LSP si
@@ -1672,6 +1680,7 @@ fn necesita_tick(layout: &PanelLayout, estado: &EstadoApp) -> bool {
 /// si no, el bucle se saltea el próximo dibujo.
 fn procesar_tick(layout: &mut PanelLayout, estado: &mut EstadoApp) -> bool {
     let mut cambio = estado.blame.tick(layout, &estado.config);
+    pistas::tick(layout, estado);
     // Respaldos de lo no guardado (BACKLOG.md P2 #21) y, de paso, la
     // sesión: si `tcode` se cierra de golpe, al volver se reabren las
     // mismas pestañas además de recuperarse los cambios.
@@ -1897,6 +1906,17 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             Accion::Continuar
         }
         // Prende/apaga el blame en línea y lo deja guardado en la config.
+        // Prende/apaga los inlay hints y lo deja guardado en la config.
+        "lsp.alternar_inlay_hints" => {
+            estado.capas_config.global.editor.inlay_hints = !estado.config.editor.inlay_hints;
+            guardar_config_global(estado);
+            if !estado.config.editor.inlay_hints {
+                pistas::limpiar(layout);
+            }
+            let aviso = if estado.config.editor.inlay_hints { "LSP: inlay hints prendidos" } else { "LSP: inlay hints apagados" };
+            layout.panel_activo_mut().mensaje_estado = Some(aviso.to_string());
+            Accion::Continuar
+        }
         "git.alternar_blame" => {
             estado.capas_config.global.editor.blame_en_linea = !estado.config.editor.blame_en_linea;
             guardar_config_global(estado);

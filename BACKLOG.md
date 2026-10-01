@@ -79,9 +79,10 @@ cerraron, ver "Hecho recientemente". Limitaciones conocidas:
 
 ## P2 — Del plan original, alcance grande o valor dudoso
 
-Ninguno pendiente — #4 a #9 se cerraron el 2026-09-23, ver "Hecho
-recientemente". Limitaciones conocidas que quedaron de esas piezas (no
-son gaps nuevos, anotadas para no redescubrirlas):
+Ninguno pendiente — #4 a #9 se cerraron el 2026-09-23 y #20 a #25 entre
+el 2026-09-30 y el 2026-10-01, ver "Hecho recientemente". Limitaciones
+conocidas que quedaron de esas piezas (no son gaps nuevos, anotadas para
+no redescubrirlas):
 
 - **Plegado (#7)**: Markdown no pliega (a propósito); una línea
   modificada que queda dentro de un bloque plegado no se marca con git en
@@ -114,14 +115,6 @@ son gaps nuevos, anotadas para no redescubrirlas):
   todo requiere que el `Buffer` registre las ediciones). En archivos con
   muchos errores de sintaxis el re-parseo tiene un tope de 250 ms: los
   colores de lo recién editado quedan aproximados hasta el reintento.
-
-### 23. Más funciones de LSP
-
-Hecho: acciones rápidas (`textDocument/codeAction`, `Ctrl+.`/`Ctrl+K X`)
-y ayuda de firma (`signatureHelp`, sola al tipear `(`/`,`, o
-`Ctrl+Shift+Espacio`/`Ctrl+K ,`). Falta: inlay hints — insertan texto
-virtual en la vista de código, lo que toca el mapeo de columnas del
-cursor, el mouse y el ajuste de línea: evaluarlos aparte.
 
 ---
 
@@ -171,6 +164,17 @@ Breakpoints, paso a paso, variables — vía Debug Adapter Protocol.
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-10-01 — P2 #23 inlay hints (cierra #23 y todo P2):**
+`textDocument/inlayHint` del archivo entero, pedido tras 300 ms de texto
+quieto (tick) y de nuevo con `workspace/inlayHint/refresh` (rust-analyzer
+contesta `null` mientras indexa). Se dibujan en `vista_codigo` como texto
+virtual insertado en los spans después de selección/búsqueda/cursores;
+`tcode_ui::pistas::columna_visual`/`columna_de_texto` corren el cursor y
+los clics. Mientras se escribe se ocultan en la línea del cursor (y en
+todo el archivo si cambió la cantidad de líneas). Limitación: solo sin
+ajuste de línea. Ojo: rust-analyzer rechaza un rango que termina más
+allá del archivo.
 
 **2026-10-01 — P3 #28 Completar el modo VIM:** búsqueda `/`/`?` (prompt
 de la línea `:` con otro prefijo; regex con smartcase, literal si no

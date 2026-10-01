@@ -96,6 +96,7 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "lsp.renombrar", descripcion: "LSP: Renombrar símbolo" },
         Comando { id: "lsp.acciones_rapidas", descripcion: "LSP: Acciones rápidas (arreglos, imports, refactors)" },
         Comando { id: "lsp.ayuda_firma", descripcion: "LSP: Ayuda de firma (parámetros de la llamada)" },
+        Comando { id: "lsp.alternar_inlay_hints", descripcion: "LSP: Mostrar/ocultar inlay hints (tipos y parámetros)" },
         Comando { id: "git.ver_cambio", descripcion: "Git: Ver el cambio de la línea respecto de HEAD" },
         Comando { id: "git.revertir_cambio", descripcion: "Git: Revertir el bloque de la línea a HEAD" },
         Comando { id: "git.siguiente_cambio", descripcion: "Git: Ir al siguiente cambio" },

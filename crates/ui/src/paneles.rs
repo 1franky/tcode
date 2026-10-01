@@ -88,6 +88,9 @@ pub struct PanelEditor {
     /// Texto virtual al final de una línea (el blame en línea, BACKLOG.md
     /// P2 #25): `(línea, texto)`. Lo pone y lo saca `app`.
     pub anotacion: Option<(usize, String)>,
+    /// Inlay hints del LSP (BACKLOG.md P2 #23): los pide y los pone `app`;
+    /// vacíos si están apagados.
+    pub pistas: crate::pistas::PistasInlay,
 }
 
 impl PanelEditor {
@@ -105,6 +108,7 @@ impl PanelEditor {
             aviso_guardado: None,
             mensaje_estado: None,
             anotacion: None,
+            pistas: Default::default(),
         }
     }
 
@@ -694,7 +698,7 @@ impl Layout {
     pub fn posicion_en_codigo(&self, zona: &ZonaPanel, x: u16, y: u16) -> Option<PosicionClic> {
         let codigo = zona.codigo.as_ref()?;
         let documento = self.documento_en(zona.indice)?;
-        Some(vista_codigo::posicion_en(&documento.editor, &documento.estado_ui, codigo, x, y))
+        Some(vista_codigo::posicion_en(&documento.editor, &documento.estado_ui, codigo, Some(&documento.pistas), x, y))
     }
 
     /// Rueda del mouse sobre el panel de `zona`: desplaza su código (o el
@@ -984,6 +988,7 @@ fn dibujar_panel(
                         columna_regla,
                         marcas_git,
                         panel_editor.anotacion.as_ref().map(|(linea, texto)| (*linea, texto.as_str())),
+                        Some(&panel_editor.pistas),
                     ));
                 }
                 ModoMarkdown::Dividido => {
@@ -1023,6 +1028,7 @@ fn dibujar_panel(
                         columna_regla,
                         marcas_git,
                         panel_editor.anotacion.as_ref().map(|(linea, texto)| (*linea, texto.as_str())),
+                        Some(&panel_editor.pistas),
                     ));
                     vista_markdown::dibujar(
                         frame,
