@@ -15,6 +15,7 @@
 //! este crate en PLAN.md §3, llegan más adelante (recarga en caliente de
 //! archivos modificados fuera del editor).
 
+mod blame;
 mod buscador;
 mod busqueda_proyecto;
 mod estado_prompt;
@@ -22,6 +23,7 @@ mod explorador;
 mod git;
 mod nodo;
 
+pub use blame::{blame_linea, parsear_porcelain, texto_blame, InfoBlame};
 pub use buscador::{listar_archivos_recursivo, BuscadorArchivos, ResultadoBusqueda};
 pub use busqueda_proyecto::{
     buscar_en_proyecto, ediciones_de_reemplazo, reemplazar_en_archivo, ArchivoConCoincidencias, CampoProyecto,

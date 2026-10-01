@@ -85,6 +85,9 @@ pub struct PanelEditor {
     /// prendido, BACKLOG.md P2 #5: "Formateado al guardar" o por qué no
     /// se formateó). `app` lo limpia con la siguiente tecla.
     pub mensaje_estado: Option<String>,
+    /// Texto virtual al final de una línea (el blame en línea, BACKLOG.md
+    /// P2 #25): `(línea, texto)`. Lo pone y lo saca `app`.
+    pub anotacion: Option<(usize, String)>,
 }
 
 impl PanelEditor {
@@ -101,6 +104,7 @@ impl PanelEditor {
             git: DiffGit::nuevo(),
             aviso_guardado: None,
             mensaje_estado: None,
+            anotacion: None,
         }
     }
 
@@ -979,6 +983,7 @@ fn dibujar_panel(
                         ajuste_linea,
                         columna_regla,
                         marcas_git,
+                        panel_editor.anotacion.as_ref().map(|(linea, texto)| (*linea, texto.as_str())),
                     ));
                 }
                 ModoMarkdown::Dividido => {
@@ -1017,6 +1022,7 @@ fn dibujar_panel(
                         // arriba).
                         columna_regla,
                         marcas_git,
+                        panel_editor.anotacion.as_ref().map(|(linea, texto)| (*linea, texto.as_str())),
                     ));
                     vista_markdown::dibujar(
                         frame,

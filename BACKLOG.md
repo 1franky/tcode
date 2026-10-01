@@ -128,12 +128,6 @@ cursor, el mouse y el ajuste de línea: evaluarlos aparte.
 Propios por lenguaje y los que manda el LSP (hoy se insertan como texto
 plano, sin placeholders).
 
-### 25. Git más completo
-
-Hecho: ver el diff del bloque del cursor (`Ctrl+K Ctrl+V`), revertirlo
-(`Ctrl+K Ctrl+R`) e ir al cambio siguiente/anterior (`Alt+F5`/`Ctrl+K
-Ctrl+N`...). Falta: blame en línea.
-
 ---
 
 ## P3 — Bloqueado o reconsiderar si debería estar en el plan
@@ -186,6 +180,16 @@ Búsqueda con `/`/`?`/`n`/`*`, macros, registros con nombre, `Ctrl+R`.
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-30 — P2 #25 Git más completo:** ver el diff del bloque del
+cursor (`Ctrl+K Ctrl+V`), revertirlo (`Ctrl+K Ctrl+R`), ir al cambio
+siguiente/anterior (`Alt+F5`/`Shift+Alt+F5`, `Ctrl+K Ctrl+N`/`Ctrl+K
+Ctrl+B`) — `tcode_fs::bloques_git`, el mismo diff del gutter con rangos de
+bytes — y blame en línea (`Ctrl+K Ctrl+G`, `editor.blame_en_linea`):
+`git blame --porcelain --contents -` con el texto del buffer en un hilo,
+tras 300 ms quieto en la línea; se dibuja como `PanelEditor::anotacion`.
+Limitaciones: compara con `HEAD`, no con el índice; el blame no se ve si
+no entra al lado del código.
 
 **2026-09-30 — P2 #20 Restaurar la sesión y #21 Recuperación:**
 - **Sesión** por carpeta en `<estado>/sesiones/<huella>.json`

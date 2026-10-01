@@ -16,6 +16,7 @@
 //! (`lsp.rs`) sin bloquear ninguno de los dos.
 
 mod formateador;
+mod blame;
 mod funciones_lsp;
 mod git_bloques;
 mod lsp;
@@ -463,6 +464,8 @@ struct EstadoApp {
     /// Popup de "ver cambio" de git (BACKLOG.md P2 #25, `git_bloques`):
     /// se cierra con cualquier tecla o clic.
     cambio_git: Option<git_bloques::LineasCambio>,
+    /// Blame en línea (BACKLOG.md P2 #25, `blame.rs`).
+    blame: blame::EstadoBlame,
     /// Si esta ejecución guarda la sesión de la carpeta (BACKLOG.md P2
     /// #20, ver `sesion::aplica`).
     guardar_sesion: bool,
@@ -604,6 +607,7 @@ async fn ejecutar(
         recuperacion,
         guardar_sesion,
         cambio_git: None,
+        blame: Default::default(),
         ultimo_autoguardado: Instant::now(),
         guardado_pendiente: false,
         resaltador: Resaltador::nuevo(),
@@ -1624,6 +1628,7 @@ fn necesita_tick(layout: &PanelLayout, estado: &EstadoApp) -> bool {
     estado.logs_lsp.activo()
         || estado.config.editor.guardado_automatico == GuardadoAutomatico::CadaNSegundos
         || estado.respaldo.necesita_tick(layout)
+        || estado.blame.necesita_tick(layout, &estado.config)
 }
 
 /// Un tick del bucle principal: refresca el visor de logs del LSP si
@@ -1631,7 +1636,7 @@ fn necesita_tick(layout: &PanelLayout, estado: &EstadoApp) -> bool {
 /// N segundos" si ya tocaba (P2 #4). Devuelve si cambió algo visible —
 /// si no, el bucle se saltea el próximo dibujo.
 fn procesar_tick(layout: &mut PanelLayout, estado: &mut EstadoApp) -> bool {
-    let mut cambio = false;
+    let mut cambio = estado.blame.tick(layout, &estado.config);
     // Respaldos de lo no guardado (BACKLOG.md P2 #21) y, de paso, la
     // sesión: si `tcode` se cierra de golpe, al volver se reabren las
     // mismas pestañas además de recuperarse los cambios.
@@ -1853,6 +1858,14 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
                 "git.revertir_cambio" => git_bloques::revertir(layout),
                 _ => git_bloques::saltar(id == "git.siguiente_cambio", layout),
             }
+            Accion::Continuar
+        }
+        // Prende/apaga el blame en línea y lo deja guardado en la config.
+        "git.alternar_blame" => {
+            estado.capas_config.global.editor.blame_en_linea = !estado.config.editor.blame_en_linea;
+            guardar_config_global(estado);
+            let aviso = if estado.config.editor.blame_en_linea { "Git: blame en línea prendido" } else { "Git: blame en línea apagado" };
+            layout.panel_activo_mut().mensaje_estado = Some(aviso.to_string());
             Accion::Continuar
         }
         "problemas.ver" => {

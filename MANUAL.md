@@ -878,6 +878,12 @@ en el gutter"). Sobre esas marcas:
 | `Ctrl+K Ctrl+V` | **Ver el cambio** del bloque del cursor: las líneas como están en `HEAD` (`-`) y como quedaron (`+`). Cualquier tecla lo cierra. |
 | `Ctrl+K Ctrl+R` | **Revertir** el bloque del cursor a como está en `HEAD`. Es una edición más: `Ctrl+Z` la deshace, y no se guarda sola. |
 | `Alt+F5` / `Shift+Alt+F5` (o `Ctrl+K Ctrl+N` / `Ctrl+K Ctrl+B`) | Ir al **cambio siguiente / anterior** (da la vuelta al llegar al final). |
+| `Ctrl+K Ctrl+G` | Prende/apaga el **blame en línea**: al final de la línea del cursor, atenuado, quién la cambió por última vez, hace cuánto y el mensaje del commit ("Sin commitear" si es un cambio tuyo). Queda guardado (`Ctrl+,` → Editor → "Git: blame en la línea del cursor"). |
+
+El blame aparece cuando el cursor se queda quieto un momento en una
+línea (moverse con las flechas no lanza un `git blame` por tecla), tiene
+en cuenta los cambios sin guardar, y no se muestra si no entra al lado
+del código.
 
 Un bloque de líneas borradas se ve y se revierte desde la línea de su
 marca `-`. Todo compara con `HEAD`, no con el índice (lo que está en

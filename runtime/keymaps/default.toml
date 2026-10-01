@@ -250,6 +250,9 @@
 "Shift+Alt+F5"   = "git.anterior_cambio"
 "Ctrl+K Ctrl+N"  = "git.siguiente_cambio"
 "Ctrl+K Ctrl+B"  = "git.anterior_cambio"
+# Blame en línea (apagado por defecto): GitLens no tiene atajo propio;
+# Ctrl+K Ctrl+G ("git") lo prende y apaga.
+"Ctrl+K Ctrl+G"  = "git.alternar_blame"
 "Ctrl+Shift+M"   = "problemas.ver"
 "Ctrl+K Q"       = "problemas.ver"
 "F8"             = "problemas.siguiente"

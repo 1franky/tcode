@@ -1130,6 +1130,16 @@ tenga una línea cambiada, una agregada y la última borrada.
 - [ ] **Revertir.** `Ctrl+K Ctrl+R` en cada bloque lo deja como en `HEAD` (la marca del gutter desaparece); la borrada vuelve a aparecer. `Ctrl+Z` deshace cada reversión.
 - [ ] **Sin base.** En un archivo sin commitear, en uno fuera de un repo o en una línea sin cambios, los comandos avisan en la barra y no hacen nada.
 
+## Blame en línea (BACKLOG.md P2 #25, segunda parte)
+
+En el mismo repo de la sección anterior.
+
+- [ ] **Prender.** `Ctrl+K Ctrl+G`: "blame en línea prendido"; enseguida, al final de la línea del cursor, atenuado y en itálica, "Autor, hace X · mensaje del commit".
+- [ ] **Moverse.** En una línea modificada o agregada dice "Sin commitear"; al moverse, la anotación sigue al cursor (aparece un momento después de dejar de moverse). Mantener apretada una flecha no congela nada.
+- [ ] **Cambios sin guardar.** Agregar líneas arriba sin guardar: las de abajo siguen mostrando su commit correcto (no se corren).
+- [ ] **No tapa código.** En una línea casi tan larga como la ventana, la anotación no aparece (o se corta con `...`).
+- [ ] **Apagar.** `Ctrl+K Ctrl+G` otra vez la saca; al reabrir `tcode` queda como se dejó (`blame_en_linea` en `config.toml`). Fuera de un repo no aparece nada.
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).

@@ -100,6 +100,7 @@ pub fn comandos_disponibles() -> &'static [Comando] {
         Comando { id: "git.revertir_cambio", descripcion: "Git: Revertir el bloque de la línea a HEAD" },
         Comando { id: "git.siguiente_cambio", descripcion: "Git: Ir al siguiente cambio" },
         Comando { id: "git.anterior_cambio", descripcion: "Git: Ir al cambio anterior" },
+        Comando { id: "git.alternar_blame", descripcion: "Git: Mostrar/ocultar el blame en la línea del cursor" },
         Comando { id: "problemas.ver", descripcion: "Problemas: Ver todos (diagnósticos de los archivos abiertos)" },
         Comando { id: "problemas.siguiente", descripcion: "Problemas: Ir al siguiente" },
         Comando { id: "problemas.anterior", descripcion: "Problemas: Ir al anterior" },

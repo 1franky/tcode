@@ -59,6 +59,7 @@ pub enum CampoEditor {
     AjusteLinea,
     NumerosDeLinea,
     IndicadoresGit,
+    BlameEnLinea,
     ModoVim,
     ColumnaRegla,
     GuardadoAutomatico,
@@ -88,12 +89,13 @@ const SEGUNDOS_GUARDADO_MIN: i64 = 5;
 const SEGUNDOS_GUARDADO_MAX: i64 = 600;
 
 impl CampoEditor {
-    pub const TODOS: [CampoEditor; 12] = [
+    pub const TODOS: [CampoEditor; 13] = [
         CampoEditor::TamanoTabulacion,
         CampoEditor::UsarEspacios,
         CampoEditor::AjusteLinea,
         CampoEditor::NumerosDeLinea,
         CampoEditor::IndicadoresGit,
+        CampoEditor::BlameEnLinea,
         CampoEditor::ModoVim,
         CampoEditor::ColumnaRegla,
         CampoEditor::GuardadoAutomatico,
@@ -110,6 +112,7 @@ impl CampoEditor {
             CampoEditor::AjusteLinea => "Ajuste de línea (wrap)",
             CampoEditor::NumerosDeLinea => "Números de línea",
             CampoEditor::IndicadoresGit => "Indicadores de git en el gutter",
+            CampoEditor::BlameEnLinea => "Git: blame en la línea del cursor",
             CampoEditor::ModoVim => "Modo VIM (hjkl, Normal/Insertar)",
             CampoEditor::ColumnaRegla => "Regla vertical (columna)",
             CampoEditor::GuardadoAutomatico => "Guardado automático",
@@ -145,6 +148,7 @@ impl CampoEditor {
             CampoEditor::AjusteLinea => "ajuste_linea",
             CampoEditor::NumerosDeLinea => "numeros_de_linea",
             CampoEditor::IndicadoresGit => "indicadores_git",
+            CampoEditor::BlameEnLinea => "blame_en_linea",
             CampoEditor::ModoVim => "modo_vim",
             CampoEditor::ColumnaRegla => "columna_regla",
             CampoEditor::GuardadoAutomatico => "guardado_automatico",
@@ -164,6 +168,7 @@ impl CampoEditor {
             CampoEditor::AjusteLinea => etiqueta_bool(config.editor.ajuste_linea),
             CampoEditor::NumerosDeLinea => etiqueta_bool(config.editor.numeros_de_linea),
             CampoEditor::IndicadoresGit => etiqueta_bool(config.editor.indicadores_git),
+            CampoEditor::BlameEnLinea => etiqueta_bool(config.editor.blame_en_linea),
             CampoEditor::ModoVim => etiqueta_bool(config.editor.modo_vim),
             CampoEditor::ColumnaRegla => {
                 config.editor.columna_regla.map(|c| c.to_string()).unwrap_or_else(|| "Apagada".to_string())
@@ -190,6 +195,7 @@ impl CampoEditor {
             CampoEditor::AjusteLinea => config.editor.ajuste_linea = !config.editor.ajuste_linea,
             CampoEditor::NumerosDeLinea => config.editor.numeros_de_linea = !config.editor.numeros_de_linea,
             CampoEditor::IndicadoresGit => config.editor.indicadores_git = !config.editor.indicadores_git,
+            CampoEditor::BlameEnLinea => config.editor.blame_en_linea = !config.editor.blame_en_linea,
             CampoEditor::ModoVim => config.editor.modo_vim = !config.editor.modo_vim,
             CampoEditor::RestaurarSesion => config.editor.restaurar_sesion = !config.editor.restaurar_sesion,
             // Un solo campo (`Option<usize>`, no un booleano + un número
