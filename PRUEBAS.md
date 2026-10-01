@@ -1207,6 +1207,18 @@ acciones rápidas), en un proyecto Cargo con
 - [ ] **Ajuste de línea.** Con el ajuste de línea prendido no se ven; al apagarlo vuelven.
 - [ ] **Sin soporte.** En un `.py` con pyright no aparece nada ni hay avisos.
 
+## Terminal integrada (BACKLOG.md P3 #26)
+
+- [ ] **Abrir.** `Ctrl+K `` (o `Ctrl+`` con protocolo Kitty): aparece un panel abajo con el título "Terminal: <shell>" y el prompt, en la carpeta del proyecto. `echo hola $((2+3)); ls` muestra `hola 5` y los archivos.
+- [ ] **Teclas a la shell.** `Ctrl+C` corta un `sleep 30`; `Ctrl+R` busca en el historial de la shell; flechas `↑`/`↓` recorren comandos; `Tab` completa; `Ctrl+K` borra hasta el final de la línea (no abre un chord de tcode).
+- [ ] **Volver al editor.** `Ctrl+Espacio` (o `Ctrl+``): el panel se oculta y lo que se escribe va al archivo. `Ctrl+K `` la vuelve a mostrar con todo lo anterior (misma shell).
+- [ ] **Pantalla completa.** `seq 1 100 | less`: se ve paginado; `q` vuelve al prompt intacto. `vim` (si está) se ve y se maneja bien, flechas incluidas.
+- [ ] **Tamaño.** Achicar o agrandar la ventana: `stty size` (o `tput cols`) da el tamaño nuevo del panel.
+- [ ] **Mouse.** `seq 1 60` y la rueda arriba sobre la terminal: se ve el historial; cualquier tecla vuelve al final. Clic en el código: el foco pasa al editor y la terminal sigue a la vista; clic en la terminal: el foco vuelve a ella.
+- [ ] **Pegar.** Copiar dos líneas de comandos de otra app y pegarlas con el foco en la terminal: quedan en el prompt sin ejecutarse solas (bash/zsh con bracketed paste).
+- [ ] **Cerrar.** `exit`: el panel desaparece y la barra dice "La terminal se cerró". Salir de tcode con la terminal abierta no deja la shell corriendo (`ps`).
+- [ ] **Windows.** En Windows Terminal y en PowerShell: abre `cmd.exe` (o lo que diga `COMSPEC`), ejecuta comandos y responde al tamaño.
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).

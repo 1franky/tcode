@@ -1,0 +1,17 @@
+[package]
+name = "tcode-terminal"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Terminal integrada de tcode: una shell en una pseudo-terminal (portable-pty) interpretada con vt100. Sin dependencias de UI."
+
+[dependencies]
+anyhow.workspace = true
+portable-pty.workspace = true
+vt100.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["sync", "macros", "rt", "time"] }

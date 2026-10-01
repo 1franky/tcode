@@ -145,6 +145,9 @@ pub struct ZonasMouse {
     /// Popup de completado o de hover del LSP, pegado al cursor: aparte
     /// de `overlay` porque puede estar abierto con la barra de búsqueda.
     pub popup: Option<ZonaOverlay>,
+    /// La pantalla de la terminal integrada (BACKLOG.md P3 #26, sin el
+    /// título), si se ve: su tamaño es el que tiene que tener la terminal.
+    pub terminal: Option<Rect>,
 }
 
 impl ZonasMouse {

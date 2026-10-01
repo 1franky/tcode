@@ -16,5 +16,6 @@ tcode-commands.workspace = true
 tcode-keymap.workspace = true
 tcode-lsp.workspace = true
 ratatui.workspace = true
+vt100.workspace = true
 anyhow.workspace = true
 pulldown-cmark.workspace = true
