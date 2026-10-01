@@ -1229,6 +1229,7 @@ acciones rápidas), en un proyecto Cargo con
 - [ ] **Tamaño.** Achicar o agrandar la ventana: `stty size` (o `tput cols`) da el tamaño nuevo del panel.
 - [ ] **Mouse.** `seq 1 60` y la rueda arriba sobre la terminal: se ve el historial; cualquier tecla vuelve al final. Clic en el código: el foco pasa al editor y la terminal sigue a la vista; clic en la terminal: el foco vuelve a ella.
 - [ ] **Pegar.** Copiar dos líneas de comandos de otra app y pegarlas con el foco en la terminal: quedan en el prompt sin ejecutarse solas (bash/zsh con bracketed paste).
+- [ ] **Varias.** Con una terminal abierta, `Ctrl+Espacio` y `Ctrl+K ~`: aparece otra (`1: zsh  [2: zsh]` en el título) con su propia shell. `Ctrl+PageUp`/`Ctrl+PageDown` (con la terminal enfocada) pasan de una a otra, cada una con lo suyo. `exit` en una cierra solo esa; la otra queda activa.
 - [ ] **Cerrar.** `exit`: el panel desaparece y la barra dice "La terminal se cerró". Salir de tcode con la terminal abierta no deja la shell corriendo (`ps`).
 - [ ] **Windows.** En Windows Terminal y en PowerShell: abre `cmd.exe` (o lo que diga `COMSPEC`), ejecuta comandos y responde al tamaño.
 

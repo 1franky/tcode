@@ -5,13 +5,15 @@
 //! `tcode_ui::panel_terminal`.
 //!
 //! Con el foco en la terminal TODAS las teclas van a la shell (`Ctrl+C`,
-//! `Ctrl+K`, `Ctrl+W`... tienen que llegarle), salvo una: `Ctrl+`` (con
+//! `Ctrl+K`, `Ctrl+W`... tienen que llegarle), salvo tres: `Ctrl+`` (con
 //! protocolo Kitty) o `Ctrl+Espacio` (lo que mandan las terminales sin él
-//! para `Ctrl+``), que oculta el panel y vuelve al editor. Un clic en el
-//! editor también le devuelve el foco, dejando la terminal a la vista.
+//! para `Ctrl+``), que oculta el panel y vuelve al editor, y
+//! `Ctrl+PageDown`/`Ctrl+PageUp`, que pasan a la terminal siguiente o
+//! anterior (como en VSCode). Un clic en el editor también le devuelve el
+//! foco, dejando la terminal a la vista.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tcode_terminal::{shell_por_defecto, SesionTerminal};
+use tcode_terminal::{shell_por_defecto, Terminales};
 use tcode_ui::Layout as PanelLayout;
 
 use crate::{EstadoApp, Foco};
@@ -22,28 +24,38 @@ const ALTO_MINIMO: u16 = 8;
 
 #[derive(Default)]
 pub struct EstadoTerminal {
-    pub sesion: Option<SesionTerminal>,
-    /// Si el panel se ve (la sesión sigue viva aunque esté oculto).
+    /// Las terminales abiertas (pestañas del panel).
+    pub terminales: Terminales,
+    /// Si el panel se ve (las shells siguen vivas aunque esté oculto).
     pub visible: bool,
 }
 
 impl EstadoTerminal {
     /// Filas del panel para una pantalla de `alto` filas (0 si no se ve).
     pub fn alto(&self, alto_pantalla: u16) -> u16 {
-        if self.visible && self.sesion.is_some() {
+        if self.visible && !self.terminales.vacia() {
             (alto_pantalla / 3).max(ALTO_MINIMO)
         } else {
             0
         }
     }
 
+    /// "Terminal: zsh", o con varias "Terminal: 1: zsh  [2: zsh]" (la
+    /// activa entre corchetes).
     pub fn titulo(&self, enfocada: bool) -> String {
-        let nombre = self.sesion.as_ref().map(|s| s.nombre.as_str()).unwrap_or("");
-        if enfocada {
-            format!("Terminal: {nombre}  (Ctrl+` o Ctrl+Espacio vuelve al editor)")
-        } else {
-            format!("Terminal: {nombre}")
-        }
+        let activa = self.terminales.indice_activa();
+        let nombres: Vec<String> = self
+            .terminales
+            .nombres()
+            .enumerate()
+            .map(|(i, n)| if self.terminales.cantidad() == 1 { n.to_string() } else if i == activa { format!("[{}: {n}]", i + 1) } else { format!("{}: {n}", i + 1) })
+            .collect();
+        let ayuda = match (enfocada, self.terminales.cantidad()) {
+            (false, _) => "",
+            (true, 1) => "  (Ctrl+` o Ctrl+Espacio vuelve al editor)",
+            (true, _) => "  (Ctrl+PageDown/PageUp cambia; Ctrl+Espacio vuelve al editor)",
+        };
+        format!("Terminal: {}{ayuda}", nombres.join("  "))
     }
 }
 
@@ -57,7 +69,7 @@ fn avisar(layout: &mut PanelLayout, texto: impl Into<String>) {
 /// oculta y vuelve al editor.
 pub fn alternar(layout: &mut PanelLayout, estado: &mut EstadoApp) {
     let terminal = &mut estado.terminal;
-    if terminal.visible && terminal.sesion.is_some() {
+    if terminal.visible && !terminal.terminales.vacia() {
         if estado.foco == Foco::Terminal {
             terminal.visible = false;
             estado.foco = Foco::Editor;
@@ -66,37 +78,61 @@ pub fn alternar(layout: &mut PanelLayout, estado: &mut EstadoApp) {
         }
         return;
     }
-    if terminal.sesion.is_none() {
-        let carpeta = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        // Un tamaño inicial cualquiera: el primer dibujo lo ajusta.
-        match SesionTerminal::lanzar(&shell_por_defecto(), &carpeta, 10, 80) {
-            Ok(sesion) => terminal.sesion = Some(sesion),
-            Err(error) => return avisar(layout, format!("Terminal: {error:#}")),
-        }
+    if terminal.terminales.vacia() {
+        return nueva(layout, estado);
     }
     terminal.visible = true;
     estado.foco = Foco::Terminal;
 }
 
-/// `terminal.cerrar`: termina la shell y oculta el panel.
-pub fn cerrar(estado: &mut EstadoApp) {
-    if let Some(mut sesion) = estado.terminal.sesion.take() {
-        sesion.cerrar();
+/// `terminal.nueva` (`Ctrl+K ~`): otra shell, en una pestaña nueva del
+/// panel, con el foco.
+pub fn nueva(layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let carpeta = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    // Un tamaño inicial cualquiera: el primer dibujo lo ajusta.
+    if let Err(error) = estado.terminal.terminales.abrir(&shell_por_defecto(), &carpeta, 10, 80) {
+        return avisar(layout, format!("Terminal: {error:#}"));
     }
+    estado.terminal.visible = true;
+    estado.foco = Foco::Terminal;
+}
+
+/// `terminal.siguiente`/`terminal.anterior`: cambia de pestaña (y la
+/// muestra, con el foco).
+pub fn cambiar(adelante: bool, estado: &mut EstadoApp) {
+    if estado.terminal.terminales.vacia() {
+        return;
+    }
+    estado.terminal.terminales.cambiar(adelante);
+    estado.terminal.visible = true;
+    estado.foco = Foco::Terminal;
+}
+
+/// `terminal.cerrar`: termina la shell activa; sin ninguna más, oculta
+/// el panel.
+pub fn cerrar(estado: &mut EstadoApp) {
+    estado.terminal.terminales.cerrar_activa();
+    if estado.terminal.terminales.vacia() {
+        ocultar(estado);
+    }
+}
+
+fn ocultar(estado: &mut EstadoApp) {
     estado.terminal.visible = false;
     if estado.foco == Foco::Terminal {
         estado.foco = Foco::Editor;
     }
 }
 
-/// La shell terminó sola (`exit`): se cierra el panel.
+/// Alguna shell terminó sola (`exit`): su pestaña ya se cerró; sin
+/// ninguna más, se oculta el panel.
 pub fn termino(layout: &mut PanelLayout, estado: &mut EstadoApp) {
-    estado.terminal.sesion = None;
-    estado.terminal.visible = false;
-    if estado.foco == Foco::Terminal {
-        estado.foco = Foco::Editor;
+    if estado.terminal.terminales.vacia() {
+        ocultar(estado);
+        avisar(layout, "La terminal se cerró");
+    } else {
+        avisar(layout, "Se cerró una terminal");
     }
-    avisar(layout, "La terminal se cerró");
 }
 
 /// Si `key` es la tecla que saca el foco de la terminal.
@@ -111,7 +147,11 @@ pub fn tecla(key: KeyEvent, layout: &mut PanelLayout, estado: &mut EstadoApp) ->
         alternar(layout, estado);
         return true;
     }
-    let Some(sesion) = &mut estado.terminal.sesion else { return false };
+    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::PageDown | KeyCode::PageUp) {
+        cambiar(key.code == KeyCode::PageDown, estado);
+        return true;
+    }
+    let Some(sesion) = estado.terminal.terminales.activa_mut() else { return false };
     if let Some(bytes) = bytes_de_tecla(&key, sesion.pantalla().application_cursor()) {
         sesion.escribir(&bytes);
     }
@@ -122,7 +162,7 @@ pub fn tecla(key: KeyEvent, layout: &mut PanelLayout, estado: &mut EstadoApp) ->
 /// línea como `Enter` y entre las marcas de bracketed paste si la shell
 /// las pidió (así no ejecuta cada línea al pegar).
 pub fn pegar(texto: &str, estado: &mut EstadoApp) {
-    let Some(sesion) = &mut estado.terminal.sesion else { return };
+    let Some(sesion) = estado.terminal.terminales.activa_mut() else { return };
     let texto = texto.replace("\r\n", "\r").replace('\n', "\r");
     if sesion.pantalla().bracketed_paste() {
         sesion.escribir(format!("\x1b[200~{texto}\x1b[201~").as_bytes());

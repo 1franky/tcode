@@ -6,16 +6,22 @@
 //!
 //! Sin nada de UI ni de teclado: `app` traduce las teclas a bytes
 //! ([`SesionTerminal::escribir`]) y `tcode-ui` dibuja
-//! [`SesionTerminal::pantalla`]. La salida de la shell la lee un hilo
-//! aparte y la manda por un canal de `tokio`, así el bucle principal la
-//! espera en su `select!` sin sondear ([`SesionTerminal::siguiente`]).
+//! [`SesionTerminal::pantalla`]. Puede haber varias a la vez
+//! ([`Terminales`], una por pestaña): la salida de cada shell la lee un
+//! hilo aparte y la manda, con el id de su sesión, por UN canal de
+//! `tokio` compartido, así el bucle principal espera a todas en su
+//! `select!` sin sondear ([`Terminales::esperar`]).
 
 use std::io::{Read, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+
+/// Lo que manda el hilo lector de una sesión: su id y lo que leyó, o
+/// `None` cuando la shell terminó.
+type Salida = (u64, Option<Vec<u8>>);
 
 /// Líneas que se guardan arriba de la pantalla para volver a verlas con
 /// la rueda.
@@ -37,7 +43,7 @@ pub struct SesionTerminal {
     escritor: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
     hijo: Box<dyn Child + Send + Sync>,
-    receptor: UnboundedReceiver<Vec<u8>>,
+    id: u64,
     /// El nombre de la shell (para el título del panel).
     pub nombre: String,
     terminada: bool,
@@ -46,7 +52,7 @@ pub struct SesionTerminal {
 impl SesionTerminal {
     /// Lanza `shell` en `carpeta` con una pantalla de `filas` x
     /// `columnas`. `TERM=xterm-256color` (lo que `vt100` interpreta).
-    pub fn lanzar(shell: &str, carpeta: &Path, filas: u16, columnas: u16) -> Result<Self> {
+    fn lanzar(shell: &str, carpeta: &Path, filas: u16, columnas: u16, id: u64, emisor: UnboundedSender<Salida>) -> Result<Self> {
         let (filas, columnas) = (filas.max(2), columnas.max(10));
         let par = native_pty_system()
             .openpty(PtySize { rows: filas, cols: columnas, pixel_width: 0, pixel_height: 0 })
@@ -61,7 +67,6 @@ impl SesionTerminal {
         drop(par.slave);
         let mut lector = par.master.try_clone_reader().context("no se pudo leer la terminal")?;
         let escritor = par.master.take_writer().context("no se pudo escribir en la terminal")?;
-        let (emisor, receptor) = unbounded_channel();
         std::thread::Builder::new()
             .name("tcode-terminal".to_string())
             .spawn(move || {
@@ -70,12 +75,13 @@ impl SesionTerminal {
                     match lector.read(&mut buffer) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
-                            if emisor.send(buffer[..n].to_vec()).is_err() {
-                                break;
+                            if emisor.send((id, Some(buffer[..n].to_vec()))).is_err() {
+                                return;
                             }
                         }
                     }
                 }
+                let _ = emisor.send((id, None));
             })
             .context("no se pudo crear el hilo de la terminal")?;
         let nombre = Path::new(shell).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -84,46 +90,10 @@ impl SesionTerminal {
             escritor,
             master: par.master,
             hijo,
-            receptor,
+            id,
             nombre,
             terminada: false,
         })
-    }
-
-    /// Espera la próxima salida de la shell y la interpreta (junto con
-    /// todo lo que ya esté esperando). `false` si la shell terminó. Para
-    /// el `select!` del bucle principal.
-    pub async fn siguiente(&mut self) -> bool {
-        match self.receptor.recv().await {
-            Some(datos) => {
-                self.procesar(&datos);
-                self.recibir_pendiente();
-                true
-            }
-            None => {
-                self.terminada = true;
-                false
-            }
-        }
-    }
-
-    /// Interpreta lo que ya llegó, sin esperar. Devuelve si hubo algo.
-    pub fn recibir_pendiente(&mut self) -> bool {
-        let mut hubo = false;
-        loop {
-            match self.receptor.try_recv() {
-                Ok(datos) => {
-                    self.procesar(&datos);
-                    hubo = true;
-                }
-                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                    self.terminada = true;
-                    break;
-                }
-                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
-            }
-        }
-        hubo
     }
 
     fn procesar(&mut self, datos: &[u8]) {
@@ -180,34 +150,159 @@ impl Drop for SesionTerminal {
     }
 }
 
+/// Las terminales abiertas (pestañas del panel) y cuál se ve.
+pub struct Terminales {
+    sesiones: Vec<SesionTerminal>,
+    activa: usize,
+    emisor: UnboundedSender<Salida>,
+    receptor: UnboundedReceiver<Salida>,
+    siguiente_id: u64,
+}
+
+impl Default for Terminales {
+    fn default() -> Self {
+        let (emisor, receptor) = unbounded_channel();
+        Self { sesiones: Vec::new(), activa: 0, emisor, receptor, siguiente_id: 1 }
+    }
+}
+
+/// Qué pasó mientras se esperaba ([`Terminales::esperar`]).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Novedades {
+    /// Cuántas shells terminaron (sus pestañas ya se cerraron).
+    pub cerradas: usize,
+}
+
+impl Terminales {
+    pub fn vacia(&self) -> bool {
+        self.sesiones.is_empty()
+    }
+
+    pub fn cantidad(&self) -> usize {
+        self.sesiones.len()
+    }
+
+    pub fn indice_activa(&self) -> usize {
+        self.activa
+    }
+
+    pub fn activa(&self) -> Option<&SesionTerminal> {
+        self.sesiones.get(self.activa)
+    }
+
+    pub fn activa_mut(&mut self) -> Option<&mut SesionTerminal> {
+        self.sesiones.get_mut(self.activa)
+    }
+
+    /// Los nombres de las shells, en orden (para las pestañas).
+    pub fn nombres(&self) -> impl Iterator<Item = &str> {
+        self.sesiones.iter().map(|s| s.nombre.as_str())
+    }
+
+    /// Lanza una shell nueva y la deja activa.
+    pub fn abrir(&mut self, shell: &str, carpeta: &Path, filas: u16, columnas: u16) -> Result<()> {
+        let id = self.siguiente_id;
+        self.siguiente_id += 1;
+        let sesion = SesionTerminal::lanzar(shell, carpeta, filas, columnas, id, self.emisor.clone())?;
+        self.sesiones.push(sesion);
+        self.activa = self.sesiones.len() - 1;
+        Ok(())
+    }
+
+    /// Activa la siguiente (`adelante`) o la anterior, dando la vuelta.
+    pub fn cambiar(&mut self, adelante: bool) {
+        let n = self.sesiones.len();
+        if n > 1 {
+            self.activa = if adelante { (self.activa + 1) % n } else { (self.activa + n - 1) % n };
+        }
+    }
+
+    /// Termina la shell activa y cierra su pestaña.
+    pub fn cerrar_activa(&mut self) {
+        if self.activa < self.sesiones.len() {
+            let mut sesion = self.sesiones.remove(self.activa);
+            sesion.cerrar();
+            self.activa = self.activa.min(self.sesiones.len().saturating_sub(1));
+        }
+    }
+
+    /// Todas toman el tamaño del panel (también las que no se ven, así al
+    /// volver a ellas ya están bien).
+    pub fn redimensionar(&mut self, filas: u16, columnas: u16) {
+        for sesion in &mut self.sesiones {
+            sesion.redimensionar(filas, columnas);
+        }
+    }
+
+    /// Espera la próxima salida de cualquier shell y la interpreta, junto
+    /// con todo lo que ya esté esperando; cierra las pestañas de las que
+    /// terminaron. Para el `select!` del bucle principal (solo con alguna
+    /// abierta: si no, no llega nada nunca).
+    pub async fn esperar(&mut self) -> Novedades {
+        let mut novedades = Novedades::default();
+        if let Some(salida) = self.receptor.recv().await {
+            self.procesar(salida, &mut novedades);
+        }
+        while let Ok(salida) = self.receptor.try_recv() {
+            self.procesar(salida, &mut novedades);
+        }
+        novedades
+    }
+
+    fn procesar(&mut self, (id, datos): Salida, novedades: &mut Novedades) {
+        let Some(i) = self.sesiones.iter().position(|s| s.id == id) else { return };
+        match datos {
+            Some(datos) => self.sesiones[i].procesar(&datos),
+            None => {
+                let mut sesion = self.sesiones.remove(i);
+                sesion.terminada = true;
+                if i < self.activa || self.activa >= self.sesiones.len() {
+                    self.activa = self.activa.saturating_sub(1);
+                }
+                novedades.cerradas += 1;
+            }
+        }
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    /// Una shell de verdad: lo que se le escribe se ejecuta y la salida
-    /// aparece en la pantalla interpretada; `exit` la termina.
+    async fn esperar_hasta(terminales: &mut Terminales, condicion: impl Fn(&Terminales) -> bool) {
+        for _ in 0..50 {
+            if condicion(terminales) {
+                return;
+            }
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(100), terminales.esperar()).await;
+        }
+    }
+
+    /// Dos shells de verdad: cada una ejecuta lo suyo y muestra su salida;
+    /// `exit` cierra solo la suya.
     #[tokio::test]
-    async fn una_shell_ejecuta_comandos_y_termina() {
+    async fn varias_shells_con_un_solo_canal() {
         let dir = std::env::temp_dir();
-        let mut sesion = SesionTerminal::lanzar("/bin/sh", &dir, 10, 40).unwrap();
-        sesion.escribir(b"echo hola$((1+2))\r");
-        let mut texto = String::new();
-        for _ in 0..50 {
-            tokio::time::timeout(std::time::Duration::from_millis(100), sesion.siguiente()).await.ok();
-            texto = sesion.pantalla().contents();
-            if texto.contains("hola3") {
-                break;
-            }
-        }
-        assert!(texto.contains("hola3"), "salida: {texto:?}");
-        sesion.redimensionar(5, 20);
-        assert_eq!(sesion.pantalla().size(), (5, 20));
-        sesion.escribir(b"exit\r");
-        for _ in 0..50 {
-            if !tokio::time::timeout(std::time::Duration::from_millis(100), sesion.siguiente()).await.unwrap_or(true) {
-                break;
-            }
-        }
-        assert!(sesion.terminada());
+        let mut terminales = Terminales::default();
+        terminales.abrir("/bin/sh", &dir, 10, 40).unwrap();
+        terminales.abrir("/bin/sh", &dir, 10, 40).unwrap();
+        assert_eq!((terminales.cantidad(), terminales.indice_activa()), (2, 1));
+        terminales.activa_mut().unwrap().escribir(b"echo segunda$((1+1))\r");
+        terminales.cambiar(true);
+        assert_eq!(terminales.indice_activa(), 0);
+        terminales.activa_mut().unwrap().escribir(b"echo primera$((0+1))\r");
+        let contiene = |t: &Terminales, i: usize, texto: &str| t.sesiones[i].pantalla().contents().contains(texto);
+        esperar_hasta(&mut terminales, |t| contiene(t, 0, "primera1") && contiene(t, 1, "segunda2")).await;
+        assert!(contiene(&terminales, 0, "primera1") && !contiene(&terminales, 0, "segunda2"));
+        assert!(contiene(&terminales, 1, "segunda2"));
+        terminales.redimensionar(5, 20);
+        assert_eq!(terminales.activa().unwrap().pantalla().size(), (5, 20));
+        // `exit` en la primera: queda la segunda, activa.
+        terminales.activa_mut().unwrap().escribir(b"exit\r");
+        esperar_hasta(&mut terminales, |t| t.cantidad() == 1).await;
+        assert_eq!(terminales.cantidad(), 1);
+        assert!(contiene(&terminales, 0, "segunda2"));
+        terminales.cerrar_activa();
+        assert!(terminales.vacia());
     }
 }
