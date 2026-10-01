@@ -12,7 +12,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use tcode_commands::EstadoListaUbicaciones;
-use tcode_lsp::EstadoCompletado;
+use tcode_lsp::{AyudaFirma, EstadoCompletado};
 
 use crate::zonas::{ZonaLista, ZonaOverlay};
 use crate::{overlay, Paleta};
@@ -25,6 +25,8 @@ const ANCHO_ETIQUETA: usize = 40;
 const ANCHO_DETALLE: usize = 30;
 /// Ancho máximo del popup de hover.
 const ANCHO_HOVER: usize = 80;
+/// Ancho máximo del popup de ayuda de firma.
+const ANCHO_FIRMA: usize = 100;
 
 /// Rectángulo de `ancho` x `alto` pegado al cursor: debajo de la fila del
 /// cursor si entra, si no arriba; corrido a la izquierda si se sale por la
@@ -145,6 +147,72 @@ pub fn dibujar_hover(
         area,
     );
     Some(ZonaOverlay { area, lista: None })
+}
+
+/// Popup de ayuda de firma (BACKLOG.md P2 #23) ARRIBA de la fila del
+/// cursor (abajo va el completado, que puede estar abierto a la vez), o
+/// abajo si arriba no entra: la firma con el parámetro activo en negrita
+/// y subrayado, "(2/3)" si hay sobrecargas, y la primera línea de su
+/// documentación. Una firma más ancha que [`ANCHO_FIRMA`] se corta
+/// dejando a la vista el parámetro activo.
+pub fn dibujar_firma(frame: &mut Frame, area_total: Rect, cursor: (u16, u16), firma: &AyudaFirma, paleta: &Paleta) {
+    let estilo_base = Style::default().bg(paleta.fondo).fg(paleta.texto);
+    let estilo_activo = estilo_base.fg(paleta.numero_linea_activo).add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+    let caracteres: Vec<char> = firma.etiqueta.chars().collect();
+    let sufijo = if firma.total > 1 { format!("  ({}/{})", firma.indice + 1, firma.total) } else { String::new() };
+    let maximo = ANCHO_FIRMA.min(area_total.width.saturating_sub(2) as usize).saturating_sub(sufijo.chars().count());
+    // Ventana de la etiqueta que se ve, con "..." donde se cortó.
+    let (mut desde, mut hasta) = (0, caracteres.len());
+    if caracteres.len() > maximo {
+        // Lugar para un "..." de cada lado; termina justo después del
+        // parámetro activo si hace falta correrse para verlo.
+        let ventana = maximo.saturating_sub(6).max(1);
+        let fin_activo = firma.parametro_activo.map(|(_, fin)| fin).unwrap_or(0);
+        desde = fin_activo.saturating_sub(ventana).min(caracteres.len() - ventana);
+        hasta = desde + ventana;
+    }
+    let tramo = |a: usize, b: usize| caracteres[a.max(desde).min(hasta)..b.max(desde).min(hasta)].iter().collect::<String>();
+    let mut spans = Vec::new();
+    if desde > 0 {
+        spans.push(Span::styled("...", estilo_base));
+    }
+    match firma.parametro_activo {
+        Some((inicio, fin)) => {
+            spans.push(Span::styled(tramo(0, inicio), estilo_base));
+            spans.push(Span::styled(tramo(inicio, fin), estilo_activo));
+            spans.push(Span::styled(tramo(fin, caracteres.len()), estilo_base));
+        }
+        None => spans.push(Span::styled(tramo(0, caracteres.len()), estilo_base)),
+    }
+    if hasta < caracteres.len() {
+        spans.push(Span::styled("...", estilo_base));
+    }
+    spans.push(Span::styled(sufijo, estilo_base.fg(paleta.numero_linea)));
+    let mut lineas = vec![Line::from(spans)];
+    if let Some(documentacion) = &firma.documentacion {
+        lineas.push(Line::styled(recortar(documentacion, ANCHO_FIRMA), estilo_base.fg(paleta.numero_linea)));
+    }
+    let ancho = lineas.iter().map(Line::width).max().unwrap_or(0) as u16 + 2;
+    let alto = lineas.len() as u16 + 2;
+    // Arriba si entra; si no, abajo (como `area_junto_al_cursor`).
+    let ancho = ancho.max(12).min(area_total.width);
+    let (columna, fila) = cursor;
+    let y = if fila >= area_total.y + alto {
+        fila - alto
+    } else if area_total.bottom().saturating_sub(fila + 1) >= alto {
+        fila + 1
+    } else {
+        return;
+    };
+    let x = columna.min(area_total.right().saturating_sub(ancho)).max(area_total.x);
+    let area = Rect { x, y, width: ancho, height: alto };
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lineas)
+            .style(estilo_base)
+            .block(Block::default().borders(Borders::ALL).border_set(crate::BORDE_ASCII).style(estilo_base)),
+        area,
+    );
 }
 
 /// Lista de ubicaciones (varias definiciones, o las referencias):

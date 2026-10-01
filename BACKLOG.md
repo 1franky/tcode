@@ -117,11 +117,11 @@ son gaps nuevos, anotadas para no redescubrirlas):
 
 ### 23. Más funciones de LSP
 
-Hecho: acciones rápidas (`textDocument/codeAction`, `Ctrl+.`/`Ctrl+K X`),
-con cambios directos o por comando del servidor (`workspace/applyEdit`).
-Falta: ayuda de firma (`signatureHelp`) e inlay hints — estos últimos
-insertan texto virtual en la vista de código, lo que toca el mapeo de
-columnas del cursor, el mouse y el ajuste de línea: evaluarlos aparte.
+Hecho: acciones rápidas (`textDocument/codeAction`, `Ctrl+.`/`Ctrl+K X`)
+y ayuda de firma (`signatureHelp`, sola al tipear `(`/`,`, o
+`Ctrl+Shift+Espacio`/`Ctrl+K ,`). Falta: inlay hints — insertan texto
+virtual en la vista de código, lo que toca el mapeo de columnas del
+cursor, el mouse y el ajuste de línea: evaluarlos aparte.
 
 ### 24. Snippets con saltos entre campos
 
