@@ -161,6 +161,14 @@ Breakpoints, paso a paso, variables — vía Debug Adapter Protocol.
 
 ## Hecho recientemente (para no reabrir por error)
 
+**2026-10-01 — Deshacer hasta el texto del disco quita el `*`:** el
+`Buffer` guarda el texto de disco (al abrir y al guardar; un `Rope`
+clonado, O(1)) y `reemplazar_rope` (deshacer/rehacer) compara contra él.
+Antes, cualquier deshacer dejaba el buffer marcado como modificado para
+siempre (y el guardado automático, los respaldos y `Ctrl+Q` lo trataban
+como cambiado). Escribir a mano el mismo texto sigue contando como cambio
+(solo deshacer/rehacer comparan).
+
 **2026-10-01 — P3 #26 Terminal integrada:** crate nuevo `tcode-terminal`
 (`portable-pty` para la PTY/ConPTY + `vt100` 0.15 para interpretar la
 salida; la 0.16 choca con el `unicode-width` que fija ratatui 0.29). La
@@ -227,8 +235,7 @@ no entra al lado del código.
   `Rope`, tras 1 s sin cambios o cada 5 s. Al arrancar, diálogo
   `Enter`/`d`/`Esc`.
 - Limitaciones: el tamaño de los splits no se guarda (tcode los reparte
-  por igual); tras recuperar y `Ctrl+Z` hasta el texto del disco, el
-  buffer sigue marcado como modificado (pasa con cualquier deshacer).
+  por igual).
 
 **2026-09-30 — todo P0 cerrado:**
 - **P0 #19 Edición básica** (PR #127): comentar/descomentar (`Ctrl+/`),

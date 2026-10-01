@@ -68,6 +68,7 @@ abajo, es donde más problemas aparecieron).
 - [ ] `Enter` inserta un salto de línea real (no rompe el archivo).
 - [ ] `Backspace`/`Delete` borran correctamente, incluida la fusión de líneas al borrar al inicio/fin de línea.
 - [ ] `Ctrl+Z`/`Ctrl+Y` (deshacer/rehacer) varias veces seguidas, en ambas direcciones.
+- [ ] Escribir algo y deshacer hasta el texto original: la marca `*` desaparece (y `Ctrl+Q` sale sin preguntar); rehacer la vuelve a poner. Guardar con cambios y deshacer más allá de lo guardado: vuelve el `*`.
 - [ ] `Ctrl+S` guarda; volver a abrir el archivo y confirmar que el contenido persistió.
 - [ ] Escribir caracteres UTF-8 (acentos, ñ, emoji) y guardar — no se corrompen.
 - [ ] Barra de estado inferior: `Ln`/`Col` correctos, cuenta total de líneas, marca `*` cuando hay cambios sin guardar.
