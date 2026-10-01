@@ -72,6 +72,10 @@ pub struct Buffer {
     rope: Rope,
     ruta: Option<PathBuf>,
     modificado: bool,
+    /// El texto tal como está en disco (al abrir o al guardar; vacío en
+    /// un buffer nuevo): deshacer o rehacer hasta él vuelve a dejar el
+    /// buffer sin cambios. Clonar un `Rope` es O(1) (comparte los nodos).
+    guardado: Rope,
     eol: Eol,
     /// Ver [`Buffer::revision`].
     revision: u64,
@@ -84,6 +88,7 @@ impl Buffer {
             rope: Rope::new(),
             ruta: None,
             modificado: false,
+            guardado: Rope::new(),
             eol: Eol::Lf,
             revision: nueva_revision(),
         }
@@ -102,8 +107,10 @@ impl Buffer {
             Eol::Crlf => contenido.replace("\r\n", "\n"),
             Eol::Lf => contenido,
         };
+        let rope = Rope::from_str(&contenido_normalizado);
         Ok(Self {
-            rope: Rope::from_str(&contenido_normalizado),
+            guardado: rope.clone(),
+            rope,
             ruta: Some(ruta.to_path_buf()),
             modificado: false,
             eol,
@@ -167,6 +174,7 @@ impl Buffer {
         }
         self.ruta = Some(ruta);
         self.modificado = false;
+        self.guardado = self.rope.clone();
         Ok(())
     }
 
@@ -186,11 +194,14 @@ impl Buffer {
         &self.rope
     }
 
-    /// Reemplaza el rope completo (usado por deshacer/rehacer). Marca el
-    /// buffer como modificado: solo `guardar`/`guardar_como` lo limpian.
+    /// Reemplaza el rope completo (usado por deshacer/rehacer). Queda
+    /// modificado salvo que el texto vuelva a ser exactamente el del disco
+    /// (deshacer todo lo escrito desde que se abrió o guardó). Comparar
+    /// recorre el texto, pero solo en deshacer/rehacer, nunca al tipear.
     pub fn reemplazar_rope(&mut self, rope: Rope) {
         self.rope = rope;
         self.marcar_cambio();
+        self.modificado = self.rope != self.guardado;
     }
 
     /// Líneas del archivo como texto plano, sin el salto de línea final,
@@ -361,6 +372,35 @@ impl Default for Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn volver_al_texto_del_disco_deja_de_estar_modificado() {
+        let mut buffer = Buffer::nuevo();
+        let vacio = buffer.rope().clone();
+        buffer.reemplazar_rango_bytes(0, 0, "hola");
+        assert!(buffer.modificado());
+        buffer.reemplazar_rope(vacio);
+        assert!(!buffer.modificado(), "un buffer nuevo que vuelve a quedar vacío");
+
+        let dir = std::env::temp_dir().join(format!("tcode-test-guardado-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ruta = dir.join("a.txt");
+        std::fs::write(&ruta, "uno\n").unwrap();
+        let mut buffer = Buffer::desde_archivo(&ruta).unwrap();
+        let original = buffer.rope().clone();
+        buffer.reemplazar_rango_bytes(0, 0, "x");
+        let con_x = buffer.rope().clone();
+        buffer.reemplazar_rope(original.clone());
+        assert!(!buffer.modificado());
+        // Guardado con la `x`: ahora el "disco" es ese texto.
+        buffer.reemplazar_rope(con_x.clone());
+        buffer.guardar().unwrap();
+        buffer.reemplazar_rope(original);
+        assert!(buffer.modificado(), "deshacer más allá de lo guardado sí es un cambio");
+        buffer.reemplazar_rope(con_x);
+        assert!(!buffer.modificado());
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     /// Escribe `contenido` en un archivo temporal y devuelve su ruta —
     /// `tempfile` no es una dependencia del crate, así que se usa
