@@ -1,7 +1,7 @@
 # Plan de pruebas manuales — tcode
 
 Checklist para probar `tcode` de punta a punta antes de liberar una nueva
-versión. Cubre todo lo implementado hasta v0.14.0: los milestones de
+versión. Cubre todo lo implementado hasta v0.15.0: los milestones de
 [PLAN.md](./PLAN.md) §11 y todo lo cerrado después en
 [BACKLOG.md](./BACKLOG.md) (ver "Hecho recientemente" ahí), con una
 sección por pieza al final del documento. Cada sección se agrega o
@@ -13,27 +13,32 @@ sección de la pieza que cambió más el bug conocido de Windows. Antes de
 mergear `develop` → `main` y taggear, conviene pasar al menos una vez por
 todo, en la plataforma donde se vaya a usar principalmente.
 
-## Qué probar en v0.14.0
+## Qué probar en v0.15.0
 
-Lo nuevo desde v0.13.0 (#144), con su sección más abajo:
+Lo nuevo desde v0.14.0 (#148 y #149), cada uno con su sección más abajo:
 
-- [Modo VIM: búsqueda, registros, macros y `Ctrl+R`](#modo-vim-búsqueda-registros-macros-y-ctrlr-backlogmd-p3-28):
-  `/`, `?`, `n`, `N`, `*`, `#`; registros `"a`-`"z`, `"A`-`"Z` y `"_`;
-  macros `q`/`@`/`@@`; `Ctrl+R` para rehacer.
+- [Inlay hints del LSP](#inlay-hints-del-lsp-backlogmd-p2-23-tercera-parte):
+  tipos y nombres de parámetros dentro del código (rust-analyzer).
+- [Terminal integrada](#terminal-integrada-backlogmd-p3-26): `Ctrl+K ``
+  (o `Ctrl+``), `Ctrl+Espacio` para volver al editor.
 
-Y, porque esas piezas tocan teclas compartidas, repasar:
+**Primero de todo**, en cada plataforma donde se instale el binario de la
+release (sobre todo **Linux**, que se compila estático con musl, y
+**Windows**, que usa ConPTY): que la terminal abra una shell y ejecute un
+comando. Es lo único de esta versión que no se pudo probar antes de
+liberar.
 
-- **Modo VIM apagado**: `/`, `?`, `n`, `*`, `#`, `q`, `@` y `"` se escriben
-  como texto; `Ctrl+R` no hace nada nuevo.
-- **La línea `:`** sigue igual (`:w`, `:q`, `:%s`...) y comparte el
-  historial con `/` y `?`.
-- **Portapapeles en VIM** (`"+yy`, `"+p` y "VIM: registro = portapapeles"):
-  sin cambios; con un registro con nombre (`"ayy`) el portapapeles no se
-  toca.
-- **Pegar mientras se graba una macro**: lo pegado desde la terminal
-  (`Cmd+V`, clic del medio: llega como pegado, no como teclas) no queda
-  en la macro; `Ctrl+V` sí (es una tecla, y al reproducir vuelve a pegar
-  lo que haya en el portapapeles en ese momento).
+Y, porque estas piezas tocan la vista de código y el teclado, repasar:
+
+- **Vista de código** con inlay hints: el cursor, la selección, la
+  búsqueda (`Ctrl+F`), los cursores múltiples y la regla vertical se ven
+  bien en una línea con hints; con ajuste de línea no hay hints y todo
+  sigue como antes.
+- **Teclado**: con la terminal oculta o sin foco, `Ctrl+Espacio` sigue
+  siendo autocompletar y `Ctrl+C`/`Ctrl+K` hacen lo de siempre en el
+  editor.
+- **Overlays**: con la terminal a la vista, la paleta (`F1`), el buscador
+  (`Ctrl+P`) y los popups del LSP se dibujan encima de ella.
 
 ## Cómo instalar la versión a probar
 
