@@ -9,6 +9,7 @@ use crate::comentarios::EstiloComentario;
 use crate::cursor::{Cursor, CursorMultiple};
 use crate::history::Historia;
 use crate::plegado::{tramo_que_oculta, Plegado, Pliegue};
+use crate::snippet::{adaptar_sangria, SesionSnippet, Snippet};
 
 /// Modo de edición actual. `tcode` es no-modal por defecto (PLAN.md §4):
 /// hasta M4 solo existía `Insertar` — la paleta de comandos (M2) y la
@@ -62,6 +63,9 @@ pub struct Editor {
     /// cada edición y cada movimiento del cursor tienen que respetarlos
     /// (desplazarlos, desplegarlos, saltar las líneas ocultas).
     plegado: Plegado,
+    /// Snippet recién insertado cuyos campos se recorren con `Tab`
+    /// (BACKLOG.md P2 #24, ver [`Editor::insertar_snippet`]).
+    snippet: Option<SesionSnippet>,
 }
 
 impl Editor {
@@ -72,6 +76,7 @@ impl Editor {
             historia: Historia::nueva(),
             modo: Modo::Insertar,
             plegado: Plegado::default(),
+            snippet: None,
         }
     }
 
@@ -82,6 +87,7 @@ impl Editor {
             historia: Historia::nueva(),
             modo: Modo::Insertar,
             plegado: Plegado::default(),
+            snippet: None,
         })
     }
 
@@ -171,6 +177,113 @@ impl Editor {
                 false
             }
         }
+    }
+
+    /// Inserta `snippet` reemplazando `rango` (bytes), como UNA edición
+    /// (un `Ctrl+Z` la deshace entera), con la sangría de la línea donde
+    /// empieza y cada `\t` del snippet convertido en `tab`. Si tiene
+    /// campos, queda el primero seleccionado (los espejos, como varios
+    /// cursores) y `Tab`/`Shift+Tab` los recorren
+    /// ([`Self::siguiente_campo`]); si no, el cursor queda en el `$0` (o
+    /// al final).
+    pub fn insertar_snippet(&mut self, rango: Range<usize>, snippet: &Snippet, tab: &str) {
+        let (linea, _) = self.buffer.linea_columna_desde_byte(rango.start);
+        let texto_linea = self.buffer.linea_texto(linea);
+        let sangria: String = texto_linea.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
+        let adaptado = adaptar_sangria(snippet, &sangria, tab);
+        self.registrar_snapshot();
+        self.snippet = None;
+        self.reemplazar_y_ajustar_pliegues(rango.clone(), &adaptado.texto);
+        let campos: Vec<Vec<Range<usize>>> = adaptado
+            .campos_en_orden()
+            .into_iter()
+            .map(|rangos| rangos.into_iter().map(|r| rango.start + r.start..rango.start + r.end).collect())
+            .collect();
+        self.snippet = Some(SesionSnippet { campos, actual: 0 });
+        self.seleccionar_campo(0);
+    }
+
+    /// Si hay un snippet con campos por recorrer y el cursor principal
+    /// sigue en el campo actual (si se fue a otro lado, el snippet ya no
+    /// se está editando: se olvida).
+    pub fn snippet_activo(&mut self) -> bool {
+        let Some(sesion) = &self.snippet else { return false };
+        let cursor = self.buffer.offset_byte(self.cursor().linea, self.cursor().columna);
+        let adentro = sesion.campos.get(sesion.actual).is_some_and(|rangos| {
+            rangos.iter().any(|r| r.start <= cursor && cursor <= r.end)
+        });
+        if !adentro {
+            self.snippet = None;
+        }
+        adentro
+    }
+
+    /// `Tab` en un snippet: el campo siguiente (saltea los que quedaron
+    /// sin rangos). Al llegar al `$0` el snippet termina. `false` si no
+    /// había snippet activo.
+    pub fn siguiente_campo(&mut self) -> bool {
+        self.mover_campo(true)
+    }
+
+    /// `Shift+Tab` en un snippet: el campo anterior (en el primero, se
+    /// queda ahí).
+    pub fn anterior_campo(&mut self) -> bool {
+        self.mover_campo(false)
+    }
+
+    pub fn terminar_snippet(&mut self) {
+        self.snippet = None;
+    }
+
+    fn mover_campo(&mut self, adelante: bool) -> bool {
+        if !self.snippet_activo() {
+            return false;
+        }
+        let Some(sesion) = &self.snippet else { return false };
+        let mut i = sesion.actual;
+        loop {
+            if adelante {
+                i += 1;
+            } else if i == 0 {
+                i = sesion.actual;
+                break;
+            } else {
+                i -= 1;
+            }
+            let ultimo = i + 1 >= sesion.campos.len();
+            if ultimo || !sesion.campos[i].is_empty() {
+                break;
+            }
+        }
+        self.seleccionar_campo(i);
+        true
+    }
+
+    /// Selecciona el campo `i` del snippet (cada rango, un cursor con su
+    /// selección). El último (`$0`) deja un solo cursor y termina el
+    /// snippet.
+    fn seleccionar_campo(&mut self, i: usize) {
+        let Some(sesion) = &mut self.snippet else { return };
+        let i = i.min(sesion.campos.len().saturating_sub(1));
+        sesion.actual = i;
+        let rangos = sesion.campos[i].clone();
+        let ultimo = i + 1 == sesion.campos.len();
+        let posicion = |b: usize, buffer: &Buffer| {
+            let (linea, columna) = buffer.linea_columna_desde_byte(b);
+            Cursor { linea, columna }
+        };
+        if ultimo || rangos.is_empty() {
+            self.snippet = None;
+            let destino = rangos.first().map(|r| r.start).unwrap_or_else(|| self.buffer.len_bytes());
+            let p = posicion(destino, &self.buffer);
+            self.cursores = vec![CursorMultiple::sin_seleccion(p)];
+        } else {
+            self.cursores = rangos
+                .iter()
+                .map(|r| CursorMultiple { ancla: posicion(r.start, &self.buffer), cursor: posicion(r.end, &self.buffer) })
+                .collect();
+        }
+        self.revelar_cursores();
     }
 
     /// Abre un grupo de deshacer (ver `Historia::abrir_grupo`): todas las
@@ -298,6 +411,9 @@ impl Editor {
     /// pasan por acá (salvo deshacer/rehacer, que reemplazan el rope
     /// entero — ver `ajustar_pliegues_tras_reemplazo_de_rope`).
     fn reemplazar_y_ajustar_pliegues(&mut self, rango: Range<usize>, reemplazo: &str) {
+        if let Some(sesion) = &mut self.snippet {
+            sesion.ajustar(rango.start, rango.end, reemplazo.len());
+        }
         if self.plegado.esta_vacio() {
             self.buffer.reemplazar_rango_bytes(rango.start, rango.end, reemplazo);
             return;
@@ -868,6 +984,7 @@ impl Editor {
             }
             self.buffer.reemplazar_rango_bytes(inicio, fin, &nuevo);
             self.plegado.intercambiar(primero.clone(), segundo.clone());
+            self.snippet = None;
         }
 
         for c in &mut self.cursores {
@@ -1096,6 +1213,7 @@ impl Editor {
     }
 
     pub fn deshacer(&mut self) {
+        self.snippet = None;
         if let Some((rope, mut cursores)) = self.historia.deshacer(self.buffer.rope(), &self.cursores) {
             let anterior = self.buffer.rope().clone();
             self.buffer.reemplazar_rope(rope);
@@ -1109,6 +1227,7 @@ impl Editor {
     }
 
     pub fn rehacer(&mut self) {
+        self.snippet = None;
         if let Some((rope, mut cursores)) = self.historia.rehacer(self.buffer.rope(), &self.cursores) {
             let anterior = self.buffer.rope().clone();
             self.buffer.reemplazar_rope(rope);
@@ -1899,6 +2018,60 @@ mod tests {
         // El único paso de deshacer sigue siendo el `insertar_texto`.
         editor.deshacer();
         assert_eq!(editor.buffer().a_texto(), "");
+    }
+
+    /// Inserta `fuente` en el cursor de `editor` (sin variables).
+    fn con_snippet(texto: &str, linea: usize, columna: usize, fuente: &str) -> Editor {
+        let mut editor = editor_con_cursor(texto, linea, columna);
+        let cursor = editor.buffer().offset_byte(linea, columna);
+        editor.insertar_snippet(cursor..cursor, &crate::snippet::parsear(fuente, |_| None), "    ");
+        editor
+    }
+
+    #[test]
+    fn snippet_recorre_campos_y_termina_en_cero() {
+        let mut editor = con_snippet("", 0, 0, "fn ${1:nombre}(${2:a}) {\n\t$0\n}");
+        assert_eq!(editor.buffer().a_texto(), "fn nombre(a) {\n    \n}");
+        // El primer campo queda seleccionado: escribir lo reemplaza.
+        escribir(&mut editor, "sumar");
+        assert!(editor.siguiente_campo());
+        escribir(&mut editor, "x: i32");
+        assert!(editor.siguiente_campo());
+        assert_eq!(editor.buffer().a_texto(), "fn sumar(x: i32) {\n    \n}");
+        // Quedó en el `$0` y el snippet terminó: Tab ya no es del snippet.
+        assert_eq!((editor.cursor().linea, editor.cursor().columna), (1, 4));
+        assert!(!editor.snippet_activo());
+        assert!(!editor.siguiente_campo());
+    }
+
+    #[test]
+    fn snippet_con_espejos_sangria_y_un_solo_deshacer() {
+        let mut editor = con_snippet("    \n", 0, 4, "let ${1:x} = 1;\nprint($1);$0");
+        assert_eq!(editor.buffer().a_texto(), "    let x = 1;\n    print(x);\n");
+        assert_eq!(editor.cursores().len(), 2, "el espejo es un segundo cursor");
+        escribir(&mut editor, "total");
+        assert_eq!(editor.buffer().a_texto(), "    let total = 1;\n    print(total);\n");
+        // Shift+Tab en el primer campo se queda ahí.
+        assert!(editor.anterior_campo());
+        assert_eq!(editor.cursores().len(), 2);
+        // Deshacer termina el snippet.
+        editor.deshacer();
+        assert!(!editor.snippet_activo());
+        // Recién insertado, un solo `Ctrl+Z` lo saca entero.
+        let mut editor = con_snippet("    \n", 0, 4, "let ${1:x} = 1;\nprint($1);$0");
+        editor.deshacer();
+        assert_eq!(editor.buffer().a_texto(), "    \n");
+    }
+
+    #[test]
+    fn snippet_sin_campos_deja_el_cursor_al_final_y_salir_lo_termina() {
+        let mut editor = con_snippet("", 0, 0, "hola()");
+        assert_eq!((editor.cursor().columna, editor.snippet_activo()), (6, false));
+        // Con campos, mover el cursor fuera del campo actual lo termina.
+        let mut editor = con_snippet("", 0, 0, "f(${1:a}, ${2:b})");
+        editor.inicio_archivo();
+        assert!(!editor.snippet_activo());
+        assert!(!editor.siguiente_campo());
     }
 
     fn editor_con(texto: &str) -> Editor {

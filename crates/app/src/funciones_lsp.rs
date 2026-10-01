@@ -591,9 +591,24 @@ fn aceptar_completado(layout: &mut PanelLayout, estado: &mut EstadoApp) {
         .filter(|(rango, _)| rango.end <= principal.start)
         .map(|(rango, texto)| texto.len() as isize - rango.len() as isize)
         .sum();
-    editor.aplicar_ediciones(&ediciones);
-    let fin = (principal.start as isize + corrimiento) as usize + item.insertar.len();
-    editor.mover_cursor_a_byte(fin.min(editor.buffer().len_bytes()));
+    let Some(fuente) = &item.snippet else {
+        editor.aplicar_ediciones(&ediciones);
+        let fin = (principal.start as isize + corrimiento) as usize + item.insertar.len();
+        editor.mover_cursor_a_byte(fin.min(editor.buffer().len_bytes()));
+        return;
+    };
+    // Un snippet (BACKLOG.md P2 #24): primero las ediciones adicionales
+    // (un `import`), después el principal con sus campos — todo en un
+    // solo paso de deshacer.
+    let ruta = layout.panel_activo().ruta_mostrada.clone();
+    let tab = crate::snippets::tab(&estado.config);
+    let editor = layout.editor_activo_mut();
+    let snippet = tcode_core::parsear_snippet(fuente, |nombre| crate::snippets::variable(editor, &ruta, nombre));
+    editor.abrir_grupo_deshacer();
+    editor.aplicar_ediciones(&ediciones[1..]);
+    let correr = |p: usize| (p as isize + corrimiento).max(0) as usize;
+    editor.insertar_snippet(correr(principal.start)..correr(principal.end), &snippet, &tab);
+    editor.cerrar_grupo_deshacer();
 }
 
 /// Las ediciones (en bytes del buffer actual) de aceptar `item`: la
@@ -1052,6 +1067,7 @@ mod tests {
             insertar: insertar.to_string(),
             rango,
             adicionales,
+            snippet: None,
         }
     }
 

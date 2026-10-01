@@ -1140,6 +1140,18 @@ En el mismo repo de la sección anterior.
 - [ ] **No tapa código.** En una línea casi tan larga como la ventana, la anotación no aparece (o se corta con `...`).
 - [ ] **Apagar.** `Ctrl+K Ctrl+G` otra vez la saca; al reabrir `tcode` queda como se dejó (`blame_en_linea` en `config.toml`). Fuera de un repo no aparece nada.
 
+## Snippets con saltos entre campos (BACKLOG.md P2 #24)
+
+Con `HOME` temporal y un `snippets/python.toml` en la carpeta de config:
+`prefijo = "def"`, `cuerpo = "def ${1:nombre}(${2:args}):\n\t\"\"\"${3:Doc de $1.}\"\"\"\n\t$0"`.
+
+- [ ] **Expandir.** En un `.py`, dentro de una clase (línea con sangría), escribir `def` + `Tab`: aparece la función con la sangría de la clase, `nombre` seleccionado y la barra dice "2 cursores" (el espejo del docstring).
+- [ ] **Campos.** Escribir `sumar`: cambia también en el docstring. `Tab` selecciona `args`, `Tab` el docstring, `Tab` deja el cursor en la línea del cuerpo, indentado. Otro `Tab` ya indenta.
+- [ ] **Shift+Tab / Esc.** Con un campo seleccionado, `Shift+Tab` vuelve al anterior; `Esc` termina el snippet (el siguiente `Tab` indenta).
+- [ ] **Borde de palabra.** `confdef` + `Tab` no expande (indenta). En un `.txt` (sin `global.toml`), `def` + `Tab` indenta.
+- [ ] **Recargar.** Agregar un snippet al archivo y `Ctrl+K Ctrl+L`: el nuevo prefijo ya expande.
+- [ ] **LSP.** Con rust-analyzer, completar una función con argumentos (`sum` → `sumar(…)` + `Tab`): queda `sumar(primero, segundo)` con `primero` seleccionado; escribir, `Tab`, escribir, `Tab` deja el cursor después del `)`. Un `Ctrl+Z` después de aceptar (sin escribir) vuelve a `sum`.
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).
