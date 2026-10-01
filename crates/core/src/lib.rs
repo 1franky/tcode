@@ -33,7 +33,7 @@ pub use estado_busqueda::{CampoBusqueda, EstadoBusqueda};
 pub use estado_csv::EstadoCsv;
 pub use estado_guardar_como::EstadoGuardarComo;
 pub use estado_ir_a_linea::{interpretar_ir_a_linea, EstadoIrALinea};
-pub use estado_vim::EstadoVim;
+pub use estado_vim::{BusquedaPatron, EstadoVim};
 pub use vim::EstadoLineaComando;
 pub use history::Historia;
 pub use snippet::{adaptar_sangria, parsear as parsear_snippet, SesionSnippet, Snippet};

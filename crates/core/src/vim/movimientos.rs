@@ -371,7 +371,10 @@ pub fn calcular(lector: &mut Lector, desde: Cursor, m: Movimiento, veces: usize,
             Cursor { linea, columna: lector.primer_no_blanco(linea) }
         }
         Movimiento::BuscarCaracter(b) => buscar_caracter(lector, desde, b, veces, false)?,
-        Movimiento::RepetirBusqueda { .. } => return None,
+        // Los resuelve el ejecutor, que tiene la búsqueda guardada.
+        Movimiento::RepetirBusqueda { .. } | Movimiento::BuscarPatron { .. } | Movimiento::BuscarPalabra { .. } => {
+            return None
+        }
         Movimiento::ParejaCorchete => pareja_corchete(lector, desde)?,
         Movimiento::ParrafoSiguiente => parrafo(lector, desde, true, veces),
         Movimiento::ParrafoAnterior => parrafo(lector, desde, false, veces),

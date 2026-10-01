@@ -445,6 +445,8 @@ struct EstadoApp {
     /// panel (ver `tcode_core::EstadoVim`). Sin efecto mientras ningún
     /// `Editor` llegue a `Modo::Normal`.
     vim: EstadoVim,
+    /// Macros de VIM (`q`/`@`, BACKLOG.md P3 #28, ver `vim::Macros`).
+    macros: vim::Macros,
     /// Visor de logs de stderr de la sesión LSP activa (`Ctrl+K R`,
     /// PLAN.md §5.3).
     logs_lsp: EstadoLogsLsp,
@@ -601,6 +603,7 @@ async fn ejecutar(
         lsp: lsp::EstadoLsp::nuevo(),
         funciones_lsp: Default::default(),
         vim: EstadoVim::nuevo(),
+        macros: Default::default(),
         logs_lsp: EstadoLogsLsp::nuevo(),
         prompt_explorador: EstadoPromptExplorador::nuevo(),
         confirmar_borrado: EstadoConfirmarBorrado::nuevo(),
@@ -796,6 +799,8 @@ async fn ejecutar(
         let firma_antes = firma_estructural(layout, &estado);
         let completado_programado = estado.funciones_lsp.completado_programado;
 
+        // Las teclas de un pegado o de una macro no se graban en otra macro.
+        let sintetica = !teclas_sinteticas.is_empty();
         let evento = match teclas_sinteticas.pop_front() {
             Some(key) => Event::Key(key),
             None => tokio::select! {
@@ -902,6 +907,14 @@ async fn ejecutar(
         // al guardar") dura hasta la próxima tecla.
         layout.panel_activo_mut().mensaje_estado = None;
         estado.cierre_armado = estado.cierre_pedido.take();
+        // Macros de VIM (BACKLOG.md P3 #28): se graba cada tecla real; el
+        // aviso "grabando" queda a la vista mientras dure.
+        if !sintetica {
+            estado.macros.tecla_real(key);
+        }
+        if let Some(registro) = estado.macros.grabando() {
+            layout.panel_activo_mut().mensaje_estado = Some(format!("grabando @{registro}"));
+        }
 
         // Diálogo de recuperación (BACKLOG.md P2 #21): antes que todo,
         // captura el teclado hasta que se decida. `Enter` recupera, `d`
@@ -1530,6 +1543,22 @@ async fn ejecutar(
             let manejada = match key.code {
                 KeyCode::Esc => {
                     vim::cancelar(layout, &mut estado.vim);
+                    true
+                }
+                // `Ctrl+R`: rehacer (BACKLOG.md P3 #28).
+                KeyCode::Char('r') if key.modifiers == KeyModifiers::CONTROL => {
+                    tcode_core::vim::rehacer(layout.editor_activo_mut(), &mut estado.vim);
+                    true
+                }
+                KeyCode::Char(c)
+                    if sin_modificadores(key)
+                        && estado.macros.tecla(c, &mut estado.vim, &mut teclas_sinteticas).is_some_and(|aviso| {
+                            if aviso.is_some() {
+                                layout.panel_activo_mut().mensaje_estado = aviso;
+                            }
+                            true
+                        }) =>
+                {
                     true
                 }
                 KeyCode::Char(c) if sin_modificadores(key) => {

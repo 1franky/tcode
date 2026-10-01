@@ -40,6 +40,11 @@ pub enum Movimiento {
     ParrafoSiguiente,
     /// `{`
     ParrafoAnterior,
+    /// `n` (`inversa: false`) y `N`: la última búsqueda `/`/`?`/`*`/`#`,
+    /// en su dirección o en la contraria (BACKLOG.md P3 #28).
+    BuscarPatron { inversa: bool },
+    /// `*` (`atras: false`) y `#`: la palabra bajo el cursor, entera.
+    BuscarPalabra { atras: bool },
 }
 
 /// `f{c}`/`t{c}`/`F{c}`/`T{c}`: `hasta` es `t`/`T` (se detiene un
@@ -176,6 +181,10 @@ pub enum Accion {
     LineaComando,
     /// `o` en modo Visual: intercambia ancla y cursor.
     IntercambiarExtremos,
+    /// `/` (`atras: false`) y `?`: abre el prompt de búsqueda.
+    Buscar { atras: bool },
+    /// `Ctrl+R` (no sale de una tecla suelta: lo manda `app`).
+    Rehacer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,6 +232,8 @@ impl Comando {
                     | Accion::VisualLinea
                     | Accion::LineaComando
                     | Accion::IntercambiarExtremos
+                    | Accion::Buscar { .. }
+                    | Accion::Rehacer
             ),
             _ => false,
         }
@@ -293,6 +304,10 @@ fn leer_movimiento(teclas: &[char]) -> LecturaMovimiento {
         '%' => Some(Movimiento::ParejaCorchete),
         '}' => Some(Movimiento::ParrafoSiguiente),
         '{' => Some(Movimiento::ParrafoAnterior),
+        'n' => Some(Movimiento::BuscarPatron { inversa: false }),
+        'N' => Some(Movimiento::BuscarPatron { inversa: true }),
+        '*' => Some(Movimiento::BuscarPalabra { atras: false }),
+        '#' => Some(Movimiento::BuscarPalabra { atras: true }),
         _ => None,
     };
     if let Some(m) = simple {
@@ -358,6 +373,8 @@ pub fn analizar(teclas: &[char], visual: bool) -> Analisis {
                 'o' => Some(TipoComando::Accion(Accion::IntercambiarExtremos)),
                 'v' => Some(TipoComando::Accion(Accion::Visual)),
                 'V' => Some(TipoComando::Accion(Accion::VisualLinea)),
+                '/' => Some(TipoComando::Accion(Accion::Buscar { atras: false })),
+                '?' => Some(TipoComando::Accion(Accion::Buscar { atras: true })),
                 _ => None,
             };
             if let Some(tipo) = tipo {
@@ -432,6 +449,8 @@ pub fn analizar(teclas: &[char], visual: bool) -> Analisis {
             'v' => Some(Accion::Visual),
             'V' => Some(Accion::VisualLinea),
             ':' => Some(Accion::LineaComando),
+            '/' => Some(Accion::Buscar { atras: false }),
+            '?' => Some(Accion::Buscar { atras: true }),
             _ => None,
         };
         if let Some(a) = accion {

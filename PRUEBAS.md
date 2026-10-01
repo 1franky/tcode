@@ -1180,6 +1180,19 @@ Con `HOME` temporal y un `snippets/python.toml` en la carpeta de config:
 - [ ] **Recargar.** Agregar un snippet al archivo y `Ctrl+K Ctrl+L`: el nuevo prefijo ya expande.
 - [ ] **LSP.** Con rust-analyzer, completar una función con argumentos (`sum` → `sumar(…)` + `Tab`): queda `sumar(primero, segundo)` con `primero` seleccionado; escribir, `Tab`, escribir, `Tab` deja el cursor después del `)`. Un `Ctrl+Z` después de aceptar (sin escribir) vuelve a `sum`.
 
+## Modo VIM: búsqueda, registros, macros y `Ctrl+R` (BACKLOG.md P3 #28)
+
+Con el modo VIM prendido y un archivo con varias líneas que tengan `foo`
+(una con `Foo`).
+
+- [ ] **Buscar.** `/foo` + `Enter` va a la primera coincidencia después del cursor (también a `Foo`: sin mayúsculas no distingue). `n` la siguiente, `N` la anterior; desde la última, `n` vuelve a la primera y la barra avisa. `/Foo` solo encuentra `Foo`. `?foo` busca hacia atrás. `/` + `Enter` vacío repite la última. `/(` (regex inválido) busca el paréntesis literal. `/zzz`: "Patrón no encontrado".
+- [ ] **Palabra.** Sobre una palabra, `*` va a la siguiente aparición entera (no dentro de otra palabra) y `#` a la anterior. En una línea vacía avisa.
+- [ ] **Como movimiento.** `3n` salta tres; `dn` borra hasta la siguiente coincidencia; en Visual (`v`), `n` extiende la selección.
+- [ ] **Registros.** `"ayy` en una línea, `"byy` en otra, ir al final: `"ap` y `"bp` pegan cada una. `"Ayy` en una tercera y `"ap` pega las dos líneas. `"_dd` borra la línea y después `p` pega lo de antes (no la borrada). `"1yy` avisa que el registro no se soporta.
+- [ ] **Macros.** `qa` (la barra dice "grabando @a"), `A!` `Esc` `j`, `q` ("Macro @a grabada"). `2@a` agrega `!` a las dos líneas siguientes; `@@` a una más. Una macro que hace `@` de sí misma se corta con aviso, sin colgar.
+- [ ] **Rehacer.** Tres cambios, `uuu`, `Ctrl+R` rehace uno; `2` + `Ctrl+R` dos más. En Insertar, `Ctrl+R` no hace nada de esto.
+- [ ] **Sin modo VIM.** Con el modo apagado, `/`, `n`, `q`, `@`, `"` se escriben como texto.
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).

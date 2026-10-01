@@ -160,6 +160,8 @@ pub fn ediciones_de_sustitucion(
 #[derive(Debug, Clone, Default)]
 pub struct EstadoLineaComando {
     activa: bool,
+    /// `:`, o `/`/`?` para el prompt de búsqueda (BACKLOG.md P3 #28).
+    prefijo: Option<char>,
     texto: String,
     historial: Vec<String>,
     /// Posición en el historial mientras se navega con `↑`/`↓` (`None` =
@@ -179,7 +181,19 @@ impl EstadoLineaComando {
         &self.texto
     }
 
+    /// El carácter que se muestra delante de lo escrito.
+    pub fn prefijo(&self) -> char {
+        self.prefijo.unwrap_or(':')
+    }
+
+    /// Abre el prompt de búsqueda (`/` o `?`) en vez del de comandos.
+    pub fn abrir_con_prefijo(&mut self, prefijo: char) {
+        self.abrir();
+        self.prefijo = Some(prefijo);
+    }
+
     pub fn abrir(&mut self) {
+        self.prefijo = None;
         self.activa = true;
         self.texto.clear();
         self.posicion = None;
