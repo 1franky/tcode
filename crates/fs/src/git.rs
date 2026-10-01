@@ -245,6 +245,73 @@ pub fn calcular_marcas(base: &str, actual: &str) -> Vec<Option<MarcaGit>> {
     marcas
 }
 
+/// Un bloque de cambios respecto de `HEAD` (BACKLOG.md P2 #25): qué
+/// líneas de la base se reemplazaron por cuáles del texto actual, con los
+/// rangos de BYTES de cada lado para poder mostrarlo o revertirlo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BloqueGit {
+    /// Líneas del texto actual (`actual_inicio..actual_fin`; vacío en un
+    /// bloque solo de líneas borradas).
+    pub actual_inicio: usize,
+    pub actual_fin: usize,
+    /// La línea del texto actual donde se ve la marca del gutter: el
+    /// inicio, o — para un bloque solo de borradas — la línea de la marca
+    /// `Borrada` (la de después del hueco, o la última).
+    pub linea_marca: usize,
+    /// Bytes del texto actual y de la base que ocupa el bloque: revertir
+    /// es reemplazar `bytes_actual` del buffer por `base[bytes_base]`.
+    pub bytes_actual: std::ops::Range<usize>,
+    pub bytes_base: std::ops::Range<usize>,
+}
+
+impl BloqueGit {
+    /// Si la línea `linea` del texto actual es parte del bloque (o es la
+    /// de su marca, si es solo de borradas).
+    pub fn contiene(&self, linea: usize) -> bool {
+        (self.actual_inicio..self.actual_fin).contains(&linea) || linea == self.linea_marca
+    }
+}
+
+/// Byte donde empieza cada línea de `texto` (según [`lineas_de`]), más
+/// el largo del texto al final: la línea `i` ocupa `inicios[i]..inicios[i
+/// + 1]`, incluido su `\n`.
+fn inicios_de_linea(texto: &str) -> Vec<usize> {
+    let mut inicios = vec![0];
+    inicios.extend(texto.match_indices('\n').map(|(i, _)| i + 1).filter(|&i| i < texto.len()));
+    if texto.is_empty() {
+        inicios.clear();
+    }
+    inicios.push(texto.len());
+    inicios
+}
+
+/// Los bloques de cambios de `actual` respecto de `base`, en orden (el
+/// mismo diff que [`calcular_marcas`]).
+pub fn bloques_git(base: &str, actual: &str) -> Vec<BloqueGit> {
+    let a = lineas_de(base);
+    let b = lineas_de(actual);
+    let prefijo = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let sufijo =
+        a[prefijo..].iter().rev().zip(b[prefijo..].iter().rev()).take_while(|(x, y)| x == y).count();
+    let (inicios_a, inicios_b) = (inicios_de_linea(base), inicios_de_linea(actual));
+    let byte = |inicios: &[usize], linea: usize| inicios[linea.min(inicios.len() - 1)];
+    hunks(&a[prefijo..a.len() - sufijo], &b[prefijo..b.len() - sufijo])
+        .into_iter()
+        .map(|h| {
+            let (base_inicio, base_fin) = (prefijo + h.base_inicio, prefijo + h.base_fin);
+            let (actual_inicio, actual_fin) = (prefijo + h.actual_inicio, prefijo + h.actual_fin);
+            let linea_marca = if actual_inicio < b.len() { actual_inicio } else { actual_inicio.saturating_sub(1) };
+            BloqueGit {
+                actual_inicio,
+                actual_fin,
+                linea_marca,
+                bytes_actual: byte(&inicios_b, actual_inicio)..byte(&inicios_b, actual_fin),
+                bytes_base: byte(&inicios_a, base_inicio)..byte(&inicios_a, base_fin),
+            }
+        })
+        .collect()
+}
+
 /// Un tramo contiguo de diferencias: las líneas `base_inicio..base_fin`
 /// de la base se reemplazan por `actual_inicio..actual_fin` del texto
 /// actual (cualquiera de los dos rangos puede estar vacío).
@@ -592,6 +659,11 @@ impl DiffGit {
             || self.enviado != self.recibido
     }
 
+    /// El contenido del archivo en `HEAD`, si ya se leyó y está trackeado.
+    pub fn base(&self) -> Option<&str> {
+        self.base.as_deref()
+    }
+
     /// Si el documento tiene base (está trackeado en `HEAD`): recién ahí
     /// tiene sentido reservarle una columna en el gutter.
     pub fn tiene_base(&self) -> bool {
@@ -639,6 +711,48 @@ fn igual_a_trozos<'a>(texto: &str, trozos: impl Iterator<Item = &'a str>) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Aplica la reversión de cada bloque (de atrás para adelante, para
+    /// que los rangos de los anteriores sigan valiendo).
+    fn revertir_todo(base: &str, actual: &str) -> String {
+        let mut texto = actual.to_string();
+        for bloque in bloques_git(base, actual).iter().rev() {
+            texto.replace_range(bloque.bytes_actual.clone(), &base[bloque.bytes_base.clone()]);
+        }
+        texto
+    }
+
+    #[test]
+    fn bloques_de_cada_tipo_y_revertirlos_vuelve_a_la_base() {
+        let base = "uno\ndos\ntres\ncuatro\ncinco\n";
+        // Modificada "dos", agregada después de "tres", borrada "cinco".
+        let actual = "uno\nDOS\ntres\nnueva\ncuatro\n";
+        let bloques = bloques_git(base, actual);
+        let resumen: Vec<_> = bloques.iter().map(|b| (b.actual_inicio, b.actual_fin, b.linea_marca)).collect();
+        assert_eq!(resumen, [(1, 2, 1), (3, 4, 3), (5, 5, 4)]);
+        assert_eq!(&actual[bloques[0].bytes_actual.clone()], "DOS\n");
+        assert_eq!(&base[bloques[0].bytes_base.clone()], "dos\n");
+        assert_eq!(&base[bloques[1].bytes_base.clone()], "");
+        assert_eq!(&base[bloques[2].bytes_base.clone()], "cinco\n");
+        // La marca de la borrada al final cae en la última línea.
+        assert!(bloques[2].contiene(4) && !bloques[2].contiene(3));
+        assert_eq!(revertir_todo(base, actual), base);
+    }
+
+    #[test]
+    fn revertir_respeta_el_salto_final_y_los_extremos() {
+        for (base, actual) in [
+            ("a\nb", "a\nx"),
+            ("a\nb\nc\n", "a\n"),
+            ("a\n", "x\ny\na\n"),
+            ("", "nuevo\n"),
+            ("viejo\n", ""),
+            ("a\nb\n", "a\nb\n"),
+        ] {
+            assert_eq!(revertir_todo(base, actual), base, "{base:?} <- {actual:?}");
+        }
+        assert!(bloques_git("igual\n", "igual\n").is_empty());
+    }
 
     use MarcaGit::{Agregada, Borrada, Modificada};
 

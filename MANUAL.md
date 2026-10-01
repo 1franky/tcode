@@ -22,6 +22,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Vistas especiales: Markdown y CSV](#vistas-especiales-markdown-y-csv)
 - [Temas](#temas)
 - [Panel de administración](#panel-de-administración)
+- [Git](#git)
 - [LSP: autocompletado y diagnósticos](#lsp-autocompletado-y-diagnósticos)
 - [Personalizar atajos](#personalizar-atajos)
 - [Dónde vive la configuración](#dónde-vive-la-configuración)
@@ -864,6 +865,30 @@ motivo aparece en la barra de estado como `ERROR: ...` y los cambios
 siguen en el editor; se reintenta en el próximo guardado. En
 `config.toml`: `guardado_automatico = "nunca" | "al_perder_foco" |
 "cada_n_segundos"` y `segundos_guardado_automatico = 30` bajo `[editor]`.
+
+## Git
+
+Si el archivo está en un repo de git y trackeado, el gutter marca en vivo
+las líneas respecto de `HEAD`: `+` agregada, `~` modificada, `-` líneas
+borradas justo antes (se apaga en `Ctrl+,` → Editor → "Indicadores de git
+en el gutter"). Sobre esas marcas:
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+K Ctrl+V` | **Ver el cambio** del bloque del cursor: las líneas como están en `HEAD` (`-`) y como quedaron (`+`). Cualquier tecla lo cierra. |
+| `Ctrl+K Ctrl+R` | **Revertir** el bloque del cursor a como está en `HEAD`. Es una edición más: `Ctrl+Z` la deshace, y no se guarda sola. |
+| `Alt+F5` / `Shift+Alt+F5` (o `Ctrl+K Ctrl+N` / `Ctrl+K Ctrl+B`) | Ir al **cambio siguiente / anterior** (da la vuelta al llegar al final). |
+| `Ctrl+K Ctrl+G` | Prende/apaga el **blame en línea**: al final de la línea del cursor, atenuado, quién la cambió por última vez, hace cuánto y el mensaje del commit ("Sin commitear" si es un cambio tuyo). Queda guardado (`Ctrl+,` → Editor → "Git: blame en la línea del cursor"). |
+
+El blame aparece cuando el cursor se queda quieto un momento en una
+línea (moverse con las flechas no lanza un `git blame` por tecla), tiene
+en cuenta los cambios sin guardar, y no se muestra si no entra al lado
+del código.
+
+Un bloque de líneas borradas se ve y se revierte desde la línea de su
+marca `-`. Todo compara con `HEAD`, no con el índice (lo que está en
+`git add` cuenta como cambio). En un archivo sin commitear o fuera de un
+repo, los comandos avisan que no hay base.
 
 ## LSP: autocompletado y diagnósticos
 
