@@ -1,24 +1,52 @@
 # Plan de pruebas manuales — tcode
 
 Checklist para probar `tcode` de punta a punta antes de liberar una nueva
-versión. Cubre todo lo implementado hasta la fecha: M0-M4 completos y
-liberados, más piezas post-M4 (Guardar como, LSP robusto, ajuste de
-línea, manual de uso, fixes de Windows, salto rápido del explorador,
-scroll horizontal en CSV, modo VIM opcional, tema de alto contraste —
-ver [PLAN.md](./PLAN.md) §11 para el detalle de cada milestone). Cada
-sección se va agregando/actualizando pieza por pieza, a medida que se
-mergea a `develop` — no es un documento que se escribe una sola vez.
+versión. Cubre todo lo implementado hasta v0.13.0: los milestones de
+[PLAN.md](./PLAN.md) §11 y todo lo cerrado después en
+[BACKLOG.md](./BACKLOG.md) (ver "Hecho recientemente" ahí), con una
+sección por pieza al final del documento. Cada sección se agrega o
+actualiza a medida que su pieza se mergea a `develop`: no es un documento
+que se escribe una sola vez.
 
 No hace falta correrlo entero en cada versión — como mínimo, correr la
 sección de la pieza que cambió más el bug conocido de Windows. Antes de
 mergear `develop` → `main` y taggear, conviene pasar al menos una vez por
 todo, en la plataforma donde se vaya a usar principalmente.
 
+## Qué probar en v0.13.0
+
+Lo nuevo desde v0.12.0 (#137 y #138), cada uno con su sección más abajo:
+
+- [Bloques de cambios de git](#bloques-de-cambios-de-git-backlogmd-p2-25-primera-parte):
+  ver, revertir y recorrer los cambios respecto de `HEAD`.
+- [Blame en línea](#blame-en-línea-backlogmd-p2-25-segunda-parte).
+- [Snippets con saltos entre campos](#snippets-con-saltos-entre-campos-backlogmd-p2-24):
+  propios por lenguaje y los del autocompletado del LSP.
+
+Y, porque esas piezas tocan teclas y vistas compartidas, repasar:
+
+- **`Tab` / `Shift+Tab` / `Esc`**: con la lista de autocompletado abierta,
+  `Tab` acepta; sin lista ni snippet, indenta; en la tabla de un CSV,
+  salta de celda; en modo VIM (Normal), `Esc` sigue funcionando como
+  siempre.
+- **Vista de código**: con el blame prendido, la línea del cursor con un
+  diagnóstico sigue subrayada (el texto del blame no), y el ajuste de
+  línea, la regla vertical y el mouse se comportan igual que antes.
+- **Popups**: "ver cambio" de git, hover, ayuda de firma y completado no
+  quedan abiertos a la vez de forma rara; un clic los cierra.
+
 ## Cómo instalar la versión a probar
 
 - **Linux/macOS**: `curl -fsSL https://raw.githubusercontent.com/1franky/tcode/main/install/linux.sh | bash`
 - **Windows**: `irm https://raw.githubusercontent.com/1franky/tcode/main/install/windows.ps1 | iex`
 - **Desde código fuente** (para probar `develop` antes de liberar): `cargo build --release` y usar `target/release/tcode`.
+
+**Sesión guardada:** desde v0.12.0, `tcode` sin argumentos restaura las
+pestañas de la última vez en esa carpeta. Las pruebas que esperan
+arrancar con un "[Sin nombre]" vacío asumen una carpeta sin sesión
+guardada: usar `HOME` apuntando a una carpeta temporal (lo que además deja
+intacta la config real), o apagar `Ctrl+,` → Editor → "Restaurar la
+sesión anterior".
 
 Para cada prueba, anotar: ✅ funcionó / ❌ falló (con qué se rompió) / ⚠️
 funcionó pero con algo raro. Sistema operativo y terminal usados importan
@@ -29,7 +57,7 @@ abajo, es donde más problemas aparecieron).
 
 ## M0 — Fundamentos
 
-- [ ] Abrir `tcode` sin argumentos: arranca con un buffer vacío ("[Sin nombre]").
+- [ ] Abrir `tcode` sin argumentos en una carpeta sin sesión guardada (ver "Sesión guardada" arriba): arranca con un buffer vacío ("[Sin nombre]").
 - [ ] Abrir `tcode ruta/a/archivo.txt`: carga el contenido correcto.
 - [ ] Escribir texto, moverse con las flechas, `Home`/`End`, `Ctrl+Home`/`Ctrl+End`.
 - [ ] `Enter` inserta un salto de línea real (no rompe el archivo).
@@ -1004,7 +1032,7 @@ proyecto y con `HOME` temporal. Si `HOME` es temporal, `rust-analyzer`
 - [ ] `F12` sobre algo sin definición (un número, un espacio): "No se encontró la definición".
 - [ ] `c.` en Python (con `c` una instancia) o `p.` en Rust: tras un instante aparece la lista de métodos/campos bajo el cursor, con tipo y firma. Seguir escribiendo filtra (letras coincidentes en negrita); una letra que no coincide con nada la cierra.
 - [ ] `↑`/`↓` recorren la lista (dando la vuelta), `Tab` o `Enter` aceptan: se reemplaza lo escrito de la palabra; `Ctrl+Z` deshace la aceptación entera en un paso. `Esc` cierra sin tocar nada.
-- [ ] Sin lista abierta, `Tab` indenta como siempre; `Enter` inserta salto de línea.
+- [ ] Sin lista abierta, `Tab` indenta como siempre (salvo dentro de un snippet o justo después del prefijo de uno propio, ver [Snippets](#snippets-con-saltos-entre-campos-backlogmd-p2-24)); `Enter` inserta salto de línea.
 - [ ] Escribir un nombre a medias y esperar: aparece la lista sola. Tipear de corrido (sin pausas) no la abre en cada letra.
 - [ ] `Ctrl+Espacio` (o `Ctrl+K Espacio`) la abre a mano; en un lugar sin sugerencias dice "Sin sugerencias".
 - [ ] Con multi-cursor, o en modo Normal de VIM, no aparece la lista.
