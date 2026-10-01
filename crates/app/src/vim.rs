@@ -50,20 +50,29 @@ pub fn ejecutar_tecla_normal(
         let mensaje = if c == '+' || c == '*' {
             vim.registro_portapapeles = true;
             format!("\"{c}")
+        } else if c.is_ascii_alphabetic() || c == '_' {
+            // Registros con nombre (BACKLOG.md P3 #28): `"a`-`"z`,
+            // `"A`-`"Z` (agrega al final) y `"_` (descarta).
+            vim.registro_nombrado = Some(c);
+            format!("\"{c}")
         } else {
-            format!("Registro no soportado: \"{c} (solo \"+ y \"*)")
+            format!("Registro no soportado: \"{c} (\"a-\"z, \"A-\"Z, \"_, \"+ y \"*)")
         };
         layout.panel_activo_mut().mensaje_estado = Some(mensaje);
         return;
     }
-    if c == '"' && vim.teclas_pendientes().is_empty() && !vim.registro_portapapeles {
+    if c == '"' && vim.teclas_pendientes().is_empty() && !vim.registro_portapapeles && vim.registro_nombrado.is_none() {
         vim.esperando_registro = true;
         layout.panel_activo_mut().mensaje_estado = Some("\"".to_string());
         return;
     }
 
     let modo = config.editor.portapapeles;
-    let usar_portapapeles = vim.registro_portapapeles || config.editor.vim_sincronizar_portapapeles;
+    // Con un registro con nombre, el portapapeles no se toca (como
+    // `"ayy` con `clipboard=unnamedplus`: va solo a `a`).
+    let nombrado = vim.registro_nombrado;
+    let usar_portapapeles =
+        vim.registro_portapapeles || (config.editor.vim_sincronizar_portapapeles && nombrado.is_none());
     // `p`/`P` (con o sin conteo): el registro se carga desde el
     // portapapeles justo antes de pegar. Con `"+p` se guarda el registro
     // sin nombre para devolverlo después.
@@ -80,6 +89,17 @@ pub fn ejecutar_tecla_normal(
                 let lineal = copiado.lineal || copiado.texto.ends_with('\n');
                 vim.fijar_registro(copiado.texto, lineal);
             }
+        }
+    }
+    // `"ap`: el registro `a` se carga en el sin nombre para pegar, y se
+    // devuelve después. `"_`: lo que se borre no pisa el sin nombre.
+    if let Some(r) = nombrado {
+        if (pega && r != '_') || r == '_' {
+            registro_previo.get_or_insert_with(|| (vim.registro().to_string(), vim.registro_lineal()));
+        }
+        if pega && r != '_' {
+            let (texto, lineal) = vim.registros.get(&r.to_ascii_lowercase()).cloned().unwrap_or_default();
+            vim.fijar_registro(texto, lineal);
         }
     }
     let version = vim.version_registro();
@@ -99,12 +119,34 @@ pub fn ejecutar_tecla_normal(
             mensaje = Some(format!("Copiado: {lineas}{destino}"));
         }
     }
-    // El prefijo `"+` vale para un solo comando: se termina en cuanto no
-    // quedan teclas pendientes (completo o inválido).
+    // Lo que un `y`/`d`/`c` con `"a` dejó en el registro sin nombre va
+    // también a `a` (`"A` lo agrega al final; por líneas si alguno de los
+    // dos lo era). Con `"_` se descarta: el sin nombre vuelve a lo de antes.
+    if let Some(r) = nombrado.filter(|_| vim.version_registro() != version) {
+        if r == '_' {
+            if let Some((texto, lineal)) = registro_previo.take() {
+                vim.fijar_registro(texto, lineal);
+            }
+        } else {
+            let nuevo = (vim.registro().to_string(), vim.registro_lineal());
+            let entrada = vim.registros.entry(r.to_ascii_lowercase()).or_default();
+            if r.is_ascii_uppercase() && !entrada.0.is_empty() {
+                let separador = if (entrada.1 || nuevo.1) && !entrada.0.ends_with('\n') { "\n" } else { "" };
+                entrada.0 = format!("{}{separador}{}", entrada.0, nuevo.0);
+                entrada.1 |= nuevo.1;
+            } else {
+                *entrada = nuevo;
+            }
+            registro_previo = None;
+        }
+    }
+    // Los prefijos `"+`/`"a` valen para un solo comando: se terminan en
+    // cuanto no quedan teclas pendientes (completo o inválido).
     if vim.teclas_pendientes().is_empty() {
         vim.registro_portapapeles = false;
+        vim.registro_nombrado = None;
         if let Some((texto, lineal)) = registro_previo {
-            if vim.version_registro() == version {
+            if vim.version_registro() == version || nombrado == Some('_') {
                 vim.fijar_registro(texto, lineal);
             }
         }
@@ -119,6 +161,7 @@ pub fn ejecutar_tecla_normal(
 pub fn cancelar(layout: &mut PanelLayout, vim: &mut EstadoVim) {
     vim.esperando_registro = false;
     vim.registro_portapapeles = false;
+    vim.registro_nombrado = None;
     nucleo::cancelar(layout.editor_activo_mut(), vim);
 }
 
@@ -140,7 +183,16 @@ pub async fn tecla_linea_comando(key: KeyEvent, layout: &mut PanelLayout, estado
         KeyCode::Down => linea.historial_siguiente(),
         KeyCode::Backspace => linea.borrar(),
         KeyCode::Enter => {
+            let prefijo = linea.prefijo();
             let texto = linea.confirmar();
+            // `/` y `?` (BACKLOG.md P3 #28): buscar, no un comando.
+            if prefijo != ':' {
+                let aviso = nucleo::buscar_desde_prompt(layout.editor_activo_mut(), &mut estado.vim, &texto, prefijo == '?');
+                if aviso.is_some() {
+                    layout.panel_activo_mut().mensaje_estado = aviso;
+                }
+                return Accion::Continuar;
+            }
             return ejecutar_linea_comando(&texto, layout, estado).await;
         }
         KeyCode::Char(c) if sin_modificadores(key) => linea.escribir(c),
@@ -246,4 +298,197 @@ fn cerrar(layout: &mut PanelLayout, estado: &mut EstadoApp, forzar: bool) -> Acc
     }
     layout.cerrar_pestana_activa();
     Accion::Continuar
+}
+
+/// Cuántas veces puede expandirse una macro desde la última tecla real:
+/// una macro que se llama a sí misma (`qa...@aq`) se corta acá en vez de
+/// colgar `tcode`.
+const MAX_EXPANSIONES_MACRO: usize = 1000;
+
+/// Macros (BACKLOG.md P3 #28): `q{registro}` empieza a grabar, `q`
+/// termina, `[conteo]@{registro}` reproduce, `@@` repite la última. Se
+/// graban los eventos de teclado tal cual llegaron (también `Esc`,
+/// `Enter`, flechas y lo tipeado en Insertar) y se reproducen poniéndolos
+/// en la cola de teclas sintéticas del bucle principal, así pasan por el
+/// mismo camino que si se tipearan. Viven acá y no en `tcode_core` porque
+/// son eventos de `crossterm`. Son un espacio aparte de los registros de
+/// texto (`"ap` no pega una macro).
+#[derive(Default)]
+pub struct Macros {
+    grabando: Option<(char, Vec<KeyEvent>)>,
+    guardadas: std::collections::HashMap<char, Vec<KeyEvent>>,
+    ultima: Option<char>,
+    /// `q` o `@` a la espera del registro, con el conteo del `@`.
+    esperando: Option<(char, usize)>,
+    expansiones: usize,
+}
+
+impl Macros {
+    /// El registro que se está grabando, si hay.
+    pub fn grabando(&self) -> Option<char> {
+        self.grabando.as_ref().map(|(r, _)| *r)
+    }
+
+    /// Cada tecla que llegó del teclado de verdad (no de una macro ni de
+    /// un pegado): se graba si hay una grabación en curso, y vuelve a
+    /// habilitar las expansiones.
+    pub fn tecla_real(&mut self, key: KeyEvent) {
+        self.expansiones = 0;
+        if let Some((_, teclas)) = &mut self.grabando {
+            teclas.push(key);
+        }
+    }
+
+    /// Un carácter en modo Normal/Visual: si es parte de `q`/`@`, lo
+    /// maneja y devuelve `Some(aviso)`; si no, `None` y sigue como
+    /// comando VIM.
+    pub fn tecla(
+        &mut self,
+        c: char,
+        vim: &mut EstadoVim,
+        cola: &mut std::collections::VecDeque<KeyEvent>,
+    ) -> Option<Option<String>> {
+        if let Some((tipo, conteo)) = self.esperando.take() {
+            return Some(match tipo {
+                'q' if c.is_ascii_alphanumeric() => {
+                    self.grabando = Some((c, Vec::new()));
+                    Some(format!("grabando @{c}"))
+                }
+                'q' => Some(format!("Registro inválido para grabar: {c}")),
+                _ => self.reproducir(if c == '@' { self.ultima } else { Some(c) }, conteo, cola),
+            });
+        }
+        if vim.esperando_registro || vim.registro_nombrado.is_some() || vim.registro_portapapeles {
+            return None;
+        }
+        let pendientes = vim.teclas_pendientes();
+        if c == 'q' && pendientes.is_empty() {
+            if let Some((registro, mut teclas)) = self.grabando.take() {
+                teclas.pop(); // la `q` que termina la grabación
+                let cantidad = teclas.len();
+                let destino = registro.to_ascii_lowercase();
+                if registro.is_ascii_uppercase() {
+                    self.guardadas.entry(destino).or_default().extend(teclas);
+                } else {
+                    self.guardadas.insert(destino, teclas);
+                }
+                return Some(Some(format!("Macro @{destino} grabada ({cantidad} teclas)")));
+            }
+            self.esperando = Some(('q', 1));
+            return Some(Some("q".to_string()));
+        }
+        if c == '@' && pendientes.iter().all(char::is_ascii_digit) {
+            let conteo: String = pendientes.iter().collect();
+            let conteo = conteo.parse::<usize>().unwrap_or(1).max(1);
+            vim.limpiar_pendiente();
+            self.esperando = Some(('@', conteo));
+            return Some(Some("@".to_string()));
+        }
+        None
+    }
+
+    fn reproducir(
+        &mut self,
+        registro: Option<char>,
+        conteo: usize,
+        cola: &mut std::collections::VecDeque<KeyEvent>,
+    ) -> Option<String> {
+        let Some(registro) = registro.map(|r| r.to_ascii_lowercase()) else {
+            return Some("Todavía no se reprodujo ninguna macro".to_string());
+        };
+        let Some(teclas) = self.guardadas.get(&registro).filter(|t| !t.is_empty()) else {
+            return Some(format!("La macro @{registro} está vacía"));
+        };
+        self.expansiones += 1;
+        if self.expansiones > MAX_EXPANSIONES_MACRO {
+            cola.clear();
+            return Some("Macro cortada: se llama a sí misma demasiadas veces".to_string());
+        }
+        // Al principio de la cola y en orden: lo que ya estaba pendiente
+        // (el resto de otra macro) sigue después.
+        for _ in 0..conteo {
+            for key in teclas.iter().rev() {
+                cola.push_front(*key);
+            }
+        }
+        self.ultima = Some(registro);
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests_macros {
+    use std::collections::VecDeque;
+
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use tcode_core::EstadoVim;
+
+    use super::Macros;
+
+    fn tecla(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    /// Como el bucle principal: cada tecla real se graba y, si es parte
+    /// de `q`/`@`, la maneja `Macros`.
+    fn tipear(macros: &mut Macros, vim: &mut EstadoVim, cola: &mut VecDeque<KeyEvent>, teclas: &str) -> Option<String> {
+        let mut ultimo = None;
+        for c in teclas.chars() {
+            macros.tecla_real(tecla(c));
+            if let Some(aviso) = macros.tecla(c, vim, cola) {
+                ultimo = aviso;
+            }
+        }
+        ultimo
+    }
+
+    fn texto(cola: &VecDeque<KeyEvent>) -> String {
+        cola.iter().filter_map(|k| if let KeyCode::Char(c) = k.code { Some(c) } else { None }).collect()
+    }
+
+    #[test]
+    fn grabar_reproducir_repetir_y_agregar() {
+        let (mut macros, mut vim, mut cola) = (Macros::default(), EstadoVim::nuevo(), VecDeque::new());
+        assert_eq!(tipear(&mut macros, &mut vim, &mut cola, "qa").as_deref(), Some("grabando @a"));
+        assert_eq!(macros.grabando(), Some('a'));
+        // Lo del medio se procesaría como comandos VIM; acá solo se graba.
+        let aviso = tipear(&mut macros, &mut vim, &mut cola, "xjq");
+        assert_eq!(aviso.as_deref(), Some("Macro @a grabada (2 teclas)"));
+        assert_eq!(macros.grabando(), None);
+        // `3@a` pone las teclas tres veces en la cola; `@@` repite.
+        tipear(&mut macros, &mut vim, &mut cola, "3");
+        vim.agregar_tecla('3');
+        tipear(&mut macros, &mut vim, &mut cola, "@a");
+        assert_eq!(texto(&cola), "xjxjxj");
+        cola.clear();
+        tipear(&mut macros, &mut vim, &mut cola, "@@");
+        assert_eq!(texto(&cola), "xj");
+        // `qA` agrega al final de `a`.
+        cola.clear();
+        tipear(&mut macros, &mut vim, &mut cola, "qAkq@a");
+        assert_eq!(texto(&cola), "xjk");
+    }
+
+    #[test]
+    fn vacias_invalidas_y_recursion() {
+        let (mut macros, mut vim, mut cola) = (Macros::default(), EstadoVim::nuevo(), VecDeque::new());
+        assert!(tipear(&mut macros, &mut vim, &mut cola, "@z").is_some_and(|a| a.contains("vacía")));
+        assert!(tipear(&mut macros, &mut vim, &mut cola, "@@").is_some_and(|a| a.contains("ninguna macro")));
+        assert!(tipear(&mut macros, &mut vim, &mut cola, "q!").is_some_and(|a| a.contains("inválido")));
+        // Con un registro elegido (`"a`), `q` no es grabar.
+        vim.registro_nombrado = Some('a');
+        assert!(macros.tecla('q', &mut vim, &mut cola).is_none());
+        vim.registro_nombrado = None;
+        // Una macro que se llama a sí misma se corta.
+        tipear(&mut macros, &mut vim, &mut cola, "qb@bq");
+        let mut aviso = None;
+        for _ in 0..2000 {
+            if let Some(a) = macros.tecla('@', &mut vim, &mut cola).and(macros.tecla('b', &mut vim, &mut cola)).flatten() {
+                aviso = Some(a);
+                break;
+            }
+        }
+        assert!(aviso.is_some_and(|a| a.contains("demasiadas veces")));
+        assert!(cola.is_empty());
+    }
 }

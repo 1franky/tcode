@@ -145,10 +145,10 @@ Limitaciones conocidas de estas piezas (no son gaps nuevos):
   PR #113), no clickeando el breadcrumb; en Python, una línea en blanco
   al final de un `def` muestra solo el contenedor de afuera (tree-sitter
   no la incluye en el bloque).
-- **Modo VIM**: completo en lo esencial (PR #115); fuera de alcance:
-  registros con nombre, marcas, macros, búsqueda con `/`/`?`/`n`/`*`,
-  `Ctrl+R` como rehacer, `:s` con grupos (`\1`, `&`) o rangos `a,b`,
-  `:w <ruta>`, `.` sobre operaciones hechas en Visual.
+- **Modo VIM**: completo en lo esencial (PR #115) más búsqueda,
+  registros con nombre, macros y `Ctrl+R` (#28); fuera de alcance:
+  marcas, `:s` con grupos (`\1`, `&`) o rangos `a,b`, `:w <ruta>`,
+  `:reg`, `.` sobre operaciones hechas en Visual.
 - **Zen / maximizar (#11/#12)**: en zen + maximizado no se ve `[MAX]` (no
   hay statusbar); si la terminal o el sistema se comen `F11`, queda
   `Ctrl+K G`.
@@ -168,13 +168,18 @@ Un panel con una shell (PTY), como el de VSCode.
 
 Breakpoints, paso a paso, variables — vía Debug Adapter Protocol.
 
-### 28. Completar el modo VIM
-
-Búsqueda con `/`/`?`/`n`/`*`, macros, registros con nombre, `Ctrl+R`.
-
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-10-01 — P3 #28 Completar el modo VIM:** búsqueda `/`/`?` (prompt
+de la línea `:` con otro prefijo; regex con smartcase, literal si no
+compila) y `n`/`N`/`*`/`#` como movimientos (con conteo, en Visual y
+detrás de operadores); registros `"a`-`"z`, `"A`-`"Z` (agregar), `"_`;
+macros `q`/`@`/`@@` (eventos de teclado reales reproducidos por la cola
+de teclas sintéticas, con tope de recursión); `Ctrl+R` rehacer. Siguen
+fuera: marcas, `:s` con grupos o rangos, `:w <ruta>`, `:reg`, `.` sobre
+Visual.
 
 **2026-09-30 — P2 #24 Snippets con saltos entre campos:** motor en
 `tcode_core::snippet` (sintaxis LSP/VSCode: campos, anidados, espejos,

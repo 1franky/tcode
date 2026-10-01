@@ -9,7 +9,8 @@
 
 use crate::cursor::Cursor;
 use crate::editor::{Editor, Modo};
-use crate::estado_vim::{CambioRepetible, EstadoVim, InicioInsercion};
+use crate::busqueda::{buscar_coincidencias, OpcionesBusqueda};
+use crate::estado_vim::{BusquedaPatron, CambioRepetible, EstadoVim, InicioInsercion};
 
 use super::gramatica::{analizar, Accion, Analisis, Comando, Movimiento, Objetivo, Operador, TipoComando};
 use super::movimientos::{self, alcance, rango_de_movimiento, rango_de_objeto, rango_entre, Lector, Rango};
@@ -220,6 +221,9 @@ fn resolver_busqueda(vim: &mut EstadoVim, m: Movimiento) -> Option<(Movimiento, 
 }
 
 fn destino(editor: &Editor, vim: &mut EstadoVim, m: Movimiento, veces: usize, explicito: bool) -> Option<(Cursor, Movimiento)> {
+    if matches!(m, Movimiento::BuscarPatron { .. } | Movimiento::BuscarPalabra { .. }) {
+        return buscar(editor, vim, m, veces).ok().map(|(p, _)| (p, m));
+    }
     let (m, repitiendo) = resolver_busqueda(vim, m)?;
     let mut lector = Lector::nuevo(editor.buffer());
     let desde = editor.cursor();
@@ -239,7 +243,13 @@ fn rango_de_movimiento_resuelto(
     op: Operador,
 ) -> Option<Rango> {
     let desde = editor.cursor();
-    if matches!(m, Movimiento::RepetirBusqueda { .. } | Movimiento::BuscarCaracter(_)) {
+    if matches!(
+        m,
+        Movimiento::RepetirBusqueda { .. }
+            | Movimiento::BuscarCaracter(_)
+            | Movimiento::BuscarPatron { .. }
+            | Movimiento::BuscarPalabra { .. }
+    ) {
         let (p, resuelto) = destino(editor, vim, m, veces, explicito)?;
         return Some(rango_entre(&mut Lector::nuevo(editor.buffer()), desde, p, alcance(resuelto)));
     }
@@ -272,6 +282,15 @@ fn mover(editor: &mut Editor, vim: &mut EstadoVim, m: Movimiento, veces: usize, 
             }
             editor.fin_linea();
         }
+        Movimiento::BuscarPatron { .. } | Movimiento::BuscarPalabra { .. } => {
+            return match buscar(editor, vim, m, veces) {
+                Ok((p, aviso)) => {
+                    ir_a(editor, p);
+                    aviso
+                }
+                Err(aviso) => Some(aviso),
+            };
+        }
         _ => {
             if let Some((p, _)) = destino(editor, vim, m, veces, explicito) {
                 ir_a(editor, p);
@@ -279,6 +298,105 @@ fn mover(editor: &mut Editor, vim: &mut EstadoVim, m: Movimiento, veces: usize, 
         }
     }
     None
+}
+
+/// `n`/`N`/`*`/`#` (BACKLOG.md P3 #28): la posición de la `veces`-ésima
+/// coincidencia de la búsqueda desde el cursor, dando la vuelta al
+/// archivo (con aviso, como VIM). `*`/`#` antes guardan como búsqueda la
+/// palabra bajo el cursor (entera, distinguiendo mayúsculas). `Err` con
+/// el aviso si no hay búsqueda, palabra o coincidencias.
+fn buscar(editor: &Editor, vim: &mut EstadoVim, m: Movimiento, veces: usize) -> Result<(Cursor, Option<String>), String> {
+    let cursor = editor.cursor();
+    let mut desde = offset(editor, cursor);
+    let atras = match m {
+        Movimiento::BuscarPalabra { atras } => {
+            let linea: Vec<char> = editor.buffer().linea_texto(cursor.linea).chars().collect();
+            let es_palabra = |c: char| c.is_alphanumeric() || c == '_';
+            let Some(inicio) = (cursor.columna..linea.len()).find(|&i| es_palabra(linea[i])) else {
+                return Err("No hay ninguna palabra bajo el cursor".to_string());
+            };
+            let inicio = (0..=inicio).rev().take_while(|&i| es_palabra(linea[i])).last().unwrap_or(inicio);
+            let fin = (inicio..linea.len()).find(|&i| !es_palabra(linea[i])).unwrap_or(linea.len());
+            let palabra: String = linea[inicio..fin].iter().collect();
+            // Hacia atrás, desde el principio de la palabra: si no, la
+            // primera que encuentra es ella misma.
+            desde = offset(editor, Cursor { linea: cursor.linea, columna: inicio });
+            vim.busqueda = Some(BusquedaPatron {
+                texto: palabra.clone(),
+                patron: format!(r"\b{}\b", regex::escape(&palabra)),
+                sensible_mayusculas: true,
+                atras,
+            });
+            atras
+        }
+        Movimiento::BuscarPatron { inversa } => match &vim.busqueda {
+            Some(b) => b.atras != inversa,
+            None => return Err("No hay ninguna búsqueda previa (/ o ?)".to_string()),
+        },
+        _ => return Err(String::new()),
+    };
+    let Some(busqueda) = &vim.busqueda else { return Err(String::new()) };
+    let opciones = OpcionesBusqueda { regex: true, sensible_mayusculas: busqueda.sensible_mayusculas, palabra_completa: false };
+    let texto = editor.buffer().a_texto();
+    let coincidencias = buscar_coincidencias(&texto, &busqueda.patron, opciones).map_err(|e| e.to_string())?;
+    if coincidencias.is_empty() {
+        return Err(format!("Patrón no encontrado: {}", busqueda.texto));
+    }
+    let mut vuelta = false;
+    for _ in 0..veces.max(1) {
+        let siguiente = if atras {
+            coincidencias.iter().rev().find(|c| c.inicio < desde)
+        } else {
+            coincidencias.iter().find(|c| c.inicio > desde)
+        };
+        desde = match siguiente {
+            Some(c) => c.inicio,
+            None => {
+                vuelta = true;
+                if atras { coincidencias[coincidencias.len() - 1].inicio } else { coincidencias[0].inicio }
+            }
+        };
+    }
+    let (linea, columna) = editor.buffer().linea_columna_desde_byte(desde);
+    let aviso = vuelta.then(|| {
+        if atras { "La búsqueda llegó al principio: siguió desde el final" } else { "La búsqueda llegó al final: siguió desde el principio" }
+            .to_string()
+    });
+    Ok((Cursor { linea, columna }, aviso))
+}
+
+/// `Enter` en el prompt `/`/`?`: guarda la búsqueda y va a la primera
+/// coincidencia (en Visual, extiende la selección). Vacío repite la
+/// última en la dirección del prompt, como VIM. El patrón es un regex (si
+/// no compila, se busca literal) y distingue mayúsculas solo si tiene
+/// alguna (como `smartcase`).
+pub fn buscar_desde_prompt(editor: &mut Editor, vim: &mut EstadoVim, texto: &str, atras: bool) -> Option<String> {
+    if texto.is_empty() {
+        match &mut vim.busqueda {
+            Some(b) => b.atras = atras,
+            None => return Some("No hay ninguna búsqueda previa".to_string()),
+        }
+    } else {
+        let patron = if regex::Regex::new(texto).is_ok() { texto.to_string() } else { regex::escape(texto) };
+        vim.busqueda = Some(BusquedaPatron {
+            texto: texto.to_string(),
+            patron,
+            sensible_mayusculas: texto.chars().any(char::is_uppercase),
+            atras,
+        });
+    }
+    let aviso = mover(editor, vim, Movimiento::BuscarPatron { inversa: false }, 1, false);
+    terminar_tecla(editor, vim);
+    aviso
+}
+
+/// `Ctrl+R` en Normal: rehacer (con el conteo escrito antes, si hay).
+pub fn rehacer(editor: &mut Editor, vim: &mut EstadoVim) {
+    let pendientes: String = vim.teclas_pendientes().iter().collect();
+    let veces = pendientes.parse::<usize>().unwrap_or(1).max(1);
+    vim.limpiar_pendiente();
+    (0..veces).for_each(|_| editor.rehacer());
+    terminar_tecla(editor, vim);
 }
 
 fn aplicar_operador(editor: &mut Editor, vim: &mut EstadoVim, op: Operador, rango: Rango, opciones: &OpcionesVim) {
@@ -455,6 +573,8 @@ fn ejecutar_accion(editor: &mut Editor, vim: &mut EstadoVim, accion: Accion, com
             editor.entrar_modo_visual(accion == Accion::VisualLinea);
         }
         Accion::LineaComando => vim.linea_comando.abrir(),
+        Accion::Buscar { atras } => vim.linea_comando.abrir_con_prefijo(if atras { '?' } else { '/' }),
+        Accion::Rehacer => (0..veces).for_each(|_| editor.rehacer()),
         Accion::IntercambiarExtremos => {}
     }
     None
@@ -582,7 +702,12 @@ fn ejecutar_visual(editor: &mut Editor, vim: &mut EstadoVim, comando: Comando, o
     }
     match comando.tipo {
         TipoComando::Mover(m) => {
-            mover(editor, vim, m, comando.veces(), comando.conteo.is_some());
+            if let Some(aviso) = mover(editor, vim, m, comando.veces(), comando.conteo.is_some()) {
+                return Some(aviso);
+            }
+        }
+        TipoComando::Accion(Accion::Buscar { atras }) => {
+            vim.linea_comando.abrir_con_prefijo(if atras { '?' } else { '/' });
         }
         TipoComando::SeleccionarObjeto(o) => {
             let cursor = editor.cursor();
@@ -723,6 +848,64 @@ mod tests {
         let mut vim = EstadoVim::nuevo();
         tipear(&mut editor, &mut vim, teclas);
         (con_cursor(&editor), vim, editor)
+    }
+
+    #[test]
+    fn busqueda_con_prompt_n_n_y_vuelta() {
+        let mut editor = editor_con("|uno foo dos\nFoo tres foo\n");
+        let mut vim = EstadoVim::nuevo();
+        // Sin mayúsculas no distingue (smartcase): `Foo` también cuenta.
+        assert_eq!(buscar_desde_prompt(&mut editor, &mut vim, "foo", false), None);
+        assert_eq!(con_cursor(&editor), "uno |foo dos\nFoo tres foo\n");
+        tipear(&mut editor, &mut vim, "n");
+        assert_eq!(con_cursor(&editor), "uno foo dos\n|Foo tres foo\n");
+        tipear(&mut editor, &mut vim, "nN");
+        assert_eq!(con_cursor(&editor), "uno foo dos\n|Foo tres foo\n");
+        // Del último, `n` da la vuelta y avisa.
+        tipear(&mut editor, &mut vim, "n");
+        let aviso = ejecutar_tecla(&mut editor, &mut vim, 'n', &OpcionesVim::default());
+        assert_eq!(con_cursor(&editor), "uno |foo dos\nFoo tres foo\n");
+        assert!(aviso.is_some_and(|a| a.contains("siguió desde el principio")));
+        // Con una mayúscula distingue; `?` va hacia atrás (desde la
+        // primera línea, da la vuelta); vacío repite.
+        assert!(buscar_desde_prompt(&mut editor, &mut vim, "Foo", true).is_some_and(|a| a.contains("desde el final")));
+        assert_eq!(con_cursor(&editor), "uno foo dos\n|Foo tres foo\n");
+        // Una sola coincidencia: repetir da la vuelta hasta ella misma.
+        assert!(buscar_desde_prompt(&mut editor, &mut vim, "", false).is_some());
+        assert_eq!(con_cursor(&editor), "uno foo dos\n|Foo tres foo\n");
+        assert!(buscar_desde_prompt(&mut editor, &mut vim, "nada", false).is_some_and(|a| a.contains("no encontrado")));
+        // Un regex inválido se busca literal.
+        let mut editor = editor_con("|a (b\n");
+        assert_eq!(buscar_desde_prompt(&mut editor, &mut vim, "(b", false), None);
+        assert_eq!(con_cursor(&editor), "a |(b\n");
+    }
+
+    #[test]
+    fn asterisco_numeral_y_n_como_movimiento_de_operador() {
+        // `*` busca la palabra entera bajo el cursor (no `xy` dentro de `xyz`).
+        let (texto, _, _) = correr("x|y xyz xy\n", "*");
+        assert_eq!(texto, "xy xyz |xy\n");
+        // `#` desde el medio de la palabra va a la anterior, no a sí misma.
+        let (texto, _, _) = correr("xy a x|y\n", "#");
+        assert_eq!(texto, "|xy a xy\n");
+        // `dn` borra hasta la siguiente coincidencia (exclusivo).
+        let mut editor = editor_con("|a b c b\n");
+        let mut vim = EstadoVim::nuevo();
+        buscar_desde_prompt(&mut editor, &mut vim, "c", false);
+        tipear(&mut editor, &mut vim, "0dn");
+        assert_eq!(con_cursor(&editor), "|c b\n");
+        // `/` y `?` abren el prompt con su prefijo.
+        let (_, vim, _) = correr("|a\n", "?");
+        assert_eq!((vim.linea_comando.activa(), vim.linea_comando.prefijo()), (true, '?'));
+    }
+
+    #[test]
+    fn ctrl_r_rehace_con_conteo() {
+        let (_, mut vim, mut editor) = correr("|abc\n", "xxuu");
+        assert_eq!(con_cursor(&editor), "|abc\n");
+        tipear(&mut editor, &mut vim, "2");
+        rehacer(&mut editor, &mut vim);
+        assert_eq!(con_cursor(&editor), "|c\n");
     }
 
     /// La tabla principal: texto inicial (con `|` en el cursor) + teclas

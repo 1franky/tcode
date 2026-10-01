@@ -20,7 +20,7 @@ pub fn dibujar(frame: &mut Frame, area_total: Rect, estado: &EstadoLineaComando,
     }
     let area = Rect { x: area_total.x, y: area_total.bottom() - 1, width: area_total.width, height: 1 };
     frame.render_widget(Clear, area);
-    let texto = format!(":{}", estado.texto());
+    let texto = format!("{}{}", estado.prefijo(), estado.texto());
     // Si no entra, se muestra el final (lo que se está escribiendo).
     let visibles = area.width as usize - 1;
     let largo = texto.chars().count();
