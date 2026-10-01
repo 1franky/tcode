@@ -153,10 +153,6 @@ Limitaciones conocidas de estas piezas (no son gaps nuevos):
 
 Candidatos grandes, a decidir si entran en el plan:
 
-### 26. Terminal integrada
-
-Un panel con una shell (PTY), como el de VSCode.
-
 ### 27. Depurador (DAP)
 
 Breakpoints, paso a paso, variables — vía Debug Adapter Protocol.
@@ -164,6 +160,18 @@ Breakpoints, paso a paso, variables — vía Debug Adapter Protocol.
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-10-01 — P3 #26 Terminal integrada:** crate nuevo `tcode-terminal`
+(`portable-pty` para la PTY/ConPTY + `vt100` 0.15 para interpretar la
+salida; la 0.16 choca con el `unicode-width` que fija ratatui 0.29). La
+salida la lee un hilo y llega por un canal de tokio a una rama del
+`select!`. `Foco::Terminal`: todas las teclas a la shell
+(`terminal::bytes_de_tecla`, secuencias de xterm con application cursor)
+salvo `Ctrl+``/`Ctrl+Espacio`. Panel abajo (un tercio del alto),
+dibujado por `tcode_ui::panel_terminal` antes de los overlays;
+redimensiona la PTY después de cada frame. Limitaciones: una sola
+terminal, el mouse no se le pasa a la shell, no se restaura con la
+sesión.
 
 **2026-10-01 — P2 #23 inlay hints (cierra #23 y todo P2):**
 `textDocument/inlayHint` del archivo entero, pedido tras 300 ms de texto

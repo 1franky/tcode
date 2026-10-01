@@ -256,6 +256,12 @@
 # Blame en línea (apagado por defecto): GitLens no tiene atajo propio;
 # Ctrl+K Ctrl+G ("git") lo prende y apaga.
 "Ctrl+K Ctrl+G"  = "git.alternar_blame"
+# Terminal integrada (BACKLOG.md P3 #26): Ctrl+` como en VSCode (solo con
+# protocolo Kitty; sin él llega como Ctrl+Espacio = autocompletar) o el
+# chord Ctrl+K ` en cualquier terminal. Con la terminal enfocada todas las
+# teclas van a la shell salvo Ctrl+` / Ctrl+Espacio, que vuelven al editor.
+"Ctrl+`"         = "terminal.alternar"
+"Ctrl+K `"       = "terminal.alternar"
 "Ctrl+Shift+M"   = "problemas.ver"
 "Ctrl+K Q"       = "problemas.ver"
 "F8"             = "problemas.siguiente"

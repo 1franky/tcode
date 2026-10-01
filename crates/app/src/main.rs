@@ -28,6 +28,7 @@ mod problemas;
 mod respaldo;
 mod sesion;
 mod snippets;
+mod terminal;
 mod vim;
 
 use std::collections::VecDeque;
@@ -284,13 +285,14 @@ fn forzar_redibujado_completo(_terminal: &mut Terminal<Backend>) -> Result<()> {
 /// explorador está visible, si hay un panel maximizado o modo zen (los
 /// dos cambian de golpe qué se ve y dónde). Comparar esto antes/después
 /// de procesar una tecla es lo que decide si hace falta forzar limpieza.
-fn firma_estructural(layout: &PanelLayout, estado: &EstadoApp) -> (String, (usize, usize), bool, bool, bool) {
+fn firma_estructural(layout: &PanelLayout, estado: &EstadoApp) -> (String, (usize, usize), bool, bool, bool, bool) {
     (
         layout.panel_activo().ruta_mostrada.clone(),
         (layout.num_paneles(), layout.indice_pestana_activa()),
         estado.explorador.visible(),
         layout.maximizado(),
         estado.modo_zen.is_some(),
+        estado.terminal.visible && estado.terminal.sesion.is_some(),
     )
 }
 
@@ -378,6 +380,9 @@ fn capturar_mouse(salida: &mut impl Write, activar: bool) {
 enum Foco {
     Editor,
     Explorador,
+    /// La terminal integrada (BACKLOG.md P3 #26): las teclas van a la
+    /// shell (ver `terminal::tecla`).
+    Terminal,
 }
 
 /// Resultado de ejecutar un comando: si el bucle principal debe seguir o
@@ -472,6 +477,8 @@ struct EstadoApp {
     blame: blame::EstadoBlame,
     /// Inlay hints del LSP (BACKLOG.md P2 #23, `pistas.rs`).
     pistas: pistas::EstadoPistas,
+    /// Terminal integrada (BACKLOG.md P3 #26, `terminal.rs`).
+    terminal: terminal::EstadoTerminal,
     /// Si esta ejecución guarda la sesión de la carpeta (BACKLOG.md P2
     /// #20, ver `sesion::aplica`).
     guardar_sesion: bool,
@@ -616,6 +623,7 @@ async fn ejecutar(
         cambio_git: None,
         blame: Default::default(),
         pistas: Default::default(),
+        terminal: Default::default(),
         ultimo_autoguardado: Instant::now(),
         guardado_pendiente: false,
         resaltador: Resaltador::nuevo(),
@@ -743,7 +751,17 @@ async fn ejecutar(
             // sección "Lenguajes / LSP" mientras el panel está abierto ahí.
             let filas_lenguajes = filas_lenguajes_lsp(&estado);
 
+            let titulo_terminal = estado.terminal.titulo(estado.foco == Foco::Terminal);
             terminal.draw(|frame| {
+                let alto_terminal = estado.terminal.alto(frame.area().height);
+                let vista_terminal = estado.terminal.sesion.as_ref().filter(|_| alto_terminal > 0).map(|sesion| {
+                    tcode_ui::VistaTerminal {
+                        pantalla: sesion.pantalla(),
+                        titulo: &titulo_terminal,
+                        enfocada: estado.foco == Foco::Terminal,
+                        alto: alto_terminal,
+                    }
+                });
                 tcode_ui::dibujar(
                     frame,
                     layout,
@@ -767,6 +785,7 @@ async fn ejecutar(
                     &estado.confirmar_borrado,
                     &estado.selector_simbolos,
                     estado.modo_zen.is_some(),
+                    vista_terminal,
                     &mut estado.zonas,
                 );
                 tcode_ui::panel_linea_vim::dibujar(frame, frame.area(), &estado.vim.linea_comando, &estado.paleta);
@@ -801,6 +820,11 @@ async fn ejecutar(
                 }
             })?;
             ultimo_dibujo = Instant::now();
+            // La terminal toma el tamaño de su panel (la shell recibe
+            // `SIGWINCH` y se redibuja: su salida trae el próximo frame).
+            if let (Some(area), Some(sesion)) = (estado.zonas.terminal, &mut estado.terminal.sesion) {
+                sesion.redimensionar(area.height, area.width);
+            }
         }
 
         let firma_antes = firma_estructural(layout, &estado);
@@ -855,6 +879,18 @@ async fn ejecutar(
                     omitir_dibujo = !estado.busqueda_proyecto.recibir();
                     continue;
                 }
+                // Salida de la terminal integrada (BACKLOG.md P3 #26): la
+                // lee un hilo y llega por un canal; se redibuja solo si el
+                // panel se ve. `false`: la shell terminó.
+                viva = siguiente_terminal(&mut estado.terminal), if estado.terminal.sesion.is_some() => {
+                    if !viva {
+                        terminal::termino(layout, &mut estado);
+                        necesita_redibujado = true;
+                    } else {
+                        omitir_dibujo = !estado.terminal.visible;
+                    }
+                    continue;
+                }
                 _ = tick.tick(), if necesita_tick(layout, &estado) => {
                     omitir_dibujo = !procesar_tick(layout, &mut estado);
                     continue;
@@ -871,6 +907,10 @@ async fn ejecutar(
 
         let key = match evento {
             Event::Key(key) if key.kind == KeyEventKind::Press => key,
+            Event::Paste(texto) if estado.foco == Foco::Terminal => {
+                terminal::pegar(&texto, &mut estado);
+                continue;
+            }
             Event::Paste(texto) => {
                 pegar_texto(&texto, layout, &mut estado, &mut teclas_sinteticas);
                 necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
@@ -937,6 +977,14 @@ async fn ejecutar(
         // su camino, salvo `Esc`, que solo lo cierra.
         if estado.cambio_git.take().is_some() && key.code == KeyCode::Esc {
             necesita_redibujado = true;
+            continue;
+        }
+
+        // Terminal integrada con el foco: todas las teclas a la shell (ver
+        // `terminal::tecla`).
+        if estado.foco == Foco::Terminal && estado.terminal.sesion.is_some() {
+            necesita_redibujado |= terminal::tecla(key, layout, &mut estado);
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
         }
 
@@ -1656,6 +1704,15 @@ const INTERVALO_SONDEO_GIT: Duration = Duration::from_millis(30);
 /// cada archivo encontrado.
 const INTERVALO_SONDEO_BUSQUEDA: Duration = Duration::from_millis(40);
 
+/// La próxima salida de la terminal integrada (solo se espera con una
+/// sesión abierta: ver el `select!` de `ejecutar`).
+async fn siguiente_terminal(terminal: &mut terminal::EstadoTerminal) -> bool {
+    match &mut terminal.sesion {
+        Some(sesion) => sesion.siguiente().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// Período del tick del bucle principal (ver `necesita_tick`): lo que
 /// tarda como mucho una línea nueva de stderr del LSP en aparecer en el
 /// visor abierto. La resolución del guardado "cada N segundos" también
@@ -1922,6 +1979,15 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             guardar_config_global(estado);
             let aviso = if estado.config.editor.blame_en_linea { "Git: blame en línea prendido" } else { "Git: blame en línea apagado" };
             layout.panel_activo_mut().mensaje_estado = Some(aviso.to_string());
+            Accion::Continuar
+        }
+        // Terminal integrada (BACKLOG.md P3 #26).
+        "terminal.alternar" => {
+            terminal::alternar(layout, estado);
+            Accion::Continuar
+        }
+        "terminal.cerrar" => {
+            terminal::cerrar(estado);
             Accion::Continuar
         }
         "problemas.ver" => {

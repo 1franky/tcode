@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/ui", "crates/config", "crates/keymap", "crates/syntax", "crates/fs", "crates/fuzzy", "crates/commands", "crates/lsp", "crates/app"]
+members = ["crates/core", "crates/ui", "crates/config", "crates/keymap", "crates/syntax", "crates/fs", "crates/fuzzy", "crates/commands", "crates/lsp", "crates/terminal", "crates/app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -19,6 +19,7 @@ tcode-fs = { path = "crates/fs" }
 tcode-fuzzy = { path = "crates/fuzzy" }
 tcode-commands = { path = "crates/commands" }
 tcode-lsp = { path = "crates/lsp" }
+tcode-terminal = { path = "crates/terminal" }
 ropey = "1.6"
 crossterm = "0.28"
 ratatui = "0.29"
@@ -53,6 +54,8 @@ regex = "1"
 pulldown-cmark = "0.12"
 csv = "1"
 ignore = "0.4"
+portable-pty = "0.9"
+vt100 = "0.15"
 
 [profile.release]
 lto = true

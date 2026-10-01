@@ -23,6 +23,7 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Temas](#temas)
 - [Panel de administración](#panel-de-administración)
 - [Git](#git)
+- [Terminal integrada](#terminal-integrada)
 - [LSP: autocompletado y diagnósticos](#lsp-autocompletado-y-diagnósticos)
 - [Personalizar atajos](#personalizar-atajos)
 - [Dónde vive la configuración](#dónde-vive-la-configuración)
@@ -913,6 +914,30 @@ Un bloque de líneas borradas se ve y se revierte desde la línea de su
 marca `-`. Todo compara con `HEAD`, no con el índice (lo que está en
 `git add` cuenta como cambio). En un archivo sin commitear o fuera de un
 repo, los comandos avisan que no hay base.
+
+## Terminal integrada
+
+Una shell de verdad (la de `$SHELL`; en Windows, `%COMSPEC%`) en un panel
+abajo del código, en la carpeta del proyecto.
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+`` (o `Ctrl+K ``) | Mostrar la terminal y pasarle el foco (la primera vez lanza la shell); si ya tiene el foco, ocultarla y volver al editor |
+| `Ctrl+Espacio` (con el foco en la terminal) | Lo mismo que `Ctrl+``: sin protocolo Kitty, `Ctrl+`` llega así |
+
+Con el foco en la terminal, **todas** las teclas van a la shell
+(`Ctrl+C`, `Ctrl+D`, `Ctrl+R`, `Ctrl+K`, flechas, `Tab`...), salvo
+`Ctrl+`` / `Ctrl+Espacio`. Lo que pegás va a la shell sin ejecutarse
+línea por línea (si la shell lo soporta). Funcionan los programas de
+pantalla completa (`vim`, `less`, `htop`), los colores y el historial: la
+rueda del mouse sobre la terminal lo recorre. Un clic en el código le
+devuelve el foco al editor dejando la terminal a la vista; un clic en la
+terminal se lo da. Ocultarla no la cierra: la shell sigue ahí con lo que
+estaba haciendo. `exit` (o "Terminal: Cerrar la shell" en la paleta) la
+cierra.
+
+Hay una sola terminal; los clics no se le mandan a la shell (un `htop`
+no recibe el mouse) y no se restaura con la sesión.
 
 ## LSP: autocompletado y diagnósticos
 
