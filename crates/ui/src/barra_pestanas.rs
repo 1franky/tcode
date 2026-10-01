@@ -11,6 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
+use crate::zonas::ZonaPestana;
 use crate::{Paleta, PanelEditor};
 
 /// Dibuja la barra en `area` (una fila). `activa` es el índice de la
@@ -18,6 +19,8 @@ use crate::{Paleta, PanelEditor};
 /// pestaña activa de un panel sin foco se resalta sin negrita, para que
 /// con splits se note en cuál se está escribiendo. Cuesta O(pestañas)
 /// por frame, nunca O(archivo): solo lee rutas y el flag de modificado.
+/// Devuelve dónde quedó cada pestaña que entró, para el mouse
+/// (BACKLOG.md P0 #18).
 pub fn dibujar(
     frame: &mut Frame,
     area: Rect,
@@ -25,7 +28,7 @@ pub fn dibujar(
     activa: usize,
     panel_activo: bool,
     paleta: &Paleta,
-) {
+) -> Vec<ZonaPestana> {
     let rutas: Vec<&str> = documentos.iter().map(|d| d.ruta_mostrada.as_str()).collect();
     let etiquetas: Vec<String> = titulos(&rutas)
         .into_iter()
@@ -42,10 +45,16 @@ pub fn dibujar(
     }
 
     let mut spans = Vec::new();
+    let mut zonas = Vec::with_capacity(fin - inicio);
+    let mut x = area.x;
     if inicio > 0 {
         spans.push(Span::styled("<", estilo_barra));
+        x += 1;
     }
     for (i, etiqueta) in etiquetas.into_iter().enumerate().take(fin).skip(inicio) {
+        let ancho = (anchos[i] as u16).min((area.x + area.width).saturating_sub(x));
+        zonas.push(ZonaPestana { x, ancho, indice: i });
+        x += ancho;
         spans.push(Span::styled(etiqueta, if i == activa { estilo_activa } else { estilo_barra }));
     }
     if fin < anchos.len() {
@@ -57,6 +66,7 @@ pub fn dibujar(
         spans.push(Span::styled(">", estilo_barra));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)).style(estilo_barra), area);
+    zonas
 }
 
 /// Título de cada pestaña: el nombre del archivo, o `carpeta/nombre` si

@@ -13,7 +13,9 @@ mod helix;
 mod panel_admin;
 mod pliegues_guardados;
 mod proyecto;
+mod respaldos;
 mod selector;
+mod sesion;
 mod tema;
 
 pub use color::{analizar_color_hex, formatear_color_hex, hsl_a_rgb, rgb_a_hsl};
@@ -35,6 +37,8 @@ pub use proyecto::{
     buscar_config_proyecto, cargar_config_proyecto, directorio_inicio_proyecto, mezclar_toml, ConfigProyecto,
 };
 pub use selector::{EstadoSelectorTema, FiltroTipoTema};
+pub use respaldos::{buscar_huerfanos, directorio_respaldos, CarpetaRespaldos, Huerfano, Respaldo};
+pub use sesion::{NodoSesion, PestanaSesion, Sesion};
 pub use tema::{
     cargar_tema, descubrir_temas_usuario, duplicar_tema_para_editar, guardar_tema, tema_por_defecto, EstiloToken,
     InfoTema, InfoTemaListado, ResultadoDuplicarTema, Tema, TemaBusqueda, TemaDiagnosticos, TemaGit, TemaSintaxis,

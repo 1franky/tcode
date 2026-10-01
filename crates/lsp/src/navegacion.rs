@@ -24,6 +24,13 @@ pub struct CapacidadesLsp {
     pub hover: bool,
     pub renombrar: bool,
     pub completado: bool,
+    /// `codeActionProvider` (BACKLOG.md P2 #23).
+    pub acciones: bool,
+    /// `signatureHelpProvider` (BACKLOG.md P2 #23) y sus caracteres de
+    /// disparo (`(`) y de re-disparo (`,`) juntos: tipear cualquiera pide
+    /// la ayuda de firma en el acto.
+    pub ayuda_firma: bool,
+    pub disparadores_firma: Vec<char>,
     /// `completionProvider.triggerCharacters`: tipear uno pide completado
     /// en el acto, sin esperar la pausa (el `.` de un método, `::`...).
     pub disparadores_completado: Vec<char>,
@@ -50,6 +57,15 @@ impl CapacidadesLsp {
             // `completionProvider` es siempre un objeto de opciones (no
             // hay forma booleana en la spec): su sola presencia es un sí.
             completado: capacidades["completionProvider"].is_object(),
+            acciones: anuncia("codeActionProvider"),
+            ayuda_firma: capacidades["signatureHelpProvider"].is_object(),
+            disparadores_firma: ["triggerCharacters", "retriggerCharacters"]
+                .iter()
+                .filter_map(|campo| capacidades["signatureHelpProvider"][*campo].as_array())
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter_map(|s| s.chars().next())
+                .collect(),
             disparadores_completado,
         }
     }

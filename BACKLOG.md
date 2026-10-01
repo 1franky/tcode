@@ -44,8 +44,15 @@ Cuatro niveles:
 
 ## P0 — Gaps sorprendentes
 
-Ninguno pendiente — el último (#15, portapapeles) se cerró, ver "Hecho
-recientemente".
+Ninguno pendiente — #18 (mouse) y #19 (edición básica) se cerraron, ver
+"Hecho recientemente". Limitaciones conocidas:
+
+- **Mouse (#18)**: mientras `tcode` captura el mouse, la selección nativa
+  de la terminal necesita `Shift` (o `Option` en Terminal.app/iTerm2);
+  la vista de código no tiene scroll horizontal con la rueda; en modo VIM
+  el doble clic y `Shift+clic` no seleccionan (se arrastra a Visual).
+- **Edición básica (#19)**: en macOS, `Alt+↑/↓` necesitan que la terminal
+  mande Option como Meta (si no, están los chords `Ctrl+K`).
 
 ---
 
@@ -108,6 +115,24 @@ son gaps nuevos, anotadas para no redescubrirlas):
   muchos errores de sintaxis el re-parseo tiene un tope de 250 ms: los
   colores de lo recién editado quedan aproximados hasta el reintento.
 
+### 23. Más funciones de LSP
+
+Hecho: acciones rápidas (`textDocument/codeAction`, `Ctrl+.`/`Ctrl+K X`)
+y ayuda de firma (`signatureHelp`, sola al tipear `(`/`,`, o
+`Ctrl+Shift+Espacio`/`Ctrl+K ,`). Falta: inlay hints — insertan texto
+virtual en la vista de código, lo que toca el mapeo de columnas del
+cursor, el mouse y el ajuste de línea: evaluarlos aparte.
+
+### 24. Snippets con saltos entre campos
+
+Propios por lenguaje y los que manda el LSP (hoy se insertan como texto
+plano, sin placeholders).
+
+### 25. Git más completo
+
+Ver el diff de un bloque contra `HEAD`, revertir un bloque, blame en
+línea.
+
 ---
 
 ## P3 — Bloqueado o reconsiderar si debería estar en el plan
@@ -143,9 +168,55 @@ Limitaciones conocidas de estas piezas (no son gaps nuevos):
   localmente se completa con el Oscuro/Claro de tcode; los nombres ANSI
   usan valores fijos de xterm, no la paleta de la terminal.
 
+Candidatos grandes, a decidir si entran en el plan:
+
+### 26. Terminal integrada
+
+Un panel con una shell (PTY), como el de VSCode.
+
+### 27. Depurador (DAP)
+
+Breakpoints, paso a paso, variables — vía Debug Adapter Protocol.
+
+### 28. Completar el modo VIM
+
+Búsqueda con `/`/`?`/`n`/`*`, macros, registros con nombre, `Ctrl+R`.
+
 ---
 
 ## Hecho recientemente (para no reabrir por error)
+
+**2026-09-30 — P2 #20 Restaurar la sesión y #21 Recuperación:**
+- **Sesión** por carpeta en `<estado>/sesiones/<huella>.json`
+  (`tcode_config::Sesion`, `Layout::a_sesion`/`desde_sesion`): pestañas,
+  splits, cursores, explorador. Solo al lanzar sin archivo; se guarda al
+  salir y con cada respaldo. Opción `editor.restaurar_sesion`.
+- **Respaldos** en `<estado>/respaldos/<pid>-<nanos>/` con un archivo
+  `bloqueo` bloqueado por el proceso (`File::try_lock`, el SO lo suelta
+  si el proceso muere): así se distingue "vivo" de "se cerró de golpe",
+  también con varias instancias. Escritura en un hilo con clones del
+  `Rope`, tras 1 s sin cambios o cada 5 s. Al arrancar, diálogo
+  `Enter`/`d`/`Esc`.
+- Limitaciones: el tamaño de los splits no se guarda (tcode los reparte
+  por igual); tras recuperar y `Ctrl+Z` hasta el texto del disco, el
+  buffer sigue marcado como modificado (pasa con cualquier deshacer).
+
+**2026-09-30 — todo P0 cerrado:**
+- **P0 #19 Edición básica** (PR #127): comentar/descomentar (`Ctrl+/`),
+  mover (`Alt+↑/↓`) y duplicar líneas, seleccionar todo (`Ctrl+A`), ir a
+  línea (`Ctrl+G`); todo con multi-cursor y un solo paso de deshacer.
+- **P0 #18 Mouse**: clic, arrastre, doble/triple clic y `Shift+clic` en
+  el código; rueda en código, explorador, tabla CSV y listas; clic en
+  pestañas (medio para cerrar), explorador, paleta y demás overlays (clic
+  afuera cierra); popups del LSP. Lo que se dibujó en cada frame queda en
+  `tcode_ui::ZonasMouse`; `crates/app/src/mouse.rs` las consulta. Se
+  apaga en Interfaz → "Usar el mouse".
+**2026-09-30 — P2 #22 Panel de problemas:** `Ctrl+Shift+M`/`Ctrl+K Q`
+lista los diagnósticos de todos los documentos abiertos (reusa la lista
+de ubicaciones de "Buscar referencias": filtro, `Enter`, mouse y "Volver"
+gratis); `F8`/`Shift+F8` recorren los problemas entre archivos. Solo
+archivos abiertos (el LSP no informa los demás). Código en
+`crates/app/src/problemas.rs`.
 
 **2026-09-24/25 — portapapeles, búsqueda en el proyecto y LSP avanzado**
 (3 agentes en paralelo, integrados de a uno con verificación

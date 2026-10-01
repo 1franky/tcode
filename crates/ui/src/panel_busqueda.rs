@@ -16,16 +16,17 @@ const ANCHO: u16 = 46;
 /// PLAN.md §4) en la esquina superior derecha del área de edición, al
 /// estilo VSCode — a diferencia de la paleta de comandos o el buscador de
 /// archivos (`overlay::dibujar`), no es un recuadro centrado: no debe
-/// tapar el código mientras se busca en él.
-pub fn dibujar(frame: &mut Frame, area_editor: Rect, estado: &EstadoBusqueda, paleta: &Paleta) {
+/// tapar el código mientras se busca en él. Devuelve dónde quedó, para
+/// que un clic afuera la cierre (BACKLOG.md P0 #18).
+pub fn dibujar(frame: &mut Frame, area_editor: Rect, estado: &EstadoBusqueda, paleta: &Paleta) -> Option<Rect> {
     if !estado.activa() {
-        return;
+        return None;
     }
 
     let alto = if estado.modo_reemplazar() { 5 } else { 4 };
     let ancho = ANCHO.min(area_editor.width);
     if area_editor.height < alto || ancho < 10 {
-        return;
+        return None;
     }
 
     let area = Rect {
@@ -69,6 +70,7 @@ pub fn dibujar(frame: &mut Frame, area_editor: Rect, estado: &EstadoBusqueda, pa
     let fila = area.y + 1 + u16::from(estado.campo_activo() == CampoBusqueda::Reemplazo);
     let columna = area.x + 1 + (prefijo.len() + texto.chars().count()) as u16;
     frame.set_cursor_position((columna, fila));
+    Some(area)
 }
 
 fn campo_estilo(estado: &EstadoBusqueda, campo: CampoBusqueda, base: Style, activo: Style) -> Style {

@@ -1018,6 +1018,108 @@ proyecto y con `HOME` temporal. Si `HOME` es temporal, `rust-analyzer`
 - [ ] En la paleta (`F1`), "LSP: ..." lista las seis funciones.
 - [ ] Velocidad: en un `.py` de ~4500 líneas, pegar por tmux una ráfaga de ~500 caracteres (`send-keys` en tandas) tarda lo mismo que en `develop` (medido: ~390 ms las dos).
 
+## Edición de líneas: comentar, mover, duplicar, seleccionar todo, ir a línea (BACKLOG.md P0 #19)
+
+Con `HOME` apuntando a una carpeta temporal, en tmux (sin protocolo
+Kitty) y, si se puede, también en una terminal con Kitty (kitty, WezTerm,
+Ghostty).
+
+- [ ] **Comentar en Rust.** En un `.rs`, `Ctrl+/` sobre una línea indentada: queda `    // código` y el cursor sigue sobre el mismo texto. Otra vez: vuelve como estaba. En tmux (`Ctrl+/` llega como `Ctrl+7`) funciona igual; `Ctrl+K Ctrl+C` también.
+- [ ] **Bloque con sangrías distintas.** Seleccionar con `Shift+↓` tres líneas de distinta sangría con una en blanco al medio: los `//` quedan alineados a la sangría menor, la línea en blanco intacta; la línea donde quedó el cursor (columna 0) no se comenta. Un solo `Ctrl+Z` lo deshace todo.
+- [ ] **Mezcla.** Con una línea comentada y otra no, `Ctrl+/` comenta las dos (la que ya estaba queda `// // ...`).
+- [ ] **Otros lenguajes.** `.py`/`.toml`/`Makefile` usan `#`; `.sql`/`.lua` `--`; `.html`/`.md` envuelven cada línea en `<!-- -->`; `.css` en `/* */`. Descomentar los devuelve exactos.
+- [ ] **Sin lenguaje.** En un `.txt`, `.json` o "[Sin nombre]", `Ctrl+/` no cambia nada y la barra dice "No se sabe cómo comentar este tipo de archivo".
+- [ ] **Multi-cursor.** Con tres cursores (`Ctrl+Alt+↓`), `Ctrl+/` comenta las tres líneas; `Alt+↓` las baja juntas; `Shift+Alt+↓` las duplica.
+- [ ] **Mover.** `Alt+↑`/`Alt+↓` (o `Ctrl+K Shift+↑`/`Ctrl+K Shift+↓`) mueven la línea con el cursor en la misma columna; con una selección de varias líneas se mueven todas y la selección las acompaña. En la primera línea `Alt+↑` y en la última `Alt+↓` no hacen nada. En un archivo sin `\n` final, subir la última línea no agrega ni quita saltos de línea.
+- [ ] **Mover y plegado.** Plegar una función (`Ctrl+K [`), pararse en la línea de arriba y `Alt+↓`: salta la función entera, que sigue plegada. Pararse sobre la cabecera plegada y `Alt+↑`: sube la función entera, plegada.
+- [ ] **Duplicar.** `Shift+Alt+↓` (o `Ctrl+K Ctrl+D`; `Ctrl+Shift+D` solo con protocolo Kitty — en tmux llega como `Ctrl+D`) duplica la línea debajo con el cursor en la copia; con selección duplica las líneas enteras. `Ctrl+Z` en un paso.
+- [ ] **Seleccionar todo.** `Ctrl+A` selecciona todo el archivo (con varios cursores, queda uno); `Ctrl+C` copia el archivo entero.
+- [ ] **Ir a línea.** `Ctrl+G` abre "Ir a línea (1-N)". `12` + `Enter` va a la línea 12; `12:5` a la columna 5; `99999` a la última; `abc` muestra el error sin cerrar; `Esc` cancela; `Enter` vacío cierra sin moverse. Saltar a una línea dentro de un bloque plegado lo despliega. Pegar texto con el prompt abierto lo escribe en el prompt.
+- [ ] **Paleta.** En `F1`, "Editor: Comentar/descomentar líneas", "Editor: Mover línea(s) arriba/abajo", "Editor: Duplicar línea(s)", "Selección: Seleccionar todo" e "Ir: A la línea..." hacen lo mismo que los atajos.
+- [ ] **Modo VIM.** Con el modo VIM prendido, en Normal: `Ctrl+/`, `Alt+↑/↓`, `Shift+Alt+↓`, `Ctrl+A` y `Ctrl+G` funcionan igual; después de `Ctrl+G` se sigue en Normal.
+- [ ] **Explorador y CSV.** Con el foco en el explorador o en la vista de tabla de un CSV, ninguno de estos atajos toca el archivo (`Ctrl+K ↑/↓` sigue insertando filas en la tabla).
+
+## Mouse
+
+Con `HOME` temporal, en una terminal con mouse (en tmux: `set -g mouse
+on`, o inyectando secuencias SGR con `send-keys -l`, p. ej.
+`$'\e[<0;10;5M'` + `$'\e[<0;10;5m'` = clic en columna 10, fila 5). Un
+archivo con más de 100 líneas, alguna línea más larga que la ventana,
+una con palabras sueltas y un bloque plegable.
+
+- [ ] `Ctrl+,` → Interfaz → "Usar el mouse" está en "Sí" por defecto. Apagarlo: la terminal vuelve a seleccionar texto al arrastrar y los clics no hacen nada en tcode; `config.toml` queda con `usar_mouse = false`. Prenderlo: vuelve en el acto.
+- [ ] Clic en distintas filas y columnas del código: el cursor va exactamente ahí (con números de línea y marcas de git prendidos y apagados). Clic más allá del final de una línea: final de esa línea. Clic debajo de la última línea: final del archivo.
+- [ ] Con ajuste de línea prendido: clic en la 2.ª/3.ª fila de una línea partida ubica el cursor en la parte correcta de la línea.
+- [ ] Con un bloque plegado: clic debajo del pliegue va a la línea que se ve ahí (no a una oculta). Clic sobre ` ... ` lo despliega.
+- [ ] Línea con caracteres anchos (`日本語`) o acentos: clic sobre cada carácter ubica el cursor antes de ese carácter.
+- [ ] Arrastrar selecciona; arrastrar por debajo del borde del código desplaza la vista y sigue seleccionando.
+- [ ] Doble clic selecciona la palabra; triple clic, la línea entera. `Shift`+clic extiende la selección.
+- [ ] Rueda: la vista baja/sube 3 filas por muesca sin mover el cursor (queda fuera de la pantalla); una flecha vuelve a llevar la vista al cursor. No pasa del final del archivo. Con ajuste de línea también.
+- [ ] Con dos paneles (`Ctrl+\`): clic en el otro panel lo activa y ubica el cursor ahí. La rueda sobre el panel inactivo lo desplaza sin activarlo. Maximizado (`F11`), clic en el panel no lo restaura.
+- [ ] Clic en una pestaña la activa; clic medio la cierra; con cambios sin guardar avisa y un segundo clic medio la cierra.
+- [ ] Explorador (`Ctrl+B`): clic en una carpeta la expande/colapsa; clic en un archivo lo abre en el panel activo. La rueda mueve la selección.
+- [ ] Paleta (`F1`), buscador (`Ctrl+P`), selector de temas y de símbolos: clic en un ítem lo ejecuta/abre; clic afuera cierra (el selector de temas vuelve al tema de antes); rueda mueve la selección.
+- [ ] Búsqueda en el proyecto (`Ctrl+Shift+F`): clic en una coincidencia la abre; clic en el encabezado de archivo no hace nada.
+- [ ] Vista de tabla de un `.csv`: clic selecciona la celda (también el encabezado); rueda baja de fila, `Shift`+rueda cambia de columna.
+- [ ] Modo VIM en Normal: clic mueve el cursor; arrastrar entra a Visual (`-- VISUAL --`) con lo arrastrado; `d` lo borra. En Visual, un clic sale a Normal.
+- [ ] Con "Guardar como" o el `:` de VIM abiertos, los clics no hacen nada (lo escrito queda).
+- [ ] Al salir con `Ctrl+Q`, la terminal ya no captura el mouse (se puede seleccionar texto normalmente).
+- [ ] Tipear y pegar siguen igual de rápidos que en `develop`.
+## Panel de problemas (BACKLOG.md P2 #22)
+
+Con `HOME` temporal y pyright instalado, en una carpeta con `a.py` (un
+error de tipos, un nombre indefinido, y una línea con `ñandú_🙂` antes de
+otro error) y `b.py` (un nombre indefinido), abrir los dos más un `c.py`
+sin errores, esperar a que pyright los analice.
+
+- [ ] **Lista.** `Ctrl+K Q` (o `Ctrl+Shift+M` con protocolo Kitty) abre "Problemas (N errores)" con los de `a.py` y `b.py` ordenados por archivo y línea, con `línea:col` correctos también después de los acentos.
+- [ ] **Salto.** `Enter` sobre el de la línea con `ñandú` deja el cursor exactamente en el nombre. `Alt+←` vuelve. Un clic en una fila (con el mouse prendido) hace lo mismo. Escribir filtra; `Esc` cierra.
+- [ ] **F8.** Recorre los problemas en orden, pasa de `a.py` a `b.py` sin abrir una pestaña nueva y del último vuelve al primero; `Shift+F8` al revés. El mensaje aparece en la barra de estado.
+- [ ] **Desde el explorador.** Con el foco en el explorador, `F8` salta y lo que se escribe después va al editor.
+- [ ] **Sin problemas.** Con solo `c.py` abierto, `Ctrl+K Q` y `F8` avisan "Sin problemas en los archivos abiertos".
+- [ ] **Paleta.** "Problemas: Ver todos", "Ir al siguiente" e "Ir al anterior" hacen lo mismo que los atajos.
+
+## Sesión y recuperación (BACKLOG.md P2 #20 y #21)
+
+Con `HOME` temporal, en una carpeta con `a.txt`, `b.txt` y `src/c.txt`
+(varias decenas de líneas cada uno). Lanzar siempre `tcode` sin archivo
+desde esa carpeta salvo que se diga otra cosa.
+
+- [ ] **Sesión.** Abrir `a.txt` y `b.txt` en pestañas, dividir (`Ctrl+K \`), abrir `src/c.txt` en el panel nuevo, mover los cursores, mostrar el explorador y salir. Al volver a lanzar: los mismos paneles, pestañas (con rutas relativas), cursores y explorador.
+- [ ] **Archivo borrado.** Borrar `b.txt` por fuera y relanzar: el resto se restaura, sin error. Si un panel se queda sin archivos, desaparece.
+- [ ] **Con archivo.** `tcode a.txt` abre solo `a.txt`; al salir, la sesión de la carpeta no cambió (la próxima vez sin archivo se restaura la de antes).
+- [ ] **Opción.** Con "Restaurar la sesión anterior" apagado en `Ctrl+,` → Editor, se arranca con un "[Sin nombre]".
+- [ ] **Cierre inesperado.** Escribir algo en un "[Sin nombre]", en `a.txt` y en `b.txt`, esperar 2 s y matar el proceso (`kill -9`, o cerrar la ventana de la terminal). Al relanzar aparece "Recuperar cambios" con los tres; `Enter` los abre sin guardar, con el cursor donde estaba, y `Ctrl+Z` en cada uno vuelve al texto del disco.
+- [ ] **Descartar y posponer.** Repetir el cierre: `Esc` cierra el aviso sin borrar nada (vuelve a aparecer al relanzar); `d` los descarta (no vuelve a aparecer).
+- [ ] **Salida normal.** Con cambios sin guardar, `Ctrl+Q` dos veces: al relanzar NO aparece el aviso.
+- [ ] **Dos instancias.** Con un `tcode` abierto y con cambios en la carpeta, abrir otro en la misma carpeta: no ofrece recuperar nada.
+- [ ] **Velocidad.** Mantener apretada una tecla en un archivo de ~10.000 líneas: tipea igual de fluido que en `develop` (el respaldo se escribe en otro hilo).
+
+## Acciones rápidas del LSP (BACKLOG.md P2 #23, primera parte)
+
+Con `HOME` temporal y `rust-analyzer` configurado como comando LSP de
+Rust (con rustup, pasar también `RUSTUP_HOME`/`CARGO_HOME` reales), en un
+proyecto Cargo con `let m: HashMap<i32, i32> = HashMap::new();` sin el
+`use`.
+
+- [ ] **Import.** Con el cursor sobre `HashMap`, `Ctrl+K X` (o `Ctrl+.` con protocolo Kitty) lista "Import `std::collections::HashMap`" y "Qualify as..."; `Enter` en la primera agrega el `use` arriba de todo y la barra dice "1 cambios en 1 archivo(s)". Un `Ctrl+Z` lo deshace entero.
+- [ ] **Selección.** Seleccionar una expresión (`Shift+flechas`) y `Ctrl+K X`: aparecen refactors como "Extract into variable"; aplicarlo cambia el código como corresponde.
+- [ ] **Sin acciones.** En una línea sin nada que ofrecer: "No hay acciones rápidas acá". En un `.txt`: "LSP: sin LSP para este archivo".
+- [ ] **Archivo cambiado.** Si el archivo cambia entre pedir las acciones y elegir una (por ejemplo, un formateo al guardar de otro panel sobre el mismo archivo), no se aplica nada y la barra avisa "el archivo cambió mientras tanto".
+- [ ] **Comando del servidor.** Con un servidor que ofrece acciones como `Command` (por ejemplo, un servidor LSP mínimo de prueba escrito para eso), elegir una: el servidor pide los cambios con `workspace/applyEdit`, `tcode` los aplica y le contesta `applied: true`.
+- [ ] **Mouse.** Un clic en una acción de la lista la aplica.
+
+## Ayuda de firma (BACKLOG.md P2 #23, segunda parte)
+
+Con `HOME` temporal y pyright, en un `.py` con
+`def sumar(a: int, b: str) -> str:` y un docstring.
+
+- [ ] **Al tipear.** Escribir `sumar(`: arriba del cursor aparece `(a: int, b: str) -> str` con `a: int` resaltado y la primera línea del docstring. Escribir `1, `: el resaltado pasa a `b: str`. Escribir `"x")`: desaparece.
+- [ ] **Con autocompletado.** Dentro de los paréntesis, empezar a escribir un nombre: el completado sale abajo y la firma sigue arriba.
+- [ ] **Cerrar.** Con la firma a la vista, `Esc` la cierra (en modo VIM además pasa a Normal); una flecha o un atajo también.
+- [ ] **A mano.** Con el cursor adentro de una llamada ya escrita, `Ctrl+K ,` la muestra; afuera de una llamada, "Sin firma para mostrar acá". En un `.txt`, "LSP: sin LSP para este archivo".
+- [ ] **Rust.** Con rust-analyzer: `String::with_capacity(` muestra la firma con el nombre de la función.
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).

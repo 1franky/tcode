@@ -138,6 +138,39 @@ impl Plegado {
         self.pliegues.dedup();
     }
 
+    /// Ajusta los pliegues a un intercambio de dos tramos de líneas
+    /// contiguos (`primero.end == segundo.start`): mover líneas arriba o
+    /// abajo (`Alt+↑`/`Alt+↓`, BACKLOG.md P0 #19). A diferencia de
+    /// `ajustar_por_edicion`, que despliega todo lo que la edición toca,
+    /// acá el contenido de cada tramo no cambia, solo se corre: un pliegue
+    /// que cae entero dentro de uno de los dos tramos viaja con él (mover
+    /// una función plegada la deja plegada). Uno que cruza el borde entre
+    /// los tramos, o uno de sus extremos, se despliega; uno que queda
+    /// entero afuera, o que los contiene a los dos, no cambia.
+    pub fn intercambiar(&mut self, primero: Range<usize>, segundo: Range<usize>) {
+        debug_assert_eq!(primero.end, segundo.start);
+        let (largo_primero, largo_segundo) = (primero.len(), segundo.len());
+        self.pliegues.retain_mut(|p| {
+            let adentro = |tramo: &Range<usize>| tramo.start <= p.inicio && p.fin < tramo.end;
+            if p.fin < primero.start || p.inicio >= segundo.end || (p.inicio < primero.start && p.fin + 1 >= segundo.end)
+            {
+                return true;
+            }
+            if adentro(&primero) {
+                p.inicio += largo_segundo;
+                p.fin += largo_segundo;
+                return true;
+            }
+            if adentro(&segundo) {
+                p.inicio -= largo_primero;
+                p.fin -= largo_primero;
+                return true;
+            }
+            false
+        });
+        self.pliegues.sort_by_key(|p| (p.inicio, std::cmp::Reverse(p.fin)));
+    }
+
     /// Descarta los pliegues que se salen de un documento de
     /// `num_lineas` líneas (por las dudas, tras deshacer/rehacer).
     pub fn recortar(&mut self, num_lineas: usize) {
@@ -267,5 +300,17 @@ mod tests {
         plegado.plegar(p(10, 15));
         plegado.ajustar_por_edicion(16, 18, 30, true);
         assert_eq!(plegado.pliegues(), &[p(10, 15)]);
+    }
+
+    #[test]
+    fn intercambiar_mueve_los_de_adentro_y_despliega_los_que_cruzan() {
+        let mut plegado = Plegado::default();
+        plegado.plegar(p(0, 20)); // contiene a los dos tramos: queda
+        plegado.plegar(p(2, 3)); // dentro del primero (2..5)
+        plegado.plegar(p(6, 8)); // dentro del segundo (5..9)
+        plegado.plegar(p(4, 6)); // cruza el borde: se despliega
+        plegado.plegar(p(12, 14)); // afuera: queda igual
+        plegado.intercambiar(2..5, 5..9);
+        assert_eq!(plegado.pliegues(), &[p(0, 20), p(3, 5), p(6, 7), p(12, 14)]);
     }
 }

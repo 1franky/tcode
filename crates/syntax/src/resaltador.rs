@@ -850,10 +850,23 @@ mod tests {
     /// líneas en blanco agregadas en los cortes de línea no rompen la
     /// sintaxis y se acumulan, para que los offsets del documento vayan
     /// cambiando entre paso y paso.
+    /// Para los tests que comparan el parseo incremental con parsear de
+    /// cero: sin [`PRESUPUESTO_PARSEO`]. Con la máquina cargada (la suite
+    /// entera corre en paralelo) un re-parseo puede pasarse de los 250 ms,
+    /// y entonces el resaltador se queda a propósito con el árbol anterior
+    /// — correcto en el editor, pero no es lo que estos tests miden (el
+    /// camino del presupuesto tiene su propio test,
+    /// `reparseo_que_se_pasa_del_presupuesto_sigue_con_el_arbol_anterior`).
+    fn resaltador_sin_presupuesto() -> Resaltador {
+        let mut resaltador = Resaltador::nuevo();
+        resaltador.presupuesto_parseo = Duration::MAX;
+        resaltador
+    }
+
     #[test]
     fn el_resaltado_incremental_coincide_con_parsear_de_cero() {
         for lenguaje in [Lenguaje::Rust, Lenguaje::Python, Lenguaje::Markdown] {
-            let mut resaltador = Resaltador::nuevo();
+            let mut resaltador = resaltador_sin_presupuesto();
             let mut parser = Parser::new();
             parser.set_language(&Resaltador::construir_config(lenguaje).unwrap().language).unwrap();
             let mut texto = muestra(lenguaje).to_string();
@@ -1075,7 +1088,7 @@ mod tests {
     /// revisión nueva lo pide y re-parsea, igual que sin revisión.
     #[test]
     fn resaltar_documento_versionado_no_pide_el_texto_si_la_revision_no_cambio() {
-        let mut resaltador = Resaltador::nuevo();
+        let mut resaltador = resaltador_sin_presupuesto();
         let v1 = "fn a() {}\n";
         let v2 = "fn a() { 1 }\n// fin\n";
         let pedidos = std::cell::Cell::new(0);

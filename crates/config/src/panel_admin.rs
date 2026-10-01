@@ -63,6 +63,7 @@ pub enum CampoEditor {
     ColumnaRegla,
     GuardadoAutomatico,
     SegundosGuardadoAutomatico,
+    RestaurarSesion,
     Portapapeles,
     VimSincronizarPortapapeles,
 }
@@ -87,7 +88,7 @@ const SEGUNDOS_GUARDADO_MIN: i64 = 5;
 const SEGUNDOS_GUARDADO_MAX: i64 = 600;
 
 impl CampoEditor {
-    pub const TODOS: [CampoEditor; 11] = [
+    pub const TODOS: [CampoEditor; 12] = [
         CampoEditor::TamanoTabulacion,
         CampoEditor::UsarEspacios,
         CampoEditor::AjusteLinea,
@@ -97,6 +98,7 @@ impl CampoEditor {
         CampoEditor::ColumnaRegla,
         CampoEditor::GuardadoAutomatico,
         CampoEditor::SegundosGuardadoAutomatico,
+        CampoEditor::RestaurarSesion,
         CampoEditor::Portapapeles,
         CampoEditor::VimSincronizarPortapapeles,
     ];
@@ -112,6 +114,7 @@ impl CampoEditor {
             CampoEditor::ColumnaRegla => "Regla vertical (columna)",
             CampoEditor::GuardadoAutomatico => "Guardado automático",
             CampoEditor::SegundosGuardadoAutomatico => "Guardado automático: segundos",
+            CampoEditor::RestaurarSesion => "Restaurar la sesión anterior",
             CampoEditor::Portapapeles => "Portapapeles del sistema",
             CampoEditor::VimSincronizarPortapapeles => "VIM: registro = portapapeles",
         }
@@ -125,6 +128,7 @@ impl CampoEditor {
             CampoEditor::ColumnaRegla => Some("← en 'Apagada' no hace nada; → o Enter la prende en 80"),
             CampoEditor::GuardadoAutomatico => Some("Solo archivos con nombre; foco = otro panel/archivo/ventana"),
             CampoEditor::SegundosGuardadoAutomatico => Some("Solo se usa en el modo 'cada N segundos'; ←/→ de a 5"),
+            CampoEditor::RestaurarSesion => Some("Pestañas, splits y cursores por carpeta; tcode <archivo> no restaura"),
             CampoEditor::Portapapeles => Some("OSC 52 anda por SSH; en tmux: set -g set-clipboard on"),
             CampoEditor::VimSincronizarPortapapeles => Some("Como clipboard=unnamedplus; \"+y/\"+p andan siempre"),
             _ => None,
@@ -145,6 +149,7 @@ impl CampoEditor {
             CampoEditor::ColumnaRegla => "columna_regla",
             CampoEditor::GuardadoAutomatico => "guardado_automatico",
             CampoEditor::SegundosGuardadoAutomatico => "segundos_guardado_automatico",
+            CampoEditor::RestaurarSesion => "restaurar_sesion",
             CampoEditor::Portapapeles => "portapapeles",
             CampoEditor::VimSincronizarPortapapeles => "vim_sincronizar_portapapeles",
         };
@@ -165,6 +170,7 @@ impl CampoEditor {
             }
             CampoEditor::GuardadoAutomatico => etiqueta_guardado_automatico(config.editor.guardado_automatico).to_string(),
             CampoEditor::SegundosGuardadoAutomatico => format!("{} s", config.editor.segundos_guardado_automatico),
+            CampoEditor::RestaurarSesion => etiqueta_bool(config.editor.restaurar_sesion),
             CampoEditor::Portapapeles => etiqueta_portapapeles(config.editor.portapapeles).to_string(),
             CampoEditor::VimSincronizarPortapapeles => etiqueta_bool(config.editor.vim_sincronizar_portapapeles),
         }
@@ -185,6 +191,7 @@ impl CampoEditor {
             CampoEditor::NumerosDeLinea => config.editor.numeros_de_linea = !config.editor.numeros_de_linea,
             CampoEditor::IndicadoresGit => config.editor.indicadores_git = !config.editor.indicadores_git,
             CampoEditor::ModoVim => config.editor.modo_vim = !config.editor.modo_vim,
+            CampoEditor::RestaurarSesion => config.editor.restaurar_sesion = !config.editor.restaurar_sesion,
             // Un solo campo (`Option<usize>`, no un booleano + un número
             // separados) para que "apagada" y "prendida en la columna
             // X" sean el único estado posible, sin un segundo booleano
@@ -279,10 +286,11 @@ pub enum CampoInterfaz {
     StatusbarLenguaje,
     StatusbarDiagnosticos,
     StatusbarModo,
+    UsarMouse,
 }
 
 impl CampoInterfaz {
-    pub const TODOS: [CampoInterfaz; 9] = [
+    pub const TODOS: [CampoInterfaz; 10] = [
         CampoInterfaz::MostrarStatusbar,
         CampoInterfaz::MostrarPestanas,
         CampoInterfaz::MostrarBreadcrumbs,
@@ -292,6 +300,7 @@ impl CampoInterfaz {
         CampoInterfaz::StatusbarLenguaje,
         CampoInterfaz::StatusbarDiagnosticos,
         CampoInterfaz::StatusbarModo,
+        CampoInterfaz::UsarMouse,
     ];
 
     pub fn nombre(&self) -> &'static str {
@@ -305,6 +314,7 @@ impl CampoInterfaz {
             CampoInterfaz::StatusbarLenguaje => "Statusbar: lenguaje detectado",
             CampoInterfaz::StatusbarDiagnosticos => "Statusbar: resumen de diagnósticos LSP",
             CampoInterfaz::StatusbarModo => "Statusbar: modo",
+            CampoInterfaz::UsarMouse => "Usar el mouse",
         }
     }
 
@@ -321,6 +331,7 @@ impl CampoInterfaz {
             CampoInterfaz::StatusbarLenguaje => "statusbar_lenguaje",
             CampoInterfaz::StatusbarDiagnosticos => "statusbar_diagnosticos",
             CampoInterfaz::StatusbarModo => "statusbar_modo",
+            CampoInterfaz::UsarMouse => "usar_mouse",
         };
         ("interfaz", clave)
     }
@@ -336,6 +347,7 @@ impl CampoInterfaz {
             CampoInterfaz::StatusbarLenguaje => config.interfaz.statusbar_lenguaje,
             CampoInterfaz::StatusbarDiagnosticos => config.interfaz.statusbar_diagnosticos,
             CampoInterfaz::StatusbarModo => config.interfaz.statusbar_modo,
+            CampoInterfaz::UsarMouse => config.interfaz.usar_mouse,
         };
         etiqueta_bool(activo)
     }
@@ -354,6 +366,7 @@ impl CampoInterfaz {
             CampoInterfaz::StatusbarLenguaje => &mut config.interfaz.statusbar_lenguaje,
             CampoInterfaz::StatusbarDiagnosticos => &mut config.interfaz.statusbar_diagnosticos,
             CampoInterfaz::StatusbarModo => &mut config.interfaz.statusbar_modo,
+            CampoInterfaz::UsarMouse => &mut config.interfaz.usar_mouse,
         };
         *campo = !*campo;
     }
@@ -912,6 +925,17 @@ mod tests {
         assert_eq!(CampoInterfaz::MostrarBreadcrumbs.clave_toml(), ("interfaz", "mostrar_breadcrumbs"));
         CampoInterfaz::MostrarBreadcrumbs.aplicar(&mut config);
         assert!(!config.interfaz.mostrar_breadcrumbs);
+        assert!(config.interfaz.mostrar_statusbar, "no toca otros campos");
+    }
+
+    #[test]
+    fn usar_mouse_viene_prendido_y_se_alterna() {
+        let mut config = Config::default();
+        assert!(config.interfaz.usar_mouse);
+        assert_eq!(CampoInterfaz::UsarMouse.clave_toml(), ("interfaz", "usar_mouse"));
+        assert_eq!(CampoInterfaz::UsarMouse.valor_actual(&config), CampoInterfaz::MostrarStatusbar.valor_actual(&config));
+        CampoInterfaz::UsarMouse.aplicar(&mut config);
+        assert!(!config.interfaz.usar_mouse);
         assert!(config.interfaz.mostrar_statusbar, "no toca otros campos");
     }
 

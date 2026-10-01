@@ -18,12 +18,16 @@
 mod formateador;
 mod funciones_lsp;
 mod lsp;
+mod mouse;
 mod pliegues;
 mod portapapeles;
+mod problemas;
+mod respaldo;
+mod sesion;
 mod vim;
 
 use std::collections::VecDeque;
-use std::io::{self, Stdout};
+use std::io::{self, Stdout, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -49,8 +53,8 @@ use tcode_config::{
     EstadoSelectorTema, FocoPanelAdmin, GuardadoAutomatico, ModoEdicion, ResultadoDuplicarTema, Seccion,
 };
 use tcode_core::{
-    analizar_csv, delimitador_por_extension, serializar_fila_csv, CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo,
-    EstadoVim, Modo, Pliegue,
+    analizar_csv, delimitador_por_extension, estilo_comentario_por_extension, interpretar_ir_a_linea, serializar_fila_csv,
+    CampoBusqueda, Editor, EstadoBusqueda, EstadoGuardarComo, EstadoIrALinea, EstadoVim, Modo, Pliegue,
 };
 use tcode_fs::{
     BuscadorArchivos, EstadoBusquedaProyecto, EstadoConfirmarBorrado, EstadoPromptExplorador, Explorador,
@@ -90,7 +94,7 @@ async fn main() -> Result<()> {
         None => Editor::nuevo(),
     };
     pliegues::restaurar(&mut editor);
-    let mut layout = PanelLayout::nuevo(editor, ruta_arg.clone().unwrap_or_else(|| "[Sin nombre]".to_string()));
+    let layout_inicial = PanelLayout::nuevo(editor, ruta_arg.clone().unwrap_or_else(|| "[Sin nombre]".to_string()));
 
     // La config y el keymap nunca hacen fallar el arranque: si el archivo
     // del usuario está corrupto, se sigue con los valores por defecto en
@@ -101,7 +105,24 @@ async fn main() -> Result<()> {
     let capas_config = CapasConfig::cargar(tcode_config::directorio_inicio_proyecto(ruta_arg.as_deref()));
     let config = capas_config.efectiva();
     let keymap = tcode_keymap::cargar().unwrap_or_else(|_| tcode_keymap::keymap_por_defecto());
-    let explorador = crear_explorador(ruta_arg.as_deref());
+    let mut explorador = crear_explorador(ruta_arg.as_deref());
+
+    // Sesión anterior de esta carpeta (BACKLOG.md P2 #20), solo si se
+    // lanzó sin archivo. Cada documento restaurado ya sale en Normal si
+    // el modo VIM está prendido (ver `sesion::abrir`).
+    let restaurada = sesion::aplica(ruta_arg.as_deref(), &config).then(|| sesion::restaurar(&config)).flatten();
+    let hubo_sesion = restaurada.is_some();
+    let mut layout = match restaurada {
+        Some((layout, explorador_visible)) => {
+            if explorador_visible {
+                explorador.mostrar();
+            } else {
+                explorador.ocultar();
+            }
+            layout
+        }
+        None => layout_inicial,
+    };
 
     // Modo VIM (M5, `config.editor.modo_vim`, apagado por defecto): el
     // `Editor` arranca siempre en `Modo::Insertar` sin saber nada de esta
@@ -109,12 +130,21 @@ async fn main() -> Result<()> {
     // `Normal` antes de la primera tecla. Lo mismo al abrir un archivo
     // (`abrir_ruta_desde_explorador`) y al dividir un panel
     // (`panel.dividir_*` en `ejecutar_comando`).
-    if config.editor.modo_vim {
+    if config.editor.modo_vim && !hubo_sesion {
         layout.editor_activo_mut().entrar_modo_normal();
     }
 
-    let (mut terminal, protocolo_kitty) = iniciar_terminal()?;
-    let resultado = ejecutar(&mut terminal, &mut layout, capas_config, keymap, explorador, ruta_arg.as_deref()).await;
+    let (mut terminal, protocolo_kitty) = iniciar_terminal(config.interfaz.usar_mouse)?;
+    let resultado = ejecutar(
+        &mut terminal,
+        &mut layout,
+        capas_config,
+        keymap,
+        explorador,
+        ruta_arg.as_deref(),
+        config.interfaz.usar_mouse,
+    )
+    .await;
     finalizar_terminal(&mut terminal, protocolo_kitty)?;
     // Al salir, los pliegues de todo lo que quedó abierto (ver `pliegues`).
     pliegues::recordar(layout.paneles_mut().into_iter().map(|p| {
@@ -267,7 +297,10 @@ fn firma_estructural(layout: &PanelLayout, estado: &EstadoApp) -> (String, (usiz
 /// clásicas (confirmado con un diagnóstico directo contra `crossterm` en
 /// tmux) — por eso `paleta.comandos` también tiene `F1` como atajo
 /// alternativo universal en `runtime/keymaps/default.toml`.
-fn iniciar_terminal() -> Result<(Terminal<Backend>, bool)> {
+///
+/// Con `usar_mouse` (`interfaz.usar_mouse`, BACKLOG.md P0 #18) también
+/// activa la captura del mouse — ver [`capturar_mouse`].
+fn iniciar_terminal(usar_mouse: bool) -> Result<(Terminal<Backend>, bool)> {
     configurar_consola_utf8();
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -282,6 +315,9 @@ fn iniciar_terminal() -> Result<(Terminal<Backend>, bool)> {
     // y ese modo sigue andando igual con los cambios de panel/archivo.
     // En tmux hace falta `set -g focus-events on` para que los reenvíe.
     let _ = execute!(stdout, EnableFocusChange);
+    if usar_mouse {
+        capturar_mouse(&mut stdout, true);
+    }
 
     let protocolo_kitty = supports_keyboard_enhancement().unwrap_or(false);
     if protocolo_kitty {
@@ -296,10 +332,36 @@ fn finalizar_terminal(terminal: &mut Terminal<Backend>, protocolo_kitty: bool) -
         execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     }
     let _ = execute!(terminal.backend_mut(), DisableFocusChange);
+    // Siempre, aunque la config lo tuviera apagado: es inocuo, y así la
+    // terminal nunca queda capturando el mouse al salir.
+    capturar_mouse(terminal.backend_mut(), false);
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), DisableBracketedPaste, LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
+}
+
+/// Prende o apaga la captura del mouse (BACKLOG.md P0 #18), best-effort:
+/// una terminal que no la soporta ignora las secuencias. En Unix se piden
+/// solo los modos 1000 (clics y rueda), 1002 (movimiento CON un botón
+/// apretado, para arrastrar) y 1006 (coordenadas SGR, sin tope de 223
+/// columnas) — no el 1003 que prende `crossterm::EnableMouseCapture`, que
+/// manda un evento por cada movimiento del mouse aunque no haya botón
+/// apretado (tráfico y despertares del bucle por nada). En Windows la
+/// consola no usa secuencias sino un modo de entrada: ahí va el comando
+/// de `crossterm`.
+fn capturar_mouse(salida: &mut impl Write, activar: bool) {
+    #[cfg(windows)]
+    {
+        use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+        let _ = if activar { execute!(salida, EnableMouseCapture) } else { execute!(salida, DisableMouseCapture) };
+    }
+    #[cfg(not(windows))]
+    {
+        let secuencia: &[u8] =
+            if activar { b"\x1b[?1000h\x1b[?1002h\x1b[?1006h" } else { b"\x1b[?1006l\x1b[?1002l\x1b[?1000l" };
+        let _ = salida.write_all(secuencia).and_then(|_| salida.flush());
+    }
 }
 
 /// Qué panel recibe las teclas de navegación/edición genéricas
@@ -354,6 +416,8 @@ struct EstadoApp {
     busqueda_proyecto: EstadoBusquedaProyecto,
     estado_busqueda: EstadoBusqueda,
     guardar_como: EstadoGuardarComo,
+    /// Prompt "Ir a línea" (`Ctrl+G`, BACKLOG.md P0 #19).
+    ir_a_linea: EstadoIrALinea,
     selector_tema: EstadoSelectorTema,
     /// Selector de símbolos del archivo actual (`Ctrl+K .`, "Ir a
     /// símbolo"): otro overlay de lista filtrable, como la paleta.
@@ -389,6 +453,15 @@ struct EstadoApp {
     /// explorador enfocado) — separada de `prompt_explorador` porque no
     /// tiene ningún campo de texto, solo `y`/cualquier otra tecla.
     confirmar_borrado: EstadoConfirmarBorrado,
+    /// Copias de respaldo de los buffers modificados (BACKLOG.md P2 #21,
+    /// `respaldo.rs`).
+    respaldo: respaldo::EstadoRespaldo,
+    /// Respaldos de una sesión que se cerró de golpe en esta carpeta,
+    /// mientras se pregunta si recuperarlos (diálogo modal al arrancar).
+    recuperacion: Option<Vec<tcode_config::Huerfano>>,
+    /// Si esta ejecución guarda la sesión de la carpeta (BACKLOG.md P2
+    /// #20, ver `sesion::aplica`).
+    guardar_sesion: bool,
     /// Cuándo corrió por última vez el guardado automático "cada N
     /// segundos" (BACKLOG.md P2 #4) — se reinicia también al cambiar ese
     /// modo o el número de segundos desde el panel de administración, para
@@ -421,6 +494,12 @@ struct EstadoApp {
     /// P0 #15) + la copia interna de lo último copiado. Ver
     /// `portapapeles.rs`.
     portapapeles: portapapeles::Portapapeles,
+    /// Dónde se dibujó cada cosa en el último frame (lo anota
+    /// `tcode_ui::dibujar`), para traducir los eventos de mouse
+    /// (BACKLOG.md P0 #18, ver `mouse.rs`).
+    zonas: tcode_ui::ZonasMouse,
+    /// Doble clic y arrastre en curso (`mouse.rs`).
+    mouse: mouse::EstadoMouse,
 }
 
 /// Entra o sale del modo zen (ver `EstadoApp::modo_zen`). Al entrar, el
@@ -448,6 +527,7 @@ async fn ejecutar(
     keymap: Keymap,
     explorador: Explorador,
     ruta_arg: Option<&str>,
+    mouse_inicial: bool,
 ) -> Result<()> {
     let mut resolvedor = Resolvedor::nuevo(keymap.clone());
     let mut eventos = EventStream::new();
@@ -476,6 +556,17 @@ async fn ejecutar(
     );
 
     let config = capas_config.efectiva();
+    // Recuperación ante cierres inesperados (BACKLOG.md P2 #21): los
+    // respaldos que dejó un `tcode` de esta carpeta que se cerró de golpe
+    // se ofrecen en un diálogo antes de la primera tecla; los de este
+    // proceso empiezan a escribirse en cuanto haya algo modificado.
+    let proyecto = std::env::current_dir().and_then(std::fs::canonicalize).unwrap_or_default();
+    let base_respaldos = tcode_config::directorio_respaldos();
+    let huerfanos = tcode_config::buscar_huerfanos(&base_respaldos, &proyecto);
+    let recuperacion = (!huerfanos.is_empty()).then_some(huerfanos);
+    let respaldo = respaldo::EstadoRespaldo::iniciar(&base_respaldos, &proyecto);
+    let guardar_sesion = sesion::aplica(ruta_arg, &config);
+
     let mut estado = EstadoApp {
         paleta: cargar_paleta(&config.interfaz.tema),
         config,
@@ -493,6 +584,7 @@ async fn ejecutar(
         busqueda_proyecto: EstadoBusquedaProyecto::nuevo(tcode_fs::raiz_por_defecto(ruta_arg)),
         estado_busqueda: EstadoBusqueda::nueva(),
         guardar_como: EstadoGuardarComo::nueva(),
+        ir_a_linea: EstadoIrALinea::nuevo(),
         selector_tema: EstadoSelectorTema::nueva(),
         selector_simbolos: EstadoSelectorSimbolos::nuevo(),
         panel_admin,
@@ -504,12 +596,22 @@ async fn ejecutar(
         logs_lsp: EstadoLogsLsp::nuevo(),
         prompt_explorador: EstadoPromptExplorador::nuevo(),
         confirmar_borrado: EstadoConfirmarBorrado::nuevo(),
+        respaldo,
+        recuperacion,
+        guardar_sesion,
         ultimo_autoguardado: Instant::now(),
         guardado_pendiente: false,
         resaltador: Resaltador::nuevo(),
         modo_zen: None,
         portapapeles: portapapeles::Portapapeles::nuevo(),
+        zonas: Default::default(),
+        mouse: Default::default(),
     };
+    // Si la terminal está capturando el mouse ahora (ver `capturar_mouse`):
+    // se reconcilia con `interfaz.usar_mouse` en cada vuelta, así el
+    // toggle de `Ctrl+,` (o recargar una config que lo cambió) surte
+    // efecto en el acto.
+    let mut mouse_capturado = mouse_inicial;
     if let Some(aviso) = aviso_proyecto_no_confiable(&estado.capas_config) {
         layout.panel_activo_mut().mensaje_estado = Some(aviso);
     }
@@ -572,8 +674,14 @@ async fn ejecutar(
         if estado.funciones_lsp.pedido.is_some() {
             funciones_lsp::enviar_pedido(layout, &mut estado).await;
         }
+        if estado.funciones_lsp.firma_pedida.is_some() {
+            funciones_lsp::enviar_firma(layout, &mut estado).await;
+        }
         if !funciones_lsp::procesar_respuestas(layout, &mut estado) && std::mem::take(&mut solo_respuestas_lsp) {
             omitir_dibujo = true;
+        }
+        if estado.lsp.hay_contestaciones() {
+            estado.lsp.enviar_contestaciones().await;
         }
         let foco_actual = firma_foco(layout, &estado);
         if foco_actual != ultimo_foco {
@@ -603,6 +711,10 @@ async fn ejecutar(
             if necesita_redibujado {
                 forzar_redibujado_completo(terminal)?;
                 necesita_redibujado = false;
+            }
+            if estado.config.interfaz.usar_mouse != mouse_capturado {
+                mouse_capturado = estado.config.interfaz.usar_mouse;
+                capturar_mouse(terminal.backend_mut(), mouse_capturado);
             }
 
             // Barato (5 lenguajes): se recalcula cada frame en vez de
@@ -635,14 +747,29 @@ async fn ejecutar(
                     &estado.confirmar_borrado,
                     &estado.selector_simbolos,
                     estado.modo_zen.is_some(),
+                    &mut estado.zonas,
                 );
                 tcode_ui::panel_linea_vim::dibujar(frame, frame.area(), &estado.vim.linea_comando, &estado.paleta);
-                funciones_lsp::dibujar(frame, layout, &estado.funciones_lsp, &estado.paleta);
+                tcode_ui::panel_ir_a_linea::dibujar(
+                    frame,
+                    frame.area(),
+                    &estado.ir_a_linea,
+                    layout.editor_activo().buffer().num_lineas(),
+                    &estado.paleta,
+                );
+                if let Some(huerfanos) = &estado.recuperacion {
+                    tcode_ui::panel_recuperacion::dibujar(frame, frame.area(), &respaldo::nombres(huerfanos), &estado.paleta);
+                }
+                let (lista_lsp, popup_lsp) = funciones_lsp::dibujar(frame, layout, &estado.funciones_lsp, &estado.paleta);
+                if lista_lsp.is_some() {
+                    estado.zonas.overlay = lista_lsp;
+                }
+                estado.zonas.popup = popup_lsp;
                 // Encima de todo, pero fuera de `tcode_ui::dibujar`: mientras
                 // está abierta captura el teclado, así que ningún otro
                 // overlay puede abrirse a la vez.
                 if estado.busqueda_proyecto.activo() {
-                    tcode_ui::panel_busqueda_proyecto::dibujar(
+                    estado.zonas.overlay = tcode_ui::panel_busqueda_proyecto::dibujar(
                         frame,
                         frame.area(),
                         &estado.busqueda_proyecto,
@@ -703,7 +830,7 @@ async fn ejecutar(
                     omitir_dibujo = !estado.busqueda_proyecto.recibir();
                     continue;
                 }
-                _ = tick.tick(), if necesita_tick(&estado) => {
+                _ = tick.tick(), if necesita_tick(layout, &estado) => {
                     omitir_dibujo = !procesar_tick(layout, &mut estado);
                     continue;
                 }
@@ -721,6 +848,18 @@ async fn ejecutar(
             Event::Key(key) if key.kind == KeyEventKind::Press => key,
             Event::Paste(texto) => {
                 pegar_texto(&texto, layout, &mut estado, &mut teclas_sinteticas);
+                necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+                continue;
+            }
+            // Mouse (BACKLOG.md P0 #18, ver `mouse.rs`). Un evento que no
+            // cambió nada (moverlo sin botón, un clic en un borde) no
+            // redibuja.
+            Event::Mouse(evento) => {
+                match mouse::manejar(evento, layout, &mut estado, &mut resolvedor) {
+                    mouse::Resultado::Salir => break,
+                    mouse::Resultado::Nada => omitir_dibujo = true,
+                    mouse::Resultado::Cambio => {}
+                }
                 necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
                 continue;
             }
@@ -750,6 +889,22 @@ async fn ejecutar(
         // al guardar") dura hasta la próxima tecla.
         layout.panel_activo_mut().mensaje_estado = None;
         estado.cierre_armado = estado.cierre_pedido.take();
+
+        // Diálogo de recuperación (BACKLOG.md P2 #21): antes que todo,
+        // captura el teclado hasta que se decida. `Enter` recupera, `d`
+        // descarta, `Esc` lo deja para la próxima vez (suelta el bloqueo
+        // sin borrar nada). Descartar pide una tecla distinta de la que
+        // recupera, así un `Enter` apurado nunca pierde nada.
+        if let Some(huerfanos) = estado.recuperacion.take() {
+            match key.code {
+                KeyCode::Enter => respaldo::recuperar(huerfanos, layout, &mut estado),
+                KeyCode::Char('d') | KeyCode::Char('D') => huerfanos.into_iter().for_each(tcode_config::Huerfano::borrar),
+                KeyCode::Esc => drop(huerfanos),
+                _ => estado.recuperacion = Some(huerfanos),
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+            continue;
+        }
 
         // El editor visual de tema (`Ctrl+K Ctrl+P`, PLAN.md §7) es otra
         // vista a pantalla completa que captura el teclado por completo:
@@ -1157,6 +1312,22 @@ async fn ejecutar(
             continue;
         }
 
+        // Prompt "Ir a línea" (`Ctrl+G`, BACKLOG.md P0 #19): mismo
+        // patrón que "Guardar como". Un `Enter` con algo inválido deja el
+        // prompt abierto con el error, sin perder lo escrito.
+        if estado.ir_a_linea.activo() {
+            estado.confirmar_salida = false;
+            match key.code {
+                KeyCode::Esc => estado.ir_a_linea.cerrar(),
+                KeyCode::Backspace => estado.ir_a_linea.borrar(),
+                KeyCode::Enter => confirmar_ir_a_linea(layout, &mut estado.ir_a_linea),
+                KeyCode::Char(c) if sin_modificadores(key) => estado.ir_a_linea.escribir(c),
+                _ => {}
+            }
+            necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
+            continue;
+        }
+
         // Visor de logs del LSP activo (`Ctrl+K R`): se actualiza solo
         // con el tick del bucle (`procesar_tick`, BACKLOG.md P1 #2); acá
         // solo el filtro de texto, el scroll y `Esc` para cerrar.
@@ -1399,6 +1570,10 @@ async fn ejecutar(
         necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
     }
 
+    if estado.guardar_sesion {
+        sesion::guardar(layout, &estado.explorador);
+    }
+    estado.respaldo.terminar();
     estado.lsp.cerrar().await;
     Ok(())
 }
@@ -1430,8 +1605,10 @@ const INTERVALO_TICK: Duration = Duration::from_millis(250);
 /// con el visor de logs abierto o el guardado automático "cada N
 /// segundos" prendido — si no, no hay nada que hacer en cada tick y no
 /// tiene sentido despertarse.
-fn necesita_tick(estado: &EstadoApp) -> bool {
-    estado.logs_lsp.activo() || estado.config.editor.guardado_automatico == GuardadoAutomatico::CadaNSegundos
+fn necesita_tick(layout: &PanelLayout, estado: &EstadoApp) -> bool {
+    estado.logs_lsp.activo()
+        || estado.config.editor.guardado_automatico == GuardadoAutomatico::CadaNSegundos
+        || estado.respaldo.necesita_tick(layout)
 }
 
 /// Un tick del bucle principal: refresca el visor de logs del LSP si
@@ -1440,6 +1617,12 @@ fn necesita_tick(estado: &EstadoApp) -> bool {
 /// si no, el bucle se saltea el próximo dibujo.
 fn procesar_tick(layout: &mut PanelLayout, estado: &mut EstadoApp) -> bool {
     let mut cambio = false;
+    // Respaldos de lo no guardado (BACKLOG.md P2 #21) y, de paso, la
+    // sesión: si `tcode` se cierra de golpe, al volver se reabren las
+    // mismas pestañas además de recuperarse los cambios.
+    if estado.respaldo.tick(layout) && estado.guardar_sesion {
+        sesion::guardar(layout, &estado.explorador);
+    }
     if estado.logs_lsp.activo() {
         let (lineas, total) = estado.lsp.logs_con_total();
         cambio |= estado.logs_lsp.actualizar(lineas, total);
@@ -1530,6 +1713,7 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
         || estado.selector_simbolos.activo()
         || estado.estado_busqueda.activa()
         || estado.guardar_como.activa()
+        || estado.ir_a_linea.activo()
         || estado.logs_lsp.activo()
         || estado.prompt_explorador.activo()
         || estado.funciones_lsp.captura_texto()
@@ -1551,6 +1735,7 @@ fn pegar_texto(texto: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, te
         || estado.panel_admin.activo()
         || estado.selector_tema.activa()
         || estado.confirmar_borrado.activo()
+        || estado.recuperacion.is_some()
         || estado.explorador.modo_salto();
     if otro_modal || estado.foco != Foco::Editor || layout.panel_activo().modo_csv == ModoCsv::Tabla {
         return;
@@ -1642,6 +1827,16 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         // mismo árbol de tree-sitter que el resaltado (recorrerlo es
         // O(archivo), pero solo al abrir el selector, no por frame). Sin
         // sentido en el explorador o en la vista de tabla CSV.
+        // Panel de problemas (BACKLOG.md P2 #22): también con el foco en
+        // el explorador — saltar lleva el foco al editor.
+        "problemas.ver" => {
+            problemas::ver(layout, estado);
+            Accion::Continuar
+        }
+        "problemas.siguiente" | "problemas.anterior" => {
+            problemas::saltar(id == "problemas.siguiente", layout, estado);
+            Accion::Continuar
+        }
         "simbolos.ir_a" => {
             if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
                 let (simbolos, byte_cursor) = esquema_del_activo(layout, &mut estado.resaltador);
@@ -1656,6 +1851,20 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
             if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
                 estado.confirmar_salida = false;
                 usar_portapapeles(id, layout, estado);
+            }
+            Accion::Continuar
+        }
+        // Comentar e ir a línea (BACKLOG.md P0 #19): acá y no en
+        // `ejecutar_comando` porque necesitan la ruta del archivo (para
+        // elegir el comentario) o el estado del prompt. Solo sobre el
+        // código, igual que el portapapeles.
+        "editor.alternar_comentario" | "editor.ir_a_linea" => {
+            if estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla {
+                if id == "editor.ir_a_linea" {
+                    estado.ir_a_linea.abrir();
+                } else {
+                    alternar_comentario(layout);
+                }
             }
             Accion::Continuar
         }
@@ -2069,9 +2278,54 @@ fn ejecutar_comando(
         "editor.borrar_adelante" => editor.borrar_adelante(),
         "editor.nueva_linea" => editor.insertar_char('\n'),
         "editor.indentar_o_autocompletar" => insertar_tabulacion(editor, config),
+        // Edición básica (BACKLOG.md P0 #19): cada una es un solo paso
+        // de deshacer y actúa sobre todos los cursores.
+        "editor.mover_lineas_arriba" => {
+            editor.mover_lineas_arriba();
+        }
+        "editor.mover_lineas_abajo" => {
+            editor.mover_lineas_abajo();
+        }
+        "editor.duplicar_lineas" => editor.duplicar_lineas(),
+        "editor.seleccionar_todo" => editor.seleccionar_todo(),
         _ => {}
     }
     Accion::Continuar
+}
+
+/// `Ctrl+/` (BACKLOG.md P0 #19): comenta/descomenta según la extensión
+/// del archivo activo (`estilo_comentario_por_extension`). Sin estilo
+/// conocido (texto plano, JSON, un buffer sin nombre) no toca nada y lo
+/// avisa en la barra de estado, en vez de adivinar un `#` o un `//`.
+fn alternar_comentario(layout: &mut PanelLayout) {
+    let panel = layout.panel_activo_mut();
+    let ruta = panel.editor.buffer().ruta().map(|r| r.display().to_string()).unwrap_or_default();
+    match estilo_comentario_por_extension(&ruta) {
+        Some(estilo) => {
+            panel.editor.alternar_comentario(estilo);
+        }
+        None => panel.mensaje_estado = Some("No se sabe cómo comentar este tipo de archivo".to_string()),
+    }
+}
+
+/// `Enter` en el prompt "Ir a línea": salta (una línea fuera de rango se
+/// recorta al principio/final del archivo) y cierra; vacío cierra sin
+/// moverse; algo que no es `n` ni `n:col` deja el prompt abierto con el
+/// error. En modo VIM Normal vuelve a recortar la columna, como `:{n}`.
+fn confirmar_ir_a_linea(layout: &mut PanelLayout, prompt: &mut EstadoIrALinea) {
+    let editor = layout.editor_activo_mut();
+    match interpretar_ir_a_linea(prompt.texto(), editor.buffer().num_lineas()) {
+        Ok(destino) => {
+            if let Some((linea, columna)) = destino {
+                editor.ir_a_linea(linea, columna);
+                if editor.modo() == Modo::Normal {
+                    editor.entrar_modo_normal();
+                }
+            }
+            prompt.cerrar();
+        }
+        Err(error) => prompt.establecer_error(error),
+    }
 }
 
 /// Comandos genéricos de navegación reinterpretados para el explorador:

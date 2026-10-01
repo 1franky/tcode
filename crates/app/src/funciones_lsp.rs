@@ -21,8 +21,8 @@ use ratatui::Frame;
 use serde_json::{json, Value};
 use tcode_commands::{EntradaUbicacion, EstadoListaUbicaciones};
 use tcode_core::{Editor, Modo};
-use tcode_lsp::{EstadoCompletado, ItemCompletado, Ubicacion};
-use tcode_ui::{Layout as PanelLayout, ModoCsv, Paleta};
+use tcode_lsp::{AccionRapida, AyudaFirma, EdicionArchivo, EstadoCompletado, ItemCompletado, Ubicacion};
+use tcode_ui::{Layout as PanelLayout, ModoCsv, Paleta, ZonaOverlay};
 
 use crate::lsp::{RespuestaLsp, TipoPedido};
 use crate::{abrir_ruta_desde_explorador, sin_modificadores, sincronizar_lsp, EstadoApp, Foco};
@@ -45,7 +45,7 @@ const MAX_PILA_VOLVER: usize = 50;
 
 /// Una petición que se manda al principio de la próxima vuelta del bucle
 /// (ver la nota del módulo).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Pedido {
     Definicion,
     Referencias,
@@ -55,6 +55,18 @@ pub enum Pedido {
     /// `reintento`: la lista anterior vino incompleta.
     Completado { disparador: Option<char>, manual: bool, reintento: bool },
     Renombrar(String),
+    /// Acciones rápidas (BACKLOG.md P2 #23) para la selección o el cursor.
+    AccionesRapidas,
+    /// El comando (`Command` crudo) de la acción rápida elegida.
+    EjecutarComando(Value),
+}
+
+/// Un pedido de ayuda de firma: `disparador` es el carácter recién tipeado
+/// que lo disparó (`(`, `,`), si fue eso; `manual`, el comando.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PedidoFirma {
+    pub disparador: Option<char>,
+    pub manual: bool,
 }
 
 /// Estado de las funciones de este módulo, un campo de `EstadoApp`.
@@ -81,6 +93,21 @@ pub struct EstadoFuncionesLsp {
     /// `Buffer::revision` del documento activo al pedir el renombrado: si
     /// cambió cuando llega la respuesta, sus posiciones ya no valen.
     revision_renombrar: Option<u64>,
+    /// Acciones rápidas ofrecidas, mientras la lista las muestra (la
+    /// lista es la misma de las ubicaciones: cada entrada guarda en
+    /// `linea` su índice acá), y la revisión del documento al pedirlas.
+    acciones: Option<Vec<AccionRapida>>,
+    revision_acciones: Option<u64>,
+    /// Ayuda de firma (BACKLOG.md P2 #23) a la vista, si hay.
+    pub firma: Option<AyudaFirma>,
+    /// Pedido de ayuda de firma por mandar: aparte de `pedido` porque se
+    /// dispara al tipear igual que el completado y no tiene que pisarlo.
+    pub firma_pedida: Option<PedidoFirma>,
+    /// El último pedido mandado: si fue a mano (avisa si no hay firma) y
+    /// en qué línea (una respuesta que llega con el cursor en otra línea
+    /// se descarta).
+    firma_manual: bool,
+    firma_linea: usize,
     /// De dónde se saltó (archivo, byte), para "Volver".
     pila_volver: Vec<(PathBuf, usize)>,
 }
@@ -90,6 +117,13 @@ impl EstadoFuncionesLsp {
     /// pegado se reparte en teclas, ver `pegar_texto`).
     pub fn captura_texto(&self) -> bool {
         self.lista.activo() || self.renombrar.is_some()
+    }
+
+    /// Abre la lista con ubicaciones (a las que `Enter` salta), no con
+    /// acciones rápidas.
+    pub fn abrir_ubicaciones(&mut self, titulo: impl Into<String>, entradas: Vec<EntradaUbicacion>) {
+        self.lista.abrir(titulo, entradas);
+        self.acciones = None;
     }
 
     fn cerrar_completado(&mut self) {
@@ -135,7 +169,7 @@ fn editor_de_texto(layout: &PanelLayout, estado: &EstadoApp) -> bool {
     estado.foco == Foco::Editor && layout.panel_activo().modo_csv != ModoCsv::Tabla
 }
 
-fn avisar(layout: &mut PanelLayout, texto: impl Into<String>) {
+pub(crate) fn avisar(layout: &mut PanelLayout, texto: impl Into<String>) {
     layout.panel_activo_mut().mensaje_estado = Some(texto.into());
 }
 
@@ -151,6 +185,8 @@ pub fn comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp) -> bo
         "lsp.ir_a_definicion" => funciones.pedido = Some(Pedido::Definicion),
         "lsp.referencias" => funciones.pedido = Some(Pedido::Referencias),
         "lsp.hover" => funciones.pedido = Some(Pedido::Hover),
+        "lsp.acciones_rapidas" => funciones.pedido = Some(Pedido::AccionesRapidas),
+        "lsp.ayuda_firma" => funciones.firma_pedida = Some(PedidoFirma { disparador: None, manual: true }),
         "lsp.completar" => {
             funciones.pedido = Some(Pedido::Completado { disparador: None, manual: true, reintento: false })
         }
@@ -195,6 +231,12 @@ pub async fn enviar_pedido(layout: &mut PanelLayout, estado: &mut EstadoApp) {
     sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
 
     let ruta = layout.panel_activo().ruta_mostrada.clone();
+    if let Pedido::EjecutarComando(comando) = &pedido {
+        if let Err(motivo) = estado.lsp.ejecutar_comando(&ruta, comando).await {
+            avisar(layout, format!("LSP: {motivo}"));
+        }
+        return;
+    }
     let contexto = contexto_cursor(layout.editor_activo());
     let posicion = tcode_lsp::posicion_en_linea(contexto.linea, &contexto.texto[..contexto.byte_cursor]);
     let (tipo, extra) = match &pedido {
@@ -212,6 +254,8 @@ pub async fn enviar_pedido(layout: &mut PanelLayout, estado: &mut EstadoApp) {
             (TipoPedido::Completado, json!({ "context": contexto }))
         }
         Pedido::Renombrar(nombre) => (TipoPedido::Renombrar, json!({ "newName": nombre })),
+        Pedido::AccionesRapidas => (TipoPedido::AccionesRapidas, parametros_acciones(layout)),
+        Pedido::EjecutarComando(_) => unreachable!("se mandó arriba"),
     };
     match estado.lsp.pedir(tipo, &ruta, posicion, extra).await {
         Ok(()) => match pedido {
@@ -227,6 +271,9 @@ pub async fn enviar_pedido(layout: &mut PanelLayout, estado: &mut EstadoApp) {
             Pedido::Renombrar(_) => {
                 estado.funciones_lsp.revision_renombrar = Some(layout.editor_activo().buffer().revision());
             }
+            Pedido::AccionesRapidas => {
+                estado.funciones_lsp.revision_acciones = Some(layout.editor_activo().buffer().revision());
+            }
             _ => {}
         },
         Err(motivo) => {
@@ -238,17 +285,81 @@ pub async fn enviar_pedido(layout: &mut PanelLayout, estado: &mut EstadoApp) {
     }
 }
 
+/// Manda el pedido de ayuda de firma pendiente (ver `firma_pedida`).
+/// `triggerKind`: 1 a mano, 2 por un carácter de disparo, 3 porque
+/// cambió el texto con la firma ya a la vista (`isRetrigger`).
+pub async fn enviar_firma(layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let Some(pedido) = estado.funciones_lsp.firma_pedida.take() else { return };
+    if !editor_de_texto(layout, estado) {
+        return;
+    }
+    sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+    let ruta = layout.panel_activo().ruta_mostrada.clone();
+    let contexto = contexto_cursor(layout.editor_activo());
+    let posicion = tcode_lsp::posicion_en_linea(contexto.linea, &contexto.texto[..contexto.byte_cursor]);
+    let mut contexto_firma = json!({
+        "triggerKind": if pedido.manual { 1 } else if pedido.disparador.is_some() { 2 } else { 3 },
+        "isRetrigger": estado.funciones_lsp.firma.is_some(),
+    });
+    if let (Some(c), false) = (pedido.disparador, pedido.manual) {
+        contexto_firma["triggerCharacter"] = json!(c.to_string());
+    }
+    match estado.lsp.pedir(TipoPedido::AyudaFirma, &ruta, posicion, json!({ "context": contexto_firma })).await {
+        Ok(()) => {
+            estado.funciones_lsp.firma_manual = pedido.manual;
+            estado.funciones_lsp.firma_linea = contexto.linea;
+        }
+        Err(motivo) if pedido.manual => avisar(layout, format!("LSP: {motivo}")),
+        Err(_) => estado.funciones_lsp.firma = None,
+    }
+}
+
+/// Llegó la ayuda de firma: se muestra si el cursor sigue en la línea en
+/// la que se pidió (si no, ya no corresponde).
+fn mostrar_firma(layout: &mut PanelLayout, estado: &mut EstadoApp, valor: &Value) {
+    let funciones = &mut estado.funciones_lsp;
+    let vigente = layout.editor_activo().cursor().linea == funciones.firma_linea
+        && layout.editor_activo().modo() == Modo::Insertar;
+    funciones.firma = if vigente { tcode_lsp::parsear_ayuda_firma(valor) } else { None };
+    if funciones.firma.is_none() && funciones.firma_manual {
+        avisar(layout, "Sin firma para mostrar acá");
+    }
+}
+
 /// Interpreta las respuestas llegadas (`EstadoLsp::tomar_respuestas`).
 /// Casi siempre no hay ninguna: se llama en cada vuelta del bucle.
 /// Devuelve si cambió algo visible — un completado que llegó tarde (ya
 /// se siguió escribiendo otra cosa) se descarta sin redibujar.
 pub fn procesar_respuestas(layout: &mut PanelLayout, estado: &mut EstadoApp) -> bool {
     let mut cambio = false;
+    // Cambios que pidió un servidor al ejecutar el comando de una acción
+    // rápida (`workspace/applyEdit`): se aplican y se le contesta si se
+    // pudo (la contestación sale en la próxima vuelta del bucle).
+    for pedida in estado.lsp.tomar_ediciones_pedidas() {
+        cambio = true;
+        let aplicada = tcode_lsp::parsear_workspace_edit(&pedida.edicion).map_err(|e| e.to_string()).and_then(|archivos| {
+            let resultado = aplicar_workspace_edit(layout, estado, &archivos);
+            avisar(layout, format!("Acción aplicada: {}", resultado.resumen(archivos.len())));
+            if resultado.fallidos > 0 {
+                Err(format!("{} archivo(s) no se pudieron cambiar", resultado.fallidos))
+            } else {
+                Ok(())
+            }
+        });
+        if let Err(motivo) = &aplicada {
+            avisar(layout, format!("Acción: {motivo}"));
+        }
+        estado.lsp.responder_edicion(&pedida, aplicada);
+    }
     for RespuestaLsp { tipo, resultado } in estado.lsp.tomar_respuestas() {
         cambio |= tipo != TipoPedido::Completado;
         let valor = match resultado {
             Ok(valor) => valor,
             Err(motivo) => {
+                if tipo == TipoPedido::AyudaFirma && !estado.funciones_lsp.firma_manual {
+                    estado.funciones_lsp.firma = None;
+                    continue;
+                }
                 if tipo == TipoPedido::Completado {
                     let manual = estado.funciones_lsp.completado_manual;
                     estado.funciones_lsp.esperando_completado = false;
@@ -285,6 +396,10 @@ pub fn procesar_respuestas(layout: &mut PanelLayout, estado: &mut EstadoApp) -> 
             },
             TipoPedido::Completado => cambio |= abrir_completado(layout, estado, &valor),
             TipoPedido::Renombrar => aplicar_renombrado(layout, estado, &valor),
+            TipoPedido::AccionesRapidas => abrir_acciones(layout, estado, &valor),
+            // Lo que haya cambiado llegó antes como `workspace/applyEdit`.
+            TipoPedido::EjecutarComando => {}
+            TipoPedido::AyudaFirma => mostrar_firma(layout, estado, &valor),
         }
     }
     cambio
@@ -293,7 +408,7 @@ pub fn procesar_respuestas(layout: &mut PanelLayout, estado: &mut EstadoApp) -> 
 /// Si `a` y `b` son el mismo archivo: iguales tal cual o una vez
 /// resueltos los enlaces (en macOS `/tmp` es `/private/tmp`, y un
 /// servidor puede devolver cualquiera de las dos) y las rutas relativas.
-fn mismo_archivo(a: &Path, b: &Path) -> bool {
+pub(crate) fn mismo_archivo(a: &Path, b: &Path) -> bool {
     a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
@@ -335,7 +450,7 @@ fn byte_de(editor: &Editor, linea: u32, caracter: u32) -> usize {
 
 /// Salta a una ubicación (abriendo el archivo en una pestaña si hace
 /// falta), recordando de dónde se venía para "Volver".
-fn saltar_a(layout: &mut PanelLayout, estado: &mut EstadoApp, ruta: PathBuf, linea: u32, caracter: u32) {
+pub(crate) fn saltar_a(layout: &mut PanelLayout, estado: &mut EstadoApp, ruta: PathBuf, linea: u32, caracter: u32) {
     let editor = layout.editor_activo();
     let origen = editor.buffer().ruta().map(|r| {
         let cursor = editor.cursor();
@@ -355,6 +470,9 @@ fn saltar_a(layout: &mut PanelLayout, estado: &mut EstadoApp, ruta: PathBuf, lin
     let editor = layout.editor_activo_mut();
     let byte = byte_de(editor, linea, caracter);
     editor.mover_cursor_a_byte(byte);
+    // Desde el panel de problemas se puede saltar con el foco en el
+    // explorador.
+    estado.foco = Foco::Editor;
 }
 
 /// "Volver" (`Alt+←`): al lugar de antes del último salto.
@@ -410,7 +528,7 @@ fn abrir_lista(layout: &mut PanelLayout, estado: &mut EstadoApp, titulo: &str, u
             }
         })
         .collect();
-    estado.funciones_lsp.lista.abrir(titulo, entradas);
+    estado.funciones_lsp.abrir_ubicaciones(titulo, entradas);
 }
 
 /// Si el popup de completado puede seguir abierto (o abrirse) con el
@@ -536,10 +654,39 @@ fn aplicar_renombrado(layout: &mut PanelLayout, estado: &mut EstadoApp, valor: &
     if revision != Some(layout.editor_activo().buffer().revision()) {
         return avisar(layout, "Renombrar: el archivo cambió mientras tanto, probá de nuevo");
     }
+    let resultado = aplicar_workspace_edit(layout, estado, &archivos);
+    avisar(layout, format!("Renombrado: {}", resultado.resumen(archivos.len())));
+}
 
+/// Cuánto cambió [`aplicar_workspace_edit`].
+struct ResultadoEdicion {
+    cambios: usize,
+    abiertos_nuevos: usize,
+    fallidos: usize,
+}
+
+impl ResultadoEdicion {
+    fn resumen(&self, archivos: usize) -> String {
+        let mut aviso = format!("{} cambios en {archivos} archivo(s)", self.cambios);
+        if self.abiertos_nuevos > 0 {
+            aviso.push_str(&format!(", {} abierto(s) en pestañas sin guardar", self.abiertos_nuevos));
+        }
+        if self.fallidos > 0 {
+            aviso.push_str(&format!(" ({} no se pudieron aplicar)", self.fallidos));
+        }
+        aviso
+    }
+}
+
+/// Aplica los cambios de un `WorkspaceEdit` (renombrar, acciones
+/// rápidas): en los archivos ya abiertos (en cualquier pestaña o panel)
+/// ahí mismo, un paso de deshacer por archivo; los que no, se abren en
+/// pestañas nuevas con los cambios sin guardar — `tcode` nunca escribe al
+/// disco algo que no se vio. Deja activo el documento que lo estaba.
+fn aplicar_workspace_edit(layout: &mut PanelLayout, estado: &mut EstadoApp, archivos: &[EdicionArchivo]) -> ResultadoEdicion {
     let original = layout.editor_activo().buffer().ruta().map(Path::to_path_buf);
-    let (mut cambios, mut abiertos_nuevos, mut fallidos) = (0, 0, 0);
-    for archivo in &archivos {
+    let mut resultado = ResultadoEdicion { cambios: 0, abiertos_nuevos: 0, fallidos: 0 };
+    for archivo in archivos {
         let aplicar = |editor: &mut Editor| {
             let texto = editor.buffer().a_texto();
             let ediciones: Vec<(std::ops::Range<usize>, String)> = archivo
@@ -554,34 +701,102 @@ fn aplicar_renombrado(layout: &mut PanelLayout, estado: &mut EstadoApp, valor: &
             if panel.editor.buffer().ruta().is_some_and(|r| mismo_archivo(r, &archivo.ruta)) {
                 encontrado = true;
                 if !aplicar(&mut panel.editor) {
-                    fallidos += 1;
+                    resultado.fallidos += 1;
                 }
             }
         }
         if !encontrado {
             if activar_archivo(layout, estado, &archivo.ruta) {
-                abiertos_nuevos += 1;
+                resultado.abiertos_nuevos += 1;
                 if !aplicar(layout.editor_activo_mut()) {
-                    fallidos += 1;
+                    resultado.fallidos += 1;
                 }
             } else {
-                fallidos += 1;
+                resultado.fallidos += 1;
             }
         }
-        cambios += archivo.ediciones.len();
+        resultado.cambios += archivo.ediciones.len();
     }
     if let Some(original) = original {
         activar_archivo(layout, estado, &original);
     }
+    resultado
+}
 
-    let mut aviso = format!("Renombrado: {cambios} cambios en {} archivo(s)", archivos.len());
-    if abiertos_nuevos > 0 {
-        aviso.push_str(&format!(", {abiertos_nuevos} abierto(s) en pestañas sin guardar"));
+/// Parámetros de `textDocument/codeAction` (además del documento): el
+/// rango de la selección del cursor principal (o el cursor solo) y los
+/// diagnósticos de esas líneas, tal como los mandó el servidor.
+fn parametros_acciones(layout: &PanelLayout) -> Value {
+    let panel = layout.panel_activo();
+    let editor = &panel.editor;
+    let principal = &editor.cursores()[0];
+    let (inicio, fin) = if (principal.ancla.linea, principal.ancla.columna) <= (principal.cursor.linea, principal.cursor.columna) {
+        (principal.ancla, principal.cursor)
+    } else {
+        (principal.cursor, principal.ancla)
+    };
+    let posicion = |c: tcode_core::Cursor| {
+        let linea = editor.buffer().linea_texto(c.linea);
+        let prefijo: String = linea.chars().take(c.columna).collect();
+        tcode_lsp::posicion_en_linea(c.linea, &prefijo)
+    };
+    let diagnosticos: Vec<_> = panel
+        .diagnosticos
+        .iter()
+        .filter(|d| d.linea_inicio as usize <= fin.linea && d.linea_fin as usize >= inicio.linea)
+        .map(|d| &d.original)
+        .collect();
+    json!({
+        "range": { "start": posicion(inicio), "end": posicion(fin) },
+        "context": { "diagnostics": diagnosticos, "triggerKind": 1 },
+    })
+}
+
+/// Llegaron las acciones rápidas: la lista para elegir (`Enter` aplica).
+fn abrir_acciones(layout: &mut PanelLayout, estado: &mut EstadoApp, valor: &Value) {
+    let acciones = tcode_lsp::parsear_acciones(valor);
+    if acciones.is_empty() {
+        return avisar(layout, "No hay acciones rápidas acá");
     }
-    if fallidos > 0 {
-        aviso.push_str(&format!(" ({fallidos} no se pudieron aplicar)"));
+    let entradas = acciones
+        .iter()
+        .enumerate()
+        .map(|(i, a)| EntradaUbicacion {
+            etiqueta: if a.preferida { format!("{} (recomendada)", a.titulo) } else { a.titulo.clone() },
+            ruta: PathBuf::new(),
+            linea: i as u32,
+            caracter: 0,
+        })
+        .collect();
+    estado.funciones_lsp.lista.abrir("Acciones rápidas", entradas);
+    estado.funciones_lsp.acciones = Some(acciones);
+}
+
+/// `Enter` (o clic) en la lista: aplica la acción rápida si la lista las
+/// mostraba, o salta a la ubicación.
+fn elegir_de_lista(entrada: EntradaUbicacion, layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let Some(acciones) = estado.funciones_lsp.acciones.take() else {
+        return saltar_a(layout, estado, entrada.ruta, entrada.linea, entrada.caracter);
+    };
+    let Some(accion) = acciones.into_iter().nth(entrada.linea as usize) else { return };
+    let revision = estado.funciones_lsp.revision_acciones.take();
+    if revision != Some(layout.editor_activo().buffer().revision()) {
+        return avisar(layout, "Acción: el archivo cambió mientras tanto, probá de nuevo");
     }
-    avisar(layout, aviso);
+    if let Some(edicion) = &accion.edicion {
+        match tcode_lsp::parsear_workspace_edit(edicion) {
+            Ok(archivos) => {
+                let resultado = aplicar_workspace_edit(layout, estado, &archivos);
+                avisar(layout, format!("{}: {}", accion.titulo, resultado.resumen(archivos.len())));
+            }
+            Err(error) => return avisar(layout, format!("Acción: {error}")),
+        }
+    }
+    // El comando va después de los cambios (así lo pide la spec); lo que
+    // cambie llega como `workspace/applyEdit`.
+    if let Some(comando) = accion.comando {
+        estado.funciones_lsp.pedido = Some(Pedido::EjecutarComando(comando));
+    }
 }
 
 /// Teclas que capturan la lista de ubicaciones, el prompt de renombrar,
@@ -600,13 +815,18 @@ pub fn manejar_tecla(key: KeyEvent, layout: &mut PanelLayout, estado: &mut Estad
             KeyCode::Backspace => funciones.lista.borrar(),
             KeyCode::Enter => {
                 if let Some(entrada) = funciones.lista.confirmar() {
-                    saltar_a(layout, estado, entrada.ruta, entrada.linea, entrada.caracter);
+                    elegir_de_lista(entrada, layout, estado);
                 }
             }
             KeyCode::Char(c) if sin_modificadores(key) => funciones.lista.escribir(c),
             _ => {}
         }
         return true;
+    }
+    // `Esc` cierra la ayuda de firma y sigue su camino (cierra también el
+    // completado, o pasa a Normal en modo VIM).
+    if key.code == KeyCode::Esc {
+        funciones.firma = None;
     }
     if let Some(nombre) = &mut funciones.renombrar {
         match key.code {
@@ -667,6 +887,7 @@ pub enum Tecleo {
 pub fn despues_de_tecla(tecleo: Tecleo, layout: &PanelLayout, estado: &mut EstadoApp) {
     let editor = layout.editor_activo();
     let apto = editor_de_texto(layout, estado) && editor.modo() == Modo::Insertar && !editor.tiene_multiples_cursores();
+    actualizar_firma(tecleo, apto, layout, estado);
     let caracter = match tecleo {
         Tecleo::Caracter(c) if apto => Some(c),
         Tecleo::Borrar if apto => None,
@@ -701,6 +922,30 @@ pub fn despues_de_tecla(tecleo: Tecleo, layout: &PanelLayout, estado: &mut Estad
     }
 }
 
+/// Ayuda de firma al tipear: un carácter de disparo del servidor (`(`,
+/// `,`) la pide; con la firma a la vista, cualquier letra o borrado la
+/// vuelve a pedir (el parámetro activo cambia, o el cursor salió de la
+/// llamada y el servidor contesta que no hay firma, lo que la cierra).
+/// Cualquier otra cosa (un atajo, moverse, `Enter`) la cierra.
+fn actualizar_firma(tecleo: Tecleo, apto: bool, layout: &PanelLayout, estado: &mut EstadoApp) {
+    let disparadores = estado
+        .lsp
+        .capacidades(&layout.panel_activo().ruta_mostrada)
+        .filter(|c| c.ayuda_firma)
+        .map(|c| c.disparadores_firma.clone());
+    let funciones = &mut estado.funciones_lsp;
+    match (tecleo, disparadores) {
+        (Tecleo::Caracter(c), Some(disparadores)) if apto && disparadores.contains(&c) => {
+            funciones.firma_pedida = Some(PedidoFirma { disparador: Some(c), manual: false });
+        }
+        (Tecleo::Caracter(_) | Tecleo::Borrar, Some(_)) if apto && funciones.firma.is_some() => {
+            funciones.firma_pedida = Some(PedidoFirma { disparador: None, manual: false });
+        }
+        (Tecleo::Caracter(_) | Tecleo::Borrar, _) if apto => {}
+        _ => funciones.firma = None,
+    }
+}
+
 /// Venció la pausa al tipear (rama del `select!` de `ejecutar`): pide el
 /// completado. `reintento` si ya había una lista abierta (incompleta).
 pub fn pausa_vencida(estado: &mut EstadoApp) {
@@ -712,27 +957,78 @@ pub fn pausa_vencida(estado: &mut EstadoApp) {
 }
 
 /// Dibuja lo de este módulo encima de todo lo demás.
-pub fn dibujar(frame: &mut Frame, layout: &PanelLayout, funciones: &EstadoFuncionesLsp, paleta: &Paleta) {
+/// Dibuja lo de este módulo que esté abierto. Devuelve, para el mouse
+/// (BACKLOG.md P0 #18), dónde quedó la lista de ubicaciones (un overlay
+/// modal) y el popup de completado o de hover (pegados al cursor).
+pub fn dibujar(
+    frame: &mut Frame,
+    layout: &PanelLayout,
+    funciones: &EstadoFuncionesLsp,
+    paleta: &Paleta,
+) -> (Option<ZonaOverlay>, Option<ZonaOverlay>) {
     let area = frame.area();
     if funciones.lista.activo() {
-        tcode_ui::panel_lsp::dibujar_lista_ubicaciones(frame, area, &funciones.lista, paleta);
-        return;
+        return (tcode_ui::panel_lsp::dibujar_lista_ubicaciones(frame, area, &funciones.lista, paleta), None);
     }
     if let Some(nombre) = &funciones.renombrar {
         tcode_ui::panel_lsp::dibujar_prompt_renombrar(frame, area, nombre, paleta);
-        return;
+        return (None, None);
     }
-    let Some(cursor) = layout.panel_activo().estado_ui.posicion_cursor() else { return };
+    let Some(cursor) = layout.panel_activo().estado_ui.posicion_cursor() else { return (None, None) };
+    // La firma va arriba del cursor y el completado abajo: se pueden ver
+    // los dos a la vez.
+    if let Some(firma) = &funciones.firma {
+        tcode_ui::panel_lsp::dibujar_firma(frame, frame.area(), cursor, firma, paleta);
+    }
     if funciones.completado.activo() {
         // Anclado al inicio de la palabra (no al cursor), para que no se
         // corra a cada letra escrita.
         let contexto = contexto_cursor(layout.editor_activo());
         let escritas = contexto.texto[contexto.byte_palabra..contexto.byte_cursor].chars().count() as u16;
         let ancla = (cursor.0.saturating_sub(escritas), cursor.1);
-        tcode_ui::panel_lsp::dibujar_completado(frame, area, ancla, &funciones.completado, paleta);
+        (None, tcode_ui::panel_lsp::dibujar_completado(frame, area, ancla, &funciones.completado, paleta))
     } else if let Some(texto) = &funciones.hover {
-        tcode_ui::panel_lsp::dibujar_hover(frame, area, cursor, texto, paleta);
+        (None, tcode_ui::panel_lsp::dibujar_hover(frame, area, cursor, texto, paleta))
+    } else {
+        (None, None)
     }
+}
+
+/// Clic sobre un ítem de la lista de ubicaciones (BACKLOG.md P0 #18):
+/// igual que elegirlo con las flechas y `Enter`.
+pub fn clic_en_lista(indice: usize, layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let lista = &mut estado.funciones_lsp.lista;
+    let actual = lista.seleccion();
+    crate::mouse::llevar_seleccion(lista, actual, indice, EstadoListaUbicaciones::mover_arriba, EstadoListaUbicaciones::mover_abajo);
+    if let Some(entrada) = estado.funciones_lsp.lista.confirmar() {
+        elegir_de_lista(entrada, layout, estado);
+    }
+}
+
+/// Clic sobre un ítem del completado: igual que elegirlo y `Enter`.
+pub fn clic_en_completado(indice: usize, layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let completado = &mut estado.funciones_lsp.completado;
+    let actual = completado.seleccion();
+    crate::mouse::llevar_seleccion(completado, actual, indice, EstadoCompletado::mover_arriba, EstadoCompletado::mover_abajo);
+    estado.funciones_lsp.completado_programado = None;
+    aceptar_completado(layout, estado);
+}
+
+/// La rueda sobre el popup de completado: mueve la selección.
+pub fn rueda_en_completado(abajo: bool, estado: &mut EstadoApp) {
+    if abajo {
+        estado.funciones_lsp.completado.mover_abajo();
+    } else {
+        estado.funciones_lsp.completado.mover_arriba();
+    }
+}
+
+/// Un clic en otro lado cierra el completado y el hover, como una tecla
+/// que no sigue la palabra.
+pub fn cerrar_popups(estado: &mut EstadoApp) {
+    estado.funciones_lsp.cerrar_completado();
+    estado.funciones_lsp.hover = None;
+    estado.funciones_lsp.firma = None;
 }
 
 #[cfg(test)]

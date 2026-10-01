@@ -4,6 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
+use crate::zonas::{ZonaLista, ZonaOverlay};
 use crate::Paleta;
 
 /// Dibuja un overlay de "escribir para buscar" genérico — la paleta de
@@ -28,6 +29,11 @@ use crate::Paleta;
 /// hay ninguna acción que confirmar sobre una línea de log) no se marca
 /// ninguna fila como seleccionada — mismo comportamiento que antes para
 /// ese caso, sin forzar scroll a un índice que no existe.
+///
+/// Devuelve el recuadro y qué fila de la lista se ve en cada renglón
+/// (con el desplazamiento que calculó `ratatui` en este frame), para el
+/// mouse (BACKLOG.md P0 #18) — así todos los overlays de esta forma
+/// aceptan clic y rueda sin que cada uno lo resuelva por su cuenta.
 pub fn dibujar(
     frame: &mut Frame,
     area_total: Rect,
@@ -36,7 +42,7 @@ pub fn dibujar(
     filas: &[(String, Vec<usize>)],
     seleccion: usize,
     paleta: &Paleta,
-) {
+) -> ZonaOverlay {
     let area = area_centrada(area_total, 60, 60);
     frame.render_widget(Clear, area);
 
@@ -70,18 +76,19 @@ pub fn dibujar(
         })
         .collect();
 
-    let lista = List::new(items).block(
-        Block::default()
-            .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
-            .border_set(crate::BORDE_ASCII)
-            .style(estilo_base),
-    );
+    let bloque = Block::default()
+        .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+        .border_set(crate::BORDE_ASCII)
+        .style(estilo_base);
+    let interior = bloque.inner(partes[1]);
+    let lista = List::new(items).block(bloque);
 
     let mut estado_lista = ListState::default();
     if seleccion < filas.len() {
         estado_lista.select(Some(seleccion));
     }
     frame.render_stateful_widget(lista, partes[1], &mut estado_lista);
+    ZonaOverlay { area, lista: Some(ZonaLista::continua(interior, estado_lista.offset(), filas.len())) }
 }
 
 /// Recorta `area` a un rectángulo centrado que ocupa `porcentaje_ancho`% x

@@ -6,6 +6,7 @@ use ratatui::Frame;
 
 use tcode_fs::{CampoProyecto, EstadoBusquedaProyecto};
 
+use crate::zonas::{ZonaLista, ZonaOverlay};
 use crate::Paleta;
 
 /// Una fila de la lista de resultados: el encabezado de un archivo, o
@@ -30,11 +31,20 @@ enum Fila {
 /// ventana se calcula sin estado (la seleccionada queda en la última fila
 /// visible si no entra desde arriba), igual de estable que el
 /// `ListState` fresco por frame de `overlay::dibujar`.
-pub fn dibujar(frame: &mut Frame, area_total: Rect, estado: &EstadoBusquedaProyecto, paleta: &Paleta) {
+///
+/// Devuelve el recuadro y qué coincidencia quedó en cada renglón (los
+/// encabezados de archivo no se eligen), para el mouse (BACKLOG.md P0
+/// #18).
+pub fn dibujar(
+    frame: &mut Frame,
+    area_total: Rect,
+    estado: &EstadoBusquedaProyecto,
+    paleta: &Paleta,
+) -> Option<ZonaOverlay> {
     let margen_x = (area_total.width / 20).max(1);
     let margen_y = (area_total.height / 20).max(1);
     if area_total.width <= 2 * margen_x + 20 || area_total.height <= 2 * margen_y + 8 {
-        return;
+        return None;
     }
     let area = Rect {
         x: area_total.x + margen_x,
@@ -89,7 +99,8 @@ pub fn dibujar(frame: &mut Frame, area_total: Rect, estado: &EstadoBusquedaProye
         .style(estilo_base);
     let interior = bloque_lista.inner(partes[1]);
     frame.render_widget(bloque_lista, partes[1]);
-    frame.render_widget(Paragraph::new(filas_visibles(estado, interior.height as usize, paleta, estilo_base)), interior);
+    let (lineas, indices) = filas_visibles(estado, interior.height as usize, paleta, estilo_base);
+    frame.render_widget(Paragraph::new(lineas), interior);
 
     // Cursor real de la terminal al final del campo activo.
     let (fila, texto) = match estado.campo() {
@@ -99,6 +110,7 @@ pub fn dibujar(frame: &mut Frame, area_total: Rect, estado: &EstadoBusquedaProye
     };
     let columna = (partes[0].x + 1 + 12 + texto.chars().count() as u16).min(partes[0].right().saturating_sub(2));
     frame.set_cursor_position((columna, partes[0].y + 1 + fila));
+    Some(ZonaOverlay { area, lista: Some(ZonaLista { area: interior, filas: indices }) })
 }
 
 /// Línea(s) de estado de la cabecera, por prioridad: confirmación de
@@ -165,10 +177,17 @@ fn lineas_estado(estado: &EstadoBusquedaProyecto, paleta: &Paleta, base: Style) 
     vec![Line::styled(texto, base)]
 }
 
-/// Las `alto` filas de resultados que se ven, con la seleccionada adentro.
-fn filas_visibles<'a>(estado: &'a EstadoBusquedaProyecto, alto: usize, paleta: &Paleta, base: Style) -> Vec<Line<'a>> {
+/// Las `alto` filas de resultados que se ven, con la seleccionada adentro,
+/// y el índice global de la coincidencia de cada una (`None` en los
+/// encabezados de archivo).
+fn filas_visibles<'a>(
+    estado: &'a EstadoBusquedaProyecto,
+    alto: usize,
+    paleta: &Paleta,
+    base: Style,
+) -> (Vec<Line<'a>>, Vec<Option<usize>>) {
     if alto == 0 {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     let mut filas = Vec::new();
     let mut global = 0;
@@ -197,7 +216,14 @@ fn filas_visibles<'a>(estado: &'a EstadoBusquedaProyecto, alto: usize, paleta: &
         }
     }
 
-    visibles
+    let indices = visibles
+        .iter()
+        .map(|fila| match **fila {
+            Fila::Archivo(_) => None,
+            Fila::Coincidencia(_, _, global) => Some(global),
+        })
+        .collect();
+    let lineas = visibles
         .into_iter()
         .map(|fila| match *fila {
             Fila::Archivo(i) => {
@@ -224,5 +250,6 @@ fn filas_visibles<'a>(estado: &'a EstadoBusquedaProyecto, alto: usize, paleta: &
                 .style(estilo)
             }
         })
-        .collect()
+        .collect();
+    (lineas, indices)
 }

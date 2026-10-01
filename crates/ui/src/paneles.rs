@@ -3,12 +3,14 @@ use std::path::Path;
 use ratatui::layout::{Constraint, Direction, Rect};
 use ratatui::Frame;
 
-use tcode_config::ConfigInterfaz;
+use tcode_config::{ConfigInterfaz, NodoSesion, PestanaSesion};
 use tcode_core::{delimitador_por_extension, Editor, EstadoBusqueda, EstadoCsv};
 use tcode_fs::DiffGit;
 use tcode_lsp::DiagnosticoSimple;
 use tcode_syntax::{Lenguaje, Resaltador};
 
+use crate::vista_codigo::PosicionClic;
+use crate::zonas::{ZonaPanel, ZonasMouse};
 use crate::{barra_pestanas, breadcrumbs, statusbar, vista_codigo, vista_csv, vista_markdown, EstadoUi, Paleta};
 
 /// Cómo se divide un panel (`Ctrl+\`/`Ctrl+K Ctrl+\`, PLAN.md §4): en
@@ -307,6 +309,100 @@ impl Layout {
         self.hojas_mut().into_iter().flat_map(|p| p.documentos.iter_mut()).collect()
     }
 
+    /// La forma del layout para guardarla como sesión (BACKLOG.md P2
+    /// #20): el árbol de splits con las pestañas que tienen archivo (un
+    /// "[Sin nombre]" no se puede reabrir) y el cursor de cada una, más el
+    /// índice del panel activo. `ruta` es la del buffer tal como se abrió.
+    pub fn a_sesion(&self) -> (NodoSesion, usize) {
+        fn nodo(panel: &Panel) -> NodoSesion {
+            match panel {
+                Panel::Hoja(p) => {
+                    let mut pestanas = Vec::new();
+                    let mut activa = 0;
+                    for (i, documento) in p.documentos.iter().enumerate() {
+                        let Some(ruta) = documento.editor.buffer().ruta() else { continue };
+                        if i == p.activa {
+                            activa = pestanas.len();
+                        }
+                        let cursor = documento.editor.cursor();
+                        pestanas.push(PestanaSesion {
+                            ruta: ruta.display().to_string(),
+                            linea: cursor.linea,
+                            columna: cursor.columna,
+                        });
+                    }
+                    NodoSesion::Hoja { pestanas, activa }
+                }
+                Panel::Division { direccion, primero, segundo } => NodoSesion::Division {
+                    vertical: *direccion == DireccionSplit::Vertical,
+                    primero: Box::new(nodo(primero)),
+                    segundo: Box::new(nodo(segundo)),
+                },
+            }
+        }
+        (nodo(&self.raiz), self.activo)
+    }
+
+    /// Reconstruye un layout desde una sesión guardada. `abrir` crea el
+    /// documento de cada pestaña (`None` si el archivo ya no se puede
+    /// abrir: se saltea). Un panel que se queda sin pestañas desaparece
+    /// y su hermano ocupa su lugar; si no queda ninguna, `None`. El panel
+    /// activo se conserva si sigue existiendo.
+    pub fn desde_sesion(
+        sesion: &NodoSesion,
+        panel_activo: usize,
+        mut abrir: impl FnMut(&PestanaSesion) -> Option<PanelEditor>,
+    ) -> Option<Self> {
+        // Devuelve el sub-árbol y, por cada hoja de la sesión (en orden),
+        // en qué hoja nueva terminó (o `None` si se cayó) — para ubicar el
+        // panel activo.
+        fn construir(
+            nodo: &NodoSesion,
+            abrir: &mut dyn FnMut(&PestanaSesion) -> Option<PanelEditor>,
+            mapa: &mut Vec<bool>,
+        ) -> Option<Panel> {
+            match nodo {
+                NodoSesion::Hoja { pestanas, activa } => {
+                    let mut documentos = Vec::new();
+                    let mut nueva_activa = 0;
+                    for (i, pestana) in pestanas.iter().enumerate() {
+                        if let Some(documento) = abrir(pestana) {
+                            if i <= *activa {
+                                nueva_activa = documentos.len();
+                            }
+                            documentos.push(documento);
+                        }
+                    }
+                    mapa.push(!documentos.is_empty());
+                    (!documentos.is_empty()).then_some(Panel::Hoja(Pestanas { documentos, activa: nueva_activa }))
+                }
+                NodoSesion::Division { vertical, primero, segundo } => {
+                    let primero = construir(primero, abrir, mapa);
+                    let segundo = construir(segundo, abrir, mapa);
+                    match (primero, segundo) {
+                        (Some(a), Some(b)) => Some(Panel::Division {
+                            direccion: if *vertical { DireccionSplit::Vertical } else { DireccionSplit::Horizontal },
+                            primero: Box::new(a),
+                            segundo: Box::new(b),
+                        }),
+                        (uno, otro) => uno.or(otro),
+                    }
+                }
+            }
+        }
+        let mut mapa = Vec::new();
+        let raiz = construir(sesion, &mut abrir, &mut mapa)?;
+        // Las hojas que sobrevivieron conservan su orden: el activo nuevo
+        // es cuántas sobrevivieron antes que él (o la última anterior, si
+        // el activo se cayó).
+        let sobrevivientes_antes = mapa.iter().take(panel_activo).filter(|&&v| v).count();
+        let activo_vivo = mapa.get(panel_activo).copied().unwrap_or(false);
+        let mut layout = Self { raiz, activo: 0, maximizado: false };
+        let activo = if activo_vivo { sobrevivientes_antes } else { sobrevivientes_antes.saturating_sub(1) };
+        layout.activo = activo.min(layout.num_paneles() - 1);
+        Some(layout)
+    }
+
     /// Todos los documentos abiertos, solo lectura, en el mismo orden que
     /// [`Layout::paneles_mut`]. Lo usa el LSP (`app/lsp.rs`) una vez por
     /// frame para saber qué archivos tiene que tener abiertos cada sesión
@@ -573,6 +669,48 @@ impl Layout {
         }
     }
 
+    /// Clic en un panel (BACKLOG.md P0 #18): lo activa. A diferencia de
+    /// [`Layout::ir_a_panel`], hacer clic en el panel que ya está activo no
+    /// sale del maximizado (maximizado es el único que se ve).
+    pub fn activar_panel(&mut self, indice: usize) {
+        if indice != self.activo {
+            self.ir_a_panel(indice);
+        }
+    }
+
+    /// El documento visible del panel `indice`, si existe.
+    fn documento_en(&self, indice: usize) -> Option<&PanelEditor> {
+        self.hojas().get(indice).map(|p| p.activo())
+    }
+
+    /// Posición del texto bajo `(x, y)` en la vista de código del panel de
+    /// `zona` (del último frame), llevando el punto al borde del área si
+    /// quedó afuera — ver `vista_codigo::posicion_en`. `None` si ese panel
+    /// no muestra código.
+    pub fn posicion_en_codigo(&self, zona: &ZonaPanel, x: u16, y: u16) -> Option<PosicionClic> {
+        let codigo = zona.codigo.as_ref()?;
+        let documento = self.documento_en(zona.indice)?;
+        Some(vista_codigo::posicion_en(&documento.editor, &documento.estado_ui, codigo, x, y))
+    }
+
+    /// Rueda del mouse sobre el panel de `zona`: desplaza su código (o el
+    /// preview Markdown) `delta` filas sin mover el cursor. La tabla CSV
+    /// no pasa por acá: ahí la rueda mueve la celda seleccionada (`app`).
+    pub fn desplazar_vista(&mut self, zona: &ZonaPanel, delta: isize) {
+        let Some(pestanas) = self.hojas_mut().into_iter().nth(zona.indice) else { return };
+        let documento = pestanas.activo_mut();
+        match &zona.codigo {
+            Some(codigo) => vista_codigo::desplazar(&documento.editor, &mut documento.estado_ui, codigo, delta),
+            None => {
+                // Solo preview: el scroll es una línea del fuente, sin
+                // cursor que lo persiga (`vista_codigo` no se dibuja).
+                let maximo = documento.editor.buffer().num_lineas().saturating_sub(1);
+                let scroll = documento.estado_ui.scroll.saturating_add_signed(delta);
+                documento.estado_ui.scroll = scroll.min(maximo);
+            }
+        }
+    }
+
     /// Dibuja el árbol de paneles completo dentro de `area`, recursivo:
     /// cada división reparte el espacio 50/50 entre sus dos sub-árboles.
     /// Solo el panel activo recibe el cursor real de la terminal.
@@ -591,6 +729,7 @@ impl Layout {
         columna_regla: Option<usize>,
         indicadores_git: bool,
         interfaz: &ConfigInterfaz,
+        zonas: &mut ZonasMouse,
     ) {
         // Maximizado: la hoja activa se dibuja sola, como si fuera la raíz
         // (índice 0 de un árbol de un solo panel) — el resto del árbol ni
@@ -615,7 +754,15 @@ impl Layout {
             columna_regla,
             indicadores_git,
             interfaz,
+            zonas,
         );
+        // Maximizada, la hoja se dibujó como índice 0: para el mouse vale
+        // su índice real.
+        if self.maximizado {
+            for zona in &mut zonas.paneles {
+                zona.indice = self.activo;
+            }
+        }
         if self.maximizado && interfaz.mostrar_statusbar && area.height > 0 {
             // Pegado a la derecha de la última fila (la de la statusbar),
             // encima de su relleno: así no hace falta tocar
@@ -697,10 +844,12 @@ fn dibujar_panel(
     columna_regla: Option<usize>,
     indicadores_git: bool,
     interfaz: &ConfigInterfaz,
+    zonas: &mut ZonasMouse,
 ) {
     match panel {
         Panel::Hoja(pestanas) => {
             let es_activo = *indice_actual == activo;
+            let mut zona = ZonaPanel { indice: *indice_actual, area, ..Default::default() };
             *indice_actual += 1;
 
             // Barra de pestañas (BACKLOG.md P3 #10): una fila arriba del
@@ -711,7 +860,9 @@ fn dibujar_panel(
             // más abajo, cuando ya se sabe qué vista usa el panel).
             let franjas = franjas_superiores(area, interfaz);
             if let Some(barra) = franjas.pestanas {
-                barra_pestanas::dibujar(frame, barra, &pestanas.documentos, pestanas.activa, es_activo, paleta);
+                zona.pestanas =
+                    barra_pestanas::dibujar(frame, barra, &pestanas.documentos, pestanas.activa, es_activo, paleta);
+                zona.barra_pestanas = Some(barra);
             }
             let (area, area_breadcrumbs) = (franjas.resto, franjas.breadcrumbs);
             let panel_editor = pestanas.activo_mut();
@@ -730,6 +881,7 @@ fn dibujar_panel(
                 (area, None)
             };
             let partes = [area_contenido];
+            zona.contenido = area_contenido;
 
             // La búsqueda opera solo sobre el buffer del panel activo: los
             // demás paneles no reciben coincidencias que resaltar.
@@ -768,7 +920,7 @@ fn dibujar_panel(
                 // para cualquier cosa que haya cambiado el buffer.
                 let num_visibles = panel_editor.estado_csv.filas_visibles(&tabla).len();
                 panel_editor.estado_csv.recortar(num_visibles, tabla.num_columnas());
-                vista_csv::dibujar(
+                zona.tabla = vista_csv::dibujar(
                     frame,
                     partes[0],
                     &tabla,
@@ -790,6 +942,7 @@ fn dibujar_panel(
                         panel_editor.mensaje_estado.as_deref(),
                     );
                 }
+                zonas.paneles.push(zona);
                 return;
             }
 
@@ -810,7 +963,7 @@ fn dibujar_panel(
 
             match area_markdown {
                 ModoMarkdown::Fuente => {
-                    vista_codigo::dibujar(
+                    zona.codigo = Some(vista_codigo::dibujar(
                         frame,
                         partes[0],
                         &panel_editor.editor,
@@ -826,14 +979,14 @@ fn dibujar_panel(
                         ajuste_linea,
                         columna_regla,
                         marcas_git,
-                    );
+                    ));
                 }
                 ModoMarkdown::Dividido => {
                     let columnas = ratatui::layout::Layout::default()
                         .direction(Direction::Horizontal)
                         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                         .split(partes[0]);
-                    vista_codigo::dibujar(
+                    zona.codigo = Some(vista_codigo::dibujar(
                         frame,
                         columnas[0],
                         &panel_editor.editor,
@@ -864,7 +1017,7 @@ fn dibujar_panel(
                         // arriba).
                         columna_regla,
                         marcas_git,
-                    );
+                    ));
                     vista_markdown::dibujar(
                         frame,
                         columnas[1],
@@ -900,6 +1053,7 @@ fn dibujar_panel(
                     panel_editor.mensaje_estado.as_deref(),
                 );
             }
+            zonas.paneles.push(zona);
         }
         Panel::Division { direccion, primero, segundo } => {
             // Ojo: un split "vertical" (PLAN.md §4) reparte el ANCHO —
@@ -915,11 +1069,11 @@ fn dibujar_panel(
                 .split(area);
             dibujar_panel(
                 frame, partes[0], primero, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
-                ajuste_linea, columna_regla, indicadores_git, interfaz,
+                ajuste_linea, columna_regla, indicadores_git, interfaz, zonas,
             );
             dibujar_panel(
                 frame, partes[1], segundo, activo, indice_actual, paleta, resaltador, estado_busqueda, mostrar_numeros,
-                ajuste_linea, columna_regla, indicadores_git, interfaz,
+                ajuste_linea, columna_regla, indicadores_git, interfaz, zonas,
             );
         }
     }
@@ -987,6 +1141,86 @@ mod tests {
 
     fn layout_de_prueba() -> Layout {
         Layout::nuevo(Editor::nuevo(), "a.txt".to_string())
+    }
+
+    /// Sesión (BACKLOG.md P2 #20): documentos de mentira que "abren" una
+    /// pestaña por su ruta sin tocar el disco — el cursor y la ruta se
+    /// leen del `PanelEditor`, así que alcanza con que `abrir` los arme.
+    fn abrir_de_prueba(p: &PestanaSesion) -> Option<PanelEditor> {
+        if p.ruta.starts_with("borrado") {
+            return None;
+        }
+        Some(PanelEditor::nuevo(Editor::nuevo(), format!("{}@{}", p.ruta, p.linea)))
+    }
+
+    fn hoja(rutas: &[&str], activa: usize) -> NodoSesion {
+        let pestanas = rutas.iter().map(|r| PestanaSesion { ruta: r.to_string(), linea: 0, columna: 0 }).collect();
+        NodoSesion::Hoja { pestanas, activa }
+    }
+
+    fn division(primero: NodoSesion, segundo: NodoSesion) -> NodoSesion {
+        NodoSesion::Division { vertical: true, primero: Box::new(primero), segundo: Box::new(segundo) }
+    }
+
+    fn rutas_por_panel(layout: &Layout) -> Vec<Vec<String>> {
+        layout.hojas().iter().map(|p| p.documentos.iter().map(|d| d.ruta_mostrada.clone()).collect()).collect()
+    }
+
+    #[test]
+    fn desde_sesion_arma_los_splits_y_las_pestanas() {
+        let sesion = division(hoja(&["a", "b"], 1), division(hoja(&["c"], 0), hoja(&["d"], 0)));
+        let layout = Layout::desde_sesion(&sesion, 2, abrir_de_prueba).unwrap();
+        assert_eq!(rutas_por_panel(&layout), [vec!["a@0", "b@0"], vec!["c@0"], vec!["d@0"]]);
+        assert_eq!(layout.indice_activo(), 2);
+        assert_eq!(layout.panel_activo().ruta_mostrada, "d@0");
+    }
+
+    #[test]
+    fn un_panel_sin_archivos_que_abrir_desaparece() {
+        // El del medio solo tenía archivos borrados: su hermano ocupa su
+        // lugar y el activo (el último) se corre uno.
+        let sesion = division(hoja(&["a"], 0), division(hoja(&["borrado1", "borrado2"], 1), hoja(&["d"], 0)));
+        let layout = Layout::desde_sesion(&sesion, 2, abrir_de_prueba).unwrap();
+        assert_eq!(rutas_por_panel(&layout), [vec!["a@0"], vec!["d@0"]]);
+        assert_eq!(layout.indice_activo(), 1);
+        // Si el activo era el que desapareció, queda el anterior.
+        let layout = Layout::desde_sesion(&sesion, 1, abrir_de_prueba).unwrap();
+        assert_eq!(layout.indice_activo(), 0);
+        // Todo borrado: no hay layout que restaurar.
+        assert!(Layout::desde_sesion(&hoja(&["borrado"], 0), 0, abrir_de_prueba).is_none());
+    }
+
+    #[test]
+    fn la_pestana_activa_sobrevive_aunque_se_caigan_otras() {
+        let layout = Layout::desde_sesion(&hoja(&["borrado", "a", "b", "borrado2", "c"], 2), 0, abrir_de_prueba).unwrap();
+        assert_eq!(layout.panel_activo().ruta_mostrada, "b@0");
+        // Si la activa se cayó, la anterior que quedó.
+        let layout = Layout::desde_sesion(&hoja(&["a", "b", "borrado"], 2), 0, abrir_de_prueba).unwrap();
+        assert_eq!(layout.panel_activo().ruta_mostrada, "b@0");
+    }
+
+    #[test]
+    fn a_sesion_omite_los_documentos_sin_nombre() {
+        let dir = std::env::temp_dir().join(format!("tcode-test-sesion-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ruta = dir.join("x.txt");
+        std::fs::write(&ruta, "uno\ndos\ntres\n").unwrap();
+        let mut editor = Editor::abrir(&ruta).unwrap();
+        let cursor = tcode_core::Cursor { linea: 2, columna: 1 };
+        editor.fijar_seleccion(cursor, cursor);
+        let mut layout = Layout::nuevo(editor, ruta.display().to_string());
+        layout.dividir(DireccionSplit::Horizontal);
+        let (sesion, activo) = layout.a_sesion();
+        let esperado = NodoSesion::Division {
+            vertical: false,
+            primero: Box::new(NodoSesion::Hoja {
+                pestanas: vec![PestanaSesion { ruta: ruta.display().to_string(), linea: 2, columna: 1 }],
+                activa: 0,
+            }),
+            segundo: Box::new(NodoSesion::Hoja { pestanas: vec![], activa: 0 }),
+        };
+        assert_eq!((sesion, activo), (esperado, 1));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

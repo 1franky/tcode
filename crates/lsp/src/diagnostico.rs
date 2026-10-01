@@ -31,6 +31,11 @@ pub struct DiagnosticoSimple {
     pub columna_fin: u32,
     pub severidad: Severidad,
     pub mensaje: String,
+    /// El diagnóstico tal como llegó (rango en UTF-16, `code`, `data`...):
+    /// las acciones rápidas se le piden al servidor mandándole de vuelta
+    /// los diagnósticos de la zona (BACKLOG.md P2 #23), y algunos
+    /// servidores solo ofrecen el arreglo si reciben el suyo intacto.
+    pub original: Diagnostic,
 }
 
 impl DiagnosticoSimple {
@@ -58,6 +63,7 @@ impl DiagnosticoSimple {
                 _ => Severidad::Error, // por spec, la ausencia de `severity` se trata como error
             },
             mensaje: d.message.clone(),
+            original: d.clone(),
         }
     }
 }

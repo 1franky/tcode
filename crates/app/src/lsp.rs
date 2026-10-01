@@ -273,9 +273,10 @@ async fn lanzar_sesion(lenguaje: Lenguaje, comando: ComandoLsp) -> std::result::
     let env_ref: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
     let mut cliente = Cliente::lanzar(programa, &args_ref, &env_ref).await.map_err(|e| format!("[tcode] {e:#}"))?;
 
-    // Lo que se declara explícitamente: `formatting` (BACKLOG.md P2 #5) y
+    // Lo que se declara explícitamente: `formatting` (BACKLOG.md P2 #5),
     // las funciones de navegación/edición de BACKLOG.md P1 #17
-    // (definición, referencias, hover, completado, renombrar), todo sin
+    // (definición, referencias, hover, completado, renombrar) y las
+    // acciones rápidas (P2 #23), todo sin
     // registro dinámico (`tcode` no responde `client/registerCapability`),
     // para que un servidor que decide qué anunciar según lo que soporta
     // el cliente lo anuncie de forma estática. El completado declara NO
@@ -296,8 +297,39 @@ async fn lanzar_sesion(lenguaje: Lenguaje, comando: ComandoLsp) -> std::result::
                 "contextSupport": true,
             },
             "rename": { "dynamicRegistration": false, "prepareSupport": false },
+            // Acciones rápidas (BACKLOG.md P2 #23): como `CodeAction`
+            // literales (si no, algunos servidores solo mandan `Command`s),
+            // con los cambios ya calculados — sin `resolveSupport`, así
+            // rust-analyzer los manda en la respuesta en vez de pedir un
+            // `codeAction/resolve` aparte.
+            // Ayuda de firma (P2 #23): documentación en texto plano (se
+            // muestra la primera línea) y el parámetro como rango.
+            "signatureHelp": {
+                "dynamicRegistration": false,
+                "contextSupport": true,
+                "signatureInformation": {
+                    "documentationFormat": ["plaintext", "markdown"],
+                    "parameterInformation": { "labelOffsetSupport": true },
+                    "activeParameterSupport": true,
+                },
+            },
+            "codeAction": {
+                "dynamicRegistration": false,
+                "isPreferredSupport": true,
+                "disabledSupport": true,
+                "codeActionLiteralSupport": { "codeActionKind": { "valueSet": [
+                    "", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite",
+                    "source", "source.organizeImports", "source.fixAll",
+                ] } },
+            },
         },
-        "workspace": { "workspaceEdit": { "documentChanges": true } },
+        // `applyEdit`: el comando de una acción rápida puede pedirle a
+        // `tcode` que aplique cambios (se contesta en `procesar_mensaje`).
+        "workspace": {
+            "workspaceEdit": { "documentChanges": true },
+            "applyEdit": true,
+            "executeCommand": { "dynamicRegistration": false },
+        },
     }))
     .unwrap_or_default();
     // El directorio actual como carpeta del proyecto (BACKLOG.md P1
@@ -344,6 +376,14 @@ pub enum TipoPedido {
     Hover,
     Completado,
     Renombrar,
+    /// `textDocument/codeAction` (BACKLOG.md P2 #23): usa un rango, no una
+    /// posición (ver `pedir`).
+    AccionesRapidas,
+    /// `workspace/executeCommand`: el comando de una acción rápida (ver
+    /// `EstadoLsp::ejecutar_comando`).
+    EjecutarComando,
+    /// `textDocument/signatureHelp` (BACKLOG.md P2 #23).
+    AyudaFirma,
 }
 
 impl TipoPedido {
@@ -354,6 +394,9 @@ impl TipoPedido {
             TipoPedido::Hover => "textDocument/hover",
             TipoPedido::Completado => "textDocument/completion",
             TipoPedido::Renombrar => "textDocument/rename",
+            TipoPedido::AccionesRapidas => "textDocument/codeAction",
+            TipoPedido::EjecutarComando => "workspace/executeCommand",
+            TipoPedido::AyudaFirma => "textDocument/signatureHelp",
         }
     }
 
@@ -364,6 +407,10 @@ impl TipoPedido {
             TipoPedido::Hover => capacidades.hover,
             TipoPedido::Completado => capacidades.completado,
             TipoPedido::Renombrar => capacidades.renombrar,
+            TipoPedido::AccionesRapidas => capacidades.acciones,
+            // Solo se ejecutan comandos que el propio servidor ofreció.
+            TipoPedido::EjecutarComando => true,
+            TipoPedido::AyudaFirma => capacidades.ayuda_firma,
         }
     }
 
@@ -375,6 +422,9 @@ impl TipoPedido {
             TipoPedido::Hover => "el LSP no soporta mostrar información (hover)",
             TipoPedido::Completado => "el LSP no soporta autocompletar",
             TipoPedido::Renombrar => "el LSP no soporta renombrar",
+            TipoPedido::AccionesRapidas => "el LSP no ofrece acciones rápidas",
+            TipoPedido::EjecutarComando => "el LSP no ejecuta comandos",
+            TipoPedido::AyudaFirma => "el LSP no ofrece ayuda de firma",
         }
     }
 }
@@ -390,6 +440,15 @@ struct Pendiente {
 /// La respuesta (cruda) a una petición de [`TipoPedido`], o el motivo
 /// del error — `app` la interpreta con `tcode_lsp::parsear_*` contra el
 /// estado de la UI en el momento en que llega, no en el que se pidió.
+/// Un `workspace/applyEdit` que mandó un servidor (al ejecutar el comando
+/// de una acción rápida, BACKLOG.md P2 #23), esperando que `app` lo
+/// aplique y conteste con [`EstadoLsp::responder_edicion`].
+pub struct EdicionPedida {
+    pub lenguaje: Lenguaje,
+    pub id: Value,
+    pub edicion: Value,
+}
+
 pub struct RespuestaLsp {
     pub tipo: TipoPedido,
     pub resultado: std::result::Result<Value, String>,
@@ -412,6 +471,12 @@ pub struct EstadoLsp {
     /// la espera de `pedir_formateo`, que no sabría qué hacer con ellas:
     /// así ninguna se pierde.
     respuestas: Vec<RespuestaLsp>,
+    /// Los `workspace/applyEdit` recibidos, hasta que `app` los aplique
+    /// (`tomar_ediciones_pedidas`); y las contestaciones listas para
+    /// mandar (`enviar_contestaciones`, en la próxima vuelta del bucle:
+    /// quien aplica no es async).
+    ediciones_pedidas: Vec<EdicionPedida>,
+    contestaciones: Vec<(Lenguaje, Value, Value)>,
     /// Ruta mostrada → URI, calculado una sola vez por ruta (`uri_de_
     /// archivo` pregunta el directorio actual y codifica la ruta entera:
     /// no es algo para hacer por pestaña en cada frame). `None` si la
@@ -599,6 +664,13 @@ impl EstadoLsp {
                     }
                 }
             }
+            // Requests del servidor: solo se contesta `workspace/applyEdit`;
+            // el resto se ignora, como siempre.
+            MensajeEntrante::Peticion { id, metodo, params } => {
+                if metodo == "workspace/applyEdit" {
+                    self.ediciones_pedidas.push(EdicionPedida { lenguaje, id, edicion: params["edit"].clone() });
+                }
+            }
             MensajeEntrante::Notificacion { metodo, params } => {
                 if metodo != "textDocument/publishDiagnostics" {
                     return;
@@ -780,6 +852,10 @@ impl EstadoLsp {
         let mut params = json!({ "textDocument": { "uri": uri.as_str() }, "position": posicion });
         if let (Some(params), Value::Object(extra)) = (params.as_object_mut(), extra) {
             params.extend(extra);
+            // `codeAction` lleva `range` (en `extra`) en vez de posición.
+            if tipo == TipoPedido::AccionesRapidas {
+                params.remove("position");
+            }
         }
         if let Some(indice) = self.pendientes.iter().position(|p| p.tipo == tipo) {
             let anterior = self.pendientes.remove(indice);
@@ -795,11 +871,52 @@ impl EstadoLsp {
         Ok(())
     }
 
+    /// `workspace/executeCommand` con el `Command` crudo de una acción
+    /// rápida, a la sesión del lenguaje de `ruta`. La respuesta llega como
+    /// [`TipoPedido::EjecutarComando`]; si el comando cambia texto, antes
+    /// llega un `workspace/applyEdit` ([`Self::tomar_ediciones_pedidas`]).
+    pub async fn ejecutar_comando(&mut self, ruta: &str, comando: &Value) -> std::result::Result<(), &'static str> {
+        let Some(lenguaje) = Lenguaje::detectar_por_extension(ruta) else { return Err("sin LSP para este archivo") };
+        let Some(sesion) = self.sesiones.iter_mut().find(|s| s.lenguaje == lenguaje) else { return Err("sin LSP activo") };
+        let params = json!({ "command": comando["command"], "arguments": comando.get("arguments").cloned().unwrap_or(json!([])) });
+        let Ok(id) = sesion.cliente.peticion(TipoPedido::EjecutarComando.metodo(), params).await else {
+            return Err("no se pudo hablar con el LSP");
+        };
+        self.pendientes.push(Pendiente { lenguaje, id, tipo: TipoPedido::EjecutarComando });
+        Ok(())
+    }
+
+    pub fn tomar_ediciones_pedidas(&mut self) -> Vec<EdicionPedida> {
+        std::mem::take(&mut self.ediciones_pedidas)
+    }
+
+    /// Anota la contestación a un `workspace/applyEdit` (`applied` y, si
+    /// no se aplicó, por qué); se manda con [`Self::enviar_contestaciones`].
+    pub fn responder_edicion(&mut self, pedida: &EdicionPedida, aplicada: std::result::Result<(), String>) {
+        let resultado = match aplicada {
+            Ok(()) => json!({ "applied": true }),
+            Err(motivo) => json!({ "applied": false, "failureReason": motivo }),
+        };
+        self.contestaciones.push((pedida.lenguaje, pedida.id.clone(), resultado));
+    }
+
+    pub fn hay_contestaciones(&self) -> bool {
+        !self.contestaciones.is_empty()
+    }
+
+    pub async fn enviar_contestaciones(&mut self) {
+        for (lenguaje, id, resultado) in std::mem::take(&mut self.contestaciones) {
+            if let Some(sesion) = self.sesiones.iter_mut().find(|s| s.lenguaje == lenguaje) {
+                let _ = sesion.cliente.responder(&id, resultado).await;
+            }
+        }
+    }
+
     /// Las respuestas a [`Self::pedir`] llegadas desde la última vez, en
     /// orden de llegada. Vacío casi siempre: no cuesta nada llamarlo en
     /// cada vuelta del bucle.
     pub fn hay_respuestas(&self) -> bool {
-        !self.respuestas.is_empty()
+        !self.respuestas.is_empty() || !self.ediciones_pedidas.is_empty()
     }
 
     pub fn tomar_respuestas(&mut self) -> Vec<RespuestaLsp> {

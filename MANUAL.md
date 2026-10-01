@@ -8,11 +8,14 @@ diseño interno, arquitectura y roadmap del proyecto ver [PLAN.md](./PLAN.md).
 - [Primeros pasos](#primeros-pasos)
 - [Atajos esenciales](#atajos-esenciales)
 - [Multi-cursor y selección](#multi-cursor-y-selección)
+- [Edición de líneas](#edición-de-líneas)
+- [Mouse](#mouse)
 - [Copiar, cortar y pegar](#copiar-cortar-y-pegar)
 - [Búsqueda y reemplazo](#búsqueda-y-reemplazo)
 - [Plegado de bloques](#plegado-de-bloques)
 - [Paneles divididos (splits)](#paneles-divididos-splits)
 - [Pestañas de archivos abiertos](#pestañas-de-archivos-abiertos)
+- [Sesión y recuperación](#sesión-y-recuperación)
 - [Explorador de archivos](#explorador-de-archivos)
 - [Modo VIM opcional](#modo-vim-opcional)
 - [Paleta de comandos y buscador de archivos](#paleta-de-comandos-y-buscador-de-archivos)
@@ -53,6 +56,11 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Pestaña siguiente / anterior (ver [Pestañas](#pestañas-de-archivos-abiertos)) |
 | `Ctrl+W` | Cerrar la pestaña activa |
 | `Tab` / `Shift+Tab` | Indentar / desindentar |
+| `Ctrl+A` | Seleccionar todo |
+| `Ctrl+G` | Ir a línea (`n` o `n:col`) |
+| `Ctrl+/` (o `Ctrl+K Ctrl+C`) | Comentar/descomentar las líneas del cursor o la selección (ver [Edición de líneas](#edición-de-líneas)) |
+| `Alt+↑` / `Alt+↓` | Mover la línea (o las de la selección) arriba/abajo |
+| `Shift+Alt+↓` (o `Ctrl+Shift+D`, `Ctrl+K Ctrl+D`) | Duplicar la línea (o las de la selección) debajo |
 | `Ctrl+B` | Mostrar/ocultar el explorador de archivos lateral |
 | `Ctrl+K J` | Salto rápido en el explorador (etiquetas de una tecla) |
 | `Ctrl+P` | Buscar archivo por nombre (difuso) |
@@ -64,9 +72,12 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+K R` | Ver logs del LSP del lenguaje del archivo activo |
 | `F12` (o `Ctrl+K D`) / `Alt+←` (o `Ctrl+K H`) | Ir a la definición / volver (ver [LSP](#navegación-autocompletado-y-renombrar)) |
 | `Shift+F12` (o `Ctrl+K U`) | Buscar referencias |
+| `Ctrl+Shift+M` (o `Ctrl+K Q`) / `F8` / `Shift+F8` | Panel de problemas / siguiente / anterior (ver [Panel de problemas](#panel-de-problemas)) |
 | `Ctrl+K I` | Tipo y documentación del símbolo bajo el cursor (hover) |
 | `Ctrl+Espacio` (o `Ctrl+K Espacio`) | Autocompletar |
 | `F2` (o `Ctrl+K Shift+R`) | Renombrar símbolo (en la tabla de un CSV, `F2` edita la celda) |
+| `Ctrl+.` (o `Ctrl+K X`) | Acciones rápidas del LSP: arreglos, imports, refactors |
+| `Ctrl+Shift+Espacio` (o `Ctrl+K ,`) | Ayuda de firma (también aparece sola al tipear `(` o `,`) |
 | `Ctrl+K Ctrl+T` | Selector de temas (con preview en vivo) |
 | `Ctrl+K Ctrl+L` | Recargar `config.toml`/`keymap.toml` sin reiniciar |
 
@@ -101,6 +112,105 @@ cada uno extendiendo su propia selección de forma independiente.
 
 Con varios cursores activos, escribir/borrar/mover el cursor afecta a
 todos a la vez — igual que en VSCode o Sublime Text.
+
+## Edición de líneas
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+/` (o `Ctrl+K Ctrl+C`) | Comentar / descomentar |
+| `Alt+↑` / `Alt+↓` (o `Ctrl+K Shift+↑` / `Ctrl+K Shift+↓`) | Mover línea(s) arriba / abajo |
+| `Shift+Alt+↓` (o `Ctrl+Shift+D`, `Ctrl+K Ctrl+D`) | Duplicar línea(s) debajo |
+| `Ctrl+A` | Seleccionar todo |
+| `Ctrl+G` | Ir a línea: escribir `42` o `42:7` (línea:columna) y `Enter` |
+
+- **Sobre qué líneas actúan**: la del cursor, o todas las que toca la
+  selección. Si la selección termina al principio de una línea (lo que
+  deja `Shift+↓`), esa línea no cuenta. Con varios cursores, cada uno
+  actúa sobre las suyas, y todo se deshace con un solo `Ctrl+Z`.
+- **Comentar** usa el comentario del lenguaje según la extensión: `//`
+  (Rust, JS/TS, Go, C/C++, Java...), `#` (Python, Ruby, shell, TOML,
+  YAML, `Makefile`...), `--` (SQL, Lua), `;`, `%`... El prefijo se
+  alinea a la sangría mínima del bloque. Si todas las líneas ya están
+  comentadas, las descomenta; si no, las comenta todas. Las líneas en
+  blanco no se tocan. HTML, Markdown y XML usan `<!-- ... -->` y CSS
+  `/* ... */`, envolviendo **cada línea** por separado. En texto plano,
+  JSON o un archivo sin nombre no hace nada y lo avisa en la barra.
+- **Mover líneas** respeta el plegado: pasar sobre un bloque plegado lo
+  salta entero, y mover la cabecera de un bloque plegado mueve el bloque
+  completo, que sigue plegado. En la primera o la última línea no hace
+  nada.
+- **Duplicar** deja el cursor (y la selección) en la copia de abajo, así
+  que repetirlo sigue duplicando.
+- **Ir a línea** muestra el rango válido en el título; un número mayor
+  va a la última línea, y una columna más allá del final va al final de
+  esa línea.
+- **Terminales sin protocolo Kitty**: `Ctrl+/` suele llegar como
+  `Ctrl+7` o `Ctrl+_`, y las tres funcionan. `Ctrl+Shift+D` llega como
+  `Ctrl+D` (agregar ocurrencia): usá `Shift+Alt+↓` o `Ctrl+K Ctrl+D`.
+  En macOS, `Alt+↑/↓` necesitan que la terminal mande Option como Meta;
+  si no, están los chords con `Ctrl+K` y la paleta ("Editor: ...").
+- En modo VIM, los atajos con `Ctrl`/`Alt` funcionan igual en modo
+  Normal.
+
+## Mouse
+
+El mouse viene prendido. Se apaga en `Ctrl+,` → Interfaz → "Usar el
+mouse" (efecto inmediato, se guarda como `usar_mouse` en `[interfaz]`).
+
+**Selección nativa de la terminal:** mientras `tcode` usa el mouse, la
+terminal no selecciona texto por su cuenta al arrastrar. En la mayoría
+de las terminales se puede seguir haciéndolo manteniendo `Shift`
+(`Option` en iTerm2 y Terminal.app de macOS) mientras se arrastra. Si
+preferís la selección de la terminal siempre, apagá "Usar el mouse".
+
+En el código:
+
+| Gesto | Acción |
+|---|---|
+| Clic | Ubica el cursor (respeta el gutter, el ajuste de línea, los bloques plegados y los caracteres anchos) |
+| Arrastrar | Selecciona; pasarse por arriba o por abajo del código lo desplaza |
+| Doble clic | Selecciona la palabra |
+| Triple clic | Selecciona la línea entera |
+| `Shift`+clic | Extiende la selección desde donde estaba |
+| Clic en el gutter | Cursor al principio de esa línea |
+| Clic en ` ... ` de un bloque plegado | Lo despliega |
+| Rueda | Desplaza 3 filas sin mover el cursor (como VSCode); cualquier tecla que mueva el cursor vuelve a llevar la vista hasta él |
+| Clic en otro panel de un split | Lo activa |
+
+La vista de código no tiene scroll horizontal (sin ajuste de línea, las
+líneas largas se cortan), así que `Shift`+rueda no hace nada ahí.
+
+En el resto de la pantalla:
+
+- **Pestañas:** clic activa la pestaña; clic con el botón del medio la
+  cierra — con cambios sin guardar pide confirmación como `Ctrl+W` (un
+  segundo clic medio, o `Ctrl+W`, confirma).
+- **Explorador:** un clic selecciona y abre, como en VSCode: un archivo
+  se abre en el panel activo, una carpeta se expande o colapsa. La rueda
+  mueve la selección de a 3 filas.
+- **Tabla CSV:** clic selecciona la celda; la rueda mueve la selección de
+  a 3 filas y `Shift`+rueda de columna.
+- **Paleta, buscador de archivos, selector de temas y de símbolos,
+  búsqueda en el proyecto, lista de referencias/definiciones del LSP:**
+  clic en un ítem lo elige (como `Enter`); clic fuera del recuadro lo
+  cierra (como `Esc`); la rueda mueve la selección de a uno.
+- **Autocompletado del LSP:** clic en una sugerencia la acepta; la rueda
+  encima la recorre; un clic en otro lado cierra el popup (y el de
+  hover).
+- **Barra de `Ctrl+F`:** un clic fuera de ella la cierra y ubica el
+  cursor donde se hizo clic.
+
+**Modo VIM:** en Normal, un clic mueve el cursor (sin quedar pasado del
+último carácter); arrastrar entra a Visual con lo arrastrado
+seleccionado; en Visual, un clic sale a Normal. Doble clic y
+`Shift`+clic solo mueven el cursor.
+
+El mouse no hace nada en el panel de administración (`Ctrl+,`), el
+editor visual de temas ni los prompts de texto ("Guardar como", nuevo
+archivo/renombrar del explorador, renombrar símbolo, `:` de VIM,
+edición y filtro de celdas CSV): un clic perdido no borra lo que se
+estaba escribiendo. La confirmación de borrado del explorador se cancela
+con cualquier clic, igual que con cualquier tecla.
 
 ## Copiar, cortar y pegar
 
@@ -397,6 +507,34 @@ atajos siguen andando igual sin la barra. El modo zen también la oculta.
   servidor de un lenguaje se cierra al cerrar la última pestaña de ese
   lenguaje.
 
+## Sesión y recuperación
+
+**Restaurar la sesión.** Al abrir `tcode` sin archivo en una carpeta,
+vuelven las pestañas, los splits, la posición del cursor en cada archivo
+y si el explorador estaba abierto, tal como quedaron la última vez en
+esa carpeta. Cada carpeta tiene su propia sesión. `tcode archivo.rs` abre
+solo ese archivo y no toca la sesión guardada. Los archivos que ya no
+existen se saltean, y un "[Sin nombre]" no se guarda. Se apaga en
+`Ctrl+,` → Editor → "Restaurar la sesión anterior".
+
+**Recuperar cambios sin guardar.** Mientras escribís, `tcode` guarda una
+copia de los archivos con cambios sin guardar fuera del proyecto, un
+segundo después de dejar de tipear (o cada 5 segundos si no parás). Si
+`tcode` se cierra de golpe (se cerró la terminal, se cortó la conexión
+SSH, un `kill`, se colgó la máquina), la próxima vez que lo abras en la
+misma carpeta aparece un aviso con los archivos afectados:
+
+| Tecla | Acción |
+|---|---|
+| `Enter` | Recupera: cada archivo se abre con los cambios, **sin guardar** (revisalos y `Ctrl+S`); un `Ctrl+Z` vuelve a lo que hay en disco |
+| `d` | Descarta las copias |
+| `Esc` | Lo deja para después: se vuelve a preguntar la próxima vez |
+
+Al salir normalmente (incluso con "salir sin guardar") las copias se
+borran: solo quedan después de un cierre inesperado. Con varias ventanas
+de `tcode` abiertas en la misma carpeta, ninguna ofrece recuperar lo de
+otra que sigue abierta.
+
 ## Explorador de archivos
 
 `Ctrl+B` lo muestra/oculta a la izquierda. Con el foco ahí: `↑`/`↓` mueve
@@ -651,7 +789,7 @@ opción por nombre):
 | **Temas** | Elegir tema (abre el selector con preview) y duplicar el activo para editarlo. |
 | **Lenguajes / LSP** | Habilitar/deshabilitar el servidor LSP de cada lenguaje, ver si el binario está en el `PATH` y el estado de la sesión de cada lenguaje (Conectado/Iniciando/Error/Inactivo). `c` sobre una fila edita el comando+argumentos a mano (ver [LSP](#lsp-autocompletado-y-diagnósticos)); `Backspace` quita ese override. |
 | **Editor** | Tamaño de tabulación, espacios vs. tabs, ajuste de línea, números de línea, indicadores de git, modo VIM, regla vertical, guardado automático, portapapeles del sistema (ver [Copiar, cortar y pegar](#copiar-cortar-y-pegar)). |
-| **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo), la barra de pestañas y los [breadcrumbs](#breadcrumbs) de arriba del código. |
+| **Interfaz** | Mostrar/ocultar la barra de estado y cada uno de sus elementos (posición del cursor, codificación, fin de línea, lenguaje, diagnósticos, modo), la barra de pestañas y los [breadcrumbs](#breadcrumbs) de arriba del código, y si se [usa el mouse](#mouse). |
 
 Todos los cambios se aplican y persisten al instante en `config.toml`, sin
 tocar ni reiniciar nada más.
@@ -799,6 +937,7 @@ soporta renombrar"):
 | `Ctrl+K I` | **Hover**: tipo y documentación del símbolo bajo el cursor en un recuadro debajo (el markdown se muestra como texto, hasta 20 líneas). Se cierra con cualquier tecla. |
 | `Ctrl+Espacio` o `Ctrl+K Espacio` | **Autocompletar** a mano. |
 | `F2` o `Ctrl+K Shift+R` | **Renombrar símbolo**: pide el nombre nuevo (precargado con el actual), `Enter` confirma. |
+| `Ctrl+.` o `Ctrl+K X` | **Acciones rápidas**: lo que el servidor ofrece para el cursor o la selección (agregar un `use`/`import`, corregir un error, extraer una variable...). La recomendada va primero; se filtra escribiendo, `Enter` (o un clic) la aplica. `Ctrl+.` solo llega con protocolo Kitty; `Ctrl+K X` en cualquier terminal. |
 
 **Autocompletado**: además de a mano, la lista aparece sola al tipear un
 carácter de disparo del servidor (el `.` de un método, `::` en Rust) o
@@ -817,6 +956,24 @@ VIM, en modo Insertar. Pedir la lista nunca frena el tipeo: se pide en
 segundo plano y, si llega cuando ya se siguió escribiendo otra cosa, se
 descarta.
 
+**Ayuda de firma**: al tipear `(` o `,` en una llamada (los caracteres
+que anuncie el servidor) aparece arriba del cursor la firma de la
+función, con el parámetro en el que estás en negrita y subrayado, la
+primera línea de su documentación y "(1/3)" si hay sobrecargas. Se
+actualiza mientras escribís los argumentos y se va sola al cerrar el
+paréntesis; `Esc` o moverse con un atajo la cierran. Convive con el
+autocompletado, que sale abajo. A mano: `Ctrl+Shift+Espacio` (con
+protocolo Kitty; sin él llega como `Ctrl+Espacio`, que autocompleta) o
+`Ctrl+K ,`.
+
+**Acciones rápidas**: los cambios se aplican igual que los de renombrar
+(ver abajo), un paso de deshacer por archivo. Algunas acciones son un
+comando del servidor (pyright, por ejemplo, no ofrece casi ninguna —
+"Organizar imports" es de Pylance); en ese caso el servidor calcula los
+cambios y se los manda a `tcode`, que los aplica igual. Si el archivo
+cambió entre pedir las acciones y elegir una, no se aplica nada: hay que
+pedirlas de nuevo.
+
 **Renombrar** aplica los cambios del servidor en todos los archivos que
 toque: los que ya están abiertos (en cualquier pestaña o panel) se editan
 ahí, un paso de deshacer por archivo; los que no, **se abren en pestañas
@@ -831,6 +988,19 @@ Todas están también en la paleta de comandos (categoría "LSP"). El
 servidor recibe como carpeta del proyecto el directorio desde el que se
 lanzó `tcode` (pyright, por ejemplo, la necesita para renombrar en más de
 un archivo).
+
+### Panel de problemas
+
+| Atajo | Acción |
+|---|---|
+| `Ctrl+Shift+M` o `Ctrl+K Q` | **Panel de problemas**: todos los diagnósticos del LSP de los archivos abiertos (en cualquier pestaña o panel), como `error  archivo:línea:col  mensaje`, ordenados por archivo y posición. El título cuenta errores y avisos. Se filtra escribiendo, `Enter` (o un clic) salta. |
+| `F8` / `Shift+F8` | **Siguiente / anterior problema** desde el cursor, pasando al archivo siguiente al terminar los de este y dando la vuelta al final. El mensaje se ve en la barra de estado. |
+
+Saltar a un problema cuenta para "Volver" (`Alt+←`) como cualquier otro
+salto, y también funciona con el foco en el explorador (el foco pasa al
+editor). Solo se ven los archivos abiertos: el LSP no informa los que no
+se abrieron. Sin protocolo Kitty, `Ctrl+Shift+M` llega como `Enter`: usar
+`Ctrl+K Q`.
 
 ### Formatear al guardar
 

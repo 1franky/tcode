@@ -128,7 +128,7 @@ mod tests {
         let keymap = keymap_por_defecto();
         let mut resolvedor = Resolvedor::nuevo(keymap);
         resolvedor.procesar(parsear_combinacion("Ctrl+K").unwrap());
-        let r = resolvedor.procesar(parsear_combinacion("x").unwrap());
+        let r = resolvedor.procesar(parsear_combinacion("y").unwrap());
         assert_eq!(r, Resolucion::Cancelado);
         assert!(!resolvedor.chord_en_curso());
     }
@@ -149,11 +149,11 @@ mod tests {
         resolvedor.procesar(parsear_combinacion("Ctrl+K").unwrap());
         assert!(resolvedor.chord_en_curso());
 
-        let nuevo = keymap_por_defecto().rebindear("archivo.guardar", parsear_combinacion("Ctrl+G").unwrap()).unwrap();
+        let nuevo = keymap_por_defecto().rebindear("archivo.guardar", parsear_combinacion("Ctrl+E").unwrap()).unwrap();
         resolvedor.reemplazar_keymap(nuevo);
         assert!(!resolvedor.chord_en_curso());
 
-        let r = resolvedor.procesar(parsear_combinacion("Ctrl+G").unwrap());
+        let r = resolvedor.procesar(parsear_combinacion("Ctrl+E").unwrap());
         assert_eq!(r, Resolucion::Comando("archivo.guardar".to_string()));
     }
 }

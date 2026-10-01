@@ -65,6 +65,11 @@ pub struct ConfigEditor {
     /// recuerde aunque se cambie de modo y se vuelva. Ignorado en los
     /// otros dos modos.
     pub segundos_guardado_automatico: u64,
+    /// Restaurar la sesión anterior (BACKLOG.md P2 #20): al abrir `tcode`
+    /// sin archivo en una carpeta, reabre las pestañas, los splits y la
+    /// posición del cursor de la última vez en esa carpeta. Prendido por
+    /// defecto, como VSCode. `tcode <archivo>` abre solo ese archivo.
+    pub restaurar_sesion: bool,
     /// Cómo llegan `Ctrl+C`/`Ctrl+X` al portapapeles del sistema y de
     /// dónde lee `Ctrl+V` (BACKLOG.md P0 #15). `Automatico` por defecto:
     /// secuencia OSC 52 a la terminal (anda también por SSH) y además la
@@ -173,6 +178,7 @@ impl Default for ConfigEditor {
             columna_regla: None,
             guardado_automatico: GuardadoAutomatico::Nunca,
             segundos_guardado_automatico: SEGUNDOS_GUARDADO_AUTOMATICO_POR_DEFECTO,
+            restaurar_sesion: true,
             portapapeles: ModoPortapapeles::Automatico,
             vim_sincronizar_portapapeles: false,
         }
@@ -202,6 +208,12 @@ pub struct ConfigInterfaz {
     pub statusbar_lenguaje: bool,
     pub statusbar_diagnosticos: bool,
     pub statusbar_modo: bool,
+    /// Soporte de mouse (BACKLOG.md P0 #18): clic, arrastre y rueda en el
+    /// código, las pestañas, el explorador y las listas. Prendido por
+    /// defecto; se puede apagar porque capturar el mouse le quita a la
+    /// terminal su selección nativa de texto (con `Shift` — `Option` en
+    /// iTerm2 — la mayoría de las terminales la siguen ofreciendo igual).
+    pub usar_mouse: bool,
 }
 
 impl Default for ConfigInterfaz {
@@ -217,6 +229,7 @@ impl Default for ConfigInterfaz {
             statusbar_lenguaje: true,
             statusbar_diagnosticos: true,
             statusbar_modo: true,
+            usar_mouse: true,
         }
     }
 }
@@ -484,6 +497,7 @@ mod tests {
                 columna_regla: Some(80),
                 guardado_automatico: GuardadoAutomatico::CadaNSegundos,
                 segundos_guardado_automatico: 10,
+                restaurar_sesion: false,
                 portapapeles: ModoPortapapeles::SoloSistema,
                 vim_sincronizar_portapapeles: true,
             },
@@ -498,6 +512,7 @@ mod tests {
                 statusbar_lenguaje: true,
                 statusbar_diagnosticos: false,
                 statusbar_modo: true,
+                usar_mouse: false,
             },
             lenguajes: ConfigLenguajes {
                 lsp_deshabilitado: vec!["python".to_string()],

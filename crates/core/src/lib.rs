@@ -4,6 +4,7 @@
 
 pub mod buffer;
 pub mod busqueda;
+pub mod comentarios;
 pub mod csv;
 pub mod cursor;
 pub mod diff;
@@ -11,6 +12,7 @@ pub mod editor;
 pub mod estado_busqueda;
 pub mod estado_csv;
 pub mod estado_guardar_como;
+pub mod estado_ir_a_linea;
 pub mod estado_vim;
 pub mod history;
 pub mod plegado;
@@ -18,6 +20,7 @@ pub mod vim;
 
 pub use buffer::{Buffer, Eol};
 pub use busqueda::{buscar_coincidencias, compilar_patron, Coincidencia, OpcionesBusqueda};
+pub use comentarios::{estilo_comentario_por_extension, EstiloComentario};
 pub use csv::{
     analizar as analizar_csv, delimitador_por_extension, filas_visibles as filas_visibles_csv,
     serializar_fila as serializar_fila_csv, EdicionCsv, FilaCsv, FiltroCsv, TablaCsv,
@@ -28,6 +31,7 @@ pub use editor::{Editor, Modo, TextoCopiado};
 pub use estado_busqueda::{CampoBusqueda, EstadoBusqueda};
 pub use estado_csv::EstadoCsv;
 pub use estado_guardar_como::EstadoGuardarComo;
+pub use estado_ir_a_linea::{interpretar_ir_a_linea, EstadoIrALinea};
 pub use estado_vim::EstadoVim;
 pub use vim::EstadoLineaComando;
 pub use history::Historia;
