@@ -1,7 +1,7 @@
 # Plan de pruebas manuales — tcode
 
 Checklist para probar `tcode` de punta a punta antes de liberar una nueva
-versión. Cubre todo lo implementado hasta v0.13.0: los milestones de
+versión. Cubre todo lo implementado hasta v0.14.0: los milestones de
 [PLAN.md](./PLAN.md) §11 y todo lo cerrado después en
 [BACKLOG.md](./BACKLOG.md) (ver "Hecho recientemente" ahí), con una
 sección por pieza al final del documento. Cada sección se agrega o
@@ -13,27 +13,27 @@ sección de la pieza que cambió más el bug conocido de Windows. Antes de
 mergear `develop` → `main` y taggear, conviene pasar al menos una vez por
 todo, en la plataforma donde se vaya a usar principalmente.
 
-## Qué probar en v0.13.0
+## Qué probar en v0.14.0
 
-Lo nuevo desde v0.12.0 (#137 y #138), cada uno con su sección más abajo:
+Lo nuevo desde v0.13.0 (#144), con su sección más abajo:
 
-- [Bloques de cambios de git](#bloques-de-cambios-de-git-backlogmd-p2-25-primera-parte):
-  ver, revertir y recorrer los cambios respecto de `HEAD`.
-- [Blame en línea](#blame-en-línea-backlogmd-p2-25-segunda-parte).
-- [Snippets con saltos entre campos](#snippets-con-saltos-entre-campos-backlogmd-p2-24):
-  propios por lenguaje y los del autocompletado del LSP.
+- [Modo VIM: búsqueda, registros, macros y `Ctrl+R`](#modo-vim-búsqueda-registros-macros-y-ctrlr-backlogmd-p3-28):
+  `/`, `?`, `n`, `N`, `*`, `#`; registros `"a`-`"z`, `"A`-`"Z` y `"_`;
+  macros `q`/`@`/`@@`; `Ctrl+R` para rehacer.
 
-Y, porque esas piezas tocan teclas y vistas compartidas, repasar:
+Y, porque esas piezas tocan teclas compartidas, repasar:
 
-- **`Tab` / `Shift+Tab` / `Esc`**: con la lista de autocompletado abierta,
-  `Tab` acepta; sin lista ni snippet, indenta; en la tabla de un CSV,
-  salta de celda; en modo VIM (Normal), `Esc` sigue funcionando como
-  siempre.
-- **Vista de código**: con el blame prendido, la línea del cursor con un
-  diagnóstico sigue subrayada (el texto del blame no), y el ajuste de
-  línea, la regla vertical y el mouse se comportan igual que antes.
-- **Popups**: "ver cambio" de git, hover, ayuda de firma y completado no
-  quedan abiertos a la vez de forma rara; un clic los cierra.
+- **Modo VIM apagado**: `/`, `?`, `n`, `*`, `#`, `q`, `@` y `"` se escriben
+  como texto; `Ctrl+R` no hace nada nuevo.
+- **La línea `:`** sigue igual (`:w`, `:q`, `:%s`...) y comparte el
+  historial con `/` y `?`.
+- **Portapapeles en VIM** (`"+yy`, `"+p` y "VIM: registro = portapapeles"):
+  sin cambios; con un registro con nombre (`"ayy`) el portapapeles no se
+  toca.
+- **Pegar mientras se graba una macro**: lo pegado desde la terminal
+  (`Cmd+V`, clic del medio: llega como pegado, no como teclas) no queda
+  en la macro; `Ctrl+V` sí (es una tecla, y al reproducir vuelve a pegar
+  lo que haya en el portapapeles en ese momento).
 
 ## Cómo instalar la versión a probar
 
