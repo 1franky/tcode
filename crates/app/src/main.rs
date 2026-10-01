@@ -674,6 +674,9 @@ async fn ejecutar(
         if estado.funciones_lsp.pedido.is_some() {
             funciones_lsp::enviar_pedido(layout, &mut estado).await;
         }
+        if estado.funciones_lsp.firma_pedida.is_some() {
+            funciones_lsp::enviar_firma(layout, &mut estado).await;
+        }
         if !funciones_lsp::procesar_respuestas(layout, &mut estado) && std::mem::take(&mut solo_respuestas_lsp) {
             omitir_dibujo = true;
         }

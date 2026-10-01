@@ -13,6 +13,7 @@ mod cliente;
 mod completado;
 mod diagnostico;
 mod estado_logs;
+mod firma;
 mod formateo;
 mod navegacion;
 mod protocolo;
@@ -23,6 +24,7 @@ pub use completado::{parsear_completado, snippet_a_texto, EstadoCompletado, Item
 pub use cliente::{comando_para, Cliente, MensajeEntrante};
 pub use diagnostico::{parsear_diagnosticos, DiagnosticoSimple, Severidad};
 pub use estado_logs::EstadoLogsLsp;
+pub use firma::{parsear_ayuda_firma, AyudaFirma};
 pub use formateo::{parsear_ediciones_formateo, soporta_formateo, EdicionTexto};
 pub use navegacion::{
     byte_de_posicion, byte_en_linea, parsear_ubicaciones, parsear_workspace_edit, posicion_en_linea, ruta_desde_uri,

@@ -21,7 +21,7 @@ use ratatui::Frame;
 use serde_json::{json, Value};
 use tcode_commands::{EntradaUbicacion, EstadoListaUbicaciones};
 use tcode_core::{Editor, Modo};
-use tcode_lsp::{AccionRapida, EdicionArchivo, EstadoCompletado, ItemCompletado, Ubicacion};
+use tcode_lsp::{AccionRapida, AyudaFirma, EdicionArchivo, EstadoCompletado, ItemCompletado, Ubicacion};
 use tcode_ui::{Layout as PanelLayout, ModoCsv, Paleta, ZonaOverlay};
 
 use crate::lsp::{RespuestaLsp, TipoPedido};
@@ -61,6 +61,14 @@ pub enum Pedido {
     EjecutarComando(Value),
 }
 
+/// Un pedido de ayuda de firma: `disparador` es el carácter recién tipeado
+/// que lo disparó (`(`, `,`), si fue eso; `manual`, el comando.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PedidoFirma {
+    pub disparador: Option<char>,
+    pub manual: bool,
+}
+
 /// Estado de las funciones de este módulo, un campo de `EstadoApp`.
 #[derive(Default)]
 pub struct EstadoFuncionesLsp {
@@ -90,6 +98,16 @@ pub struct EstadoFuncionesLsp {
     /// `linea` su índice acá), y la revisión del documento al pedirlas.
     acciones: Option<Vec<AccionRapida>>,
     revision_acciones: Option<u64>,
+    /// Ayuda de firma (BACKLOG.md P2 #23) a la vista, si hay.
+    pub firma: Option<AyudaFirma>,
+    /// Pedido de ayuda de firma por mandar: aparte de `pedido` porque se
+    /// dispara al tipear igual que el completado y no tiene que pisarlo.
+    pub firma_pedida: Option<PedidoFirma>,
+    /// El último pedido mandado: si fue a mano (avisa si no hay firma) y
+    /// en qué línea (una respuesta que llega con el cursor en otra línea
+    /// se descarta).
+    firma_manual: bool,
+    firma_linea: usize,
     /// De dónde se saltó (archivo, byte), para "Volver".
     pila_volver: Vec<(PathBuf, usize)>,
 }
@@ -168,6 +186,7 @@ pub fn comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp) -> bo
         "lsp.referencias" => funciones.pedido = Some(Pedido::Referencias),
         "lsp.hover" => funciones.pedido = Some(Pedido::Hover),
         "lsp.acciones_rapidas" => funciones.pedido = Some(Pedido::AccionesRapidas),
+        "lsp.ayuda_firma" => funciones.firma_pedida = Some(PedidoFirma { disparador: None, manual: true }),
         "lsp.completar" => {
             funciones.pedido = Some(Pedido::Completado { disparador: None, manual: true, reintento: false })
         }
@@ -266,6 +285,47 @@ pub async fn enviar_pedido(layout: &mut PanelLayout, estado: &mut EstadoApp) {
     }
 }
 
+/// Manda el pedido de ayuda de firma pendiente (ver `firma_pedida`).
+/// `triggerKind`: 1 a mano, 2 por un carácter de disparo, 3 porque
+/// cambió el texto con la firma ya a la vista (`isRetrigger`).
+pub async fn enviar_firma(layout: &mut PanelLayout, estado: &mut EstadoApp) {
+    let Some(pedido) = estado.funciones_lsp.firma_pedida.take() else { return };
+    if !editor_de_texto(layout, estado) {
+        return;
+    }
+    sincronizar_lsp(layout, &mut estado.lsp, &estado.config).await;
+    let ruta = layout.panel_activo().ruta_mostrada.clone();
+    let contexto = contexto_cursor(layout.editor_activo());
+    let posicion = tcode_lsp::posicion_en_linea(contexto.linea, &contexto.texto[..contexto.byte_cursor]);
+    let mut contexto_firma = json!({
+        "triggerKind": if pedido.manual { 1 } else if pedido.disparador.is_some() { 2 } else { 3 },
+        "isRetrigger": estado.funciones_lsp.firma.is_some(),
+    });
+    if let (Some(c), false) = (pedido.disparador, pedido.manual) {
+        contexto_firma["triggerCharacter"] = json!(c.to_string());
+    }
+    match estado.lsp.pedir(TipoPedido::AyudaFirma, &ruta, posicion, json!({ "context": contexto_firma })).await {
+        Ok(()) => {
+            estado.funciones_lsp.firma_manual = pedido.manual;
+            estado.funciones_lsp.firma_linea = contexto.linea;
+        }
+        Err(motivo) if pedido.manual => avisar(layout, format!("LSP: {motivo}")),
+        Err(_) => estado.funciones_lsp.firma = None,
+    }
+}
+
+/// Llegó la ayuda de firma: se muestra si el cursor sigue en la línea en
+/// la que se pidió (si no, ya no corresponde).
+fn mostrar_firma(layout: &mut PanelLayout, estado: &mut EstadoApp, valor: &Value) {
+    let funciones = &mut estado.funciones_lsp;
+    let vigente = layout.editor_activo().cursor().linea == funciones.firma_linea
+        && layout.editor_activo().modo() == Modo::Insertar;
+    funciones.firma = if vigente { tcode_lsp::parsear_ayuda_firma(valor) } else { None };
+    if funciones.firma.is_none() && funciones.firma_manual {
+        avisar(layout, "Sin firma para mostrar acá");
+    }
+}
+
 /// Interpreta las respuestas llegadas (`EstadoLsp::tomar_respuestas`).
 /// Casi siempre no hay ninguna: se llama en cada vuelta del bucle.
 /// Devuelve si cambió algo visible — un completado que llegó tarde (ya
@@ -296,6 +356,10 @@ pub fn procesar_respuestas(layout: &mut PanelLayout, estado: &mut EstadoApp) -> 
         let valor = match resultado {
             Ok(valor) => valor,
             Err(motivo) => {
+                if tipo == TipoPedido::AyudaFirma && !estado.funciones_lsp.firma_manual {
+                    estado.funciones_lsp.firma = None;
+                    continue;
+                }
                 if tipo == TipoPedido::Completado {
                     let manual = estado.funciones_lsp.completado_manual;
                     estado.funciones_lsp.esperando_completado = false;
@@ -335,6 +399,7 @@ pub fn procesar_respuestas(layout: &mut PanelLayout, estado: &mut EstadoApp) -> 
             TipoPedido::AccionesRapidas => abrir_acciones(layout, estado, &valor),
             // Lo que haya cambiado llegó antes como `workspace/applyEdit`.
             TipoPedido::EjecutarComando => {}
+            TipoPedido::AyudaFirma => mostrar_firma(layout, estado, &valor),
         }
     }
     cambio
@@ -758,6 +823,11 @@ pub fn manejar_tecla(key: KeyEvent, layout: &mut PanelLayout, estado: &mut Estad
         }
         return true;
     }
+    // `Esc` cierra la ayuda de firma y sigue su camino (cierra también el
+    // completado, o pasa a Normal en modo VIM).
+    if key.code == KeyCode::Esc {
+        funciones.firma = None;
+    }
     if let Some(nombre) = &mut funciones.renombrar {
         match key.code {
             KeyCode::Esc => funciones.renombrar = None,
@@ -817,6 +887,7 @@ pub enum Tecleo {
 pub fn despues_de_tecla(tecleo: Tecleo, layout: &PanelLayout, estado: &mut EstadoApp) {
     let editor = layout.editor_activo();
     let apto = editor_de_texto(layout, estado) && editor.modo() == Modo::Insertar && !editor.tiene_multiples_cursores();
+    actualizar_firma(tecleo, apto, layout, estado);
     let caracter = match tecleo {
         Tecleo::Caracter(c) if apto => Some(c),
         Tecleo::Borrar if apto => None,
@@ -851,6 +922,30 @@ pub fn despues_de_tecla(tecleo: Tecleo, layout: &PanelLayout, estado: &mut Estad
     }
 }
 
+/// Ayuda de firma al tipear: un carácter de disparo del servidor (`(`,
+/// `,`) la pide; con la firma a la vista, cualquier letra o borrado la
+/// vuelve a pedir (el parámetro activo cambia, o el cursor salió de la
+/// llamada y el servidor contesta que no hay firma, lo que la cierra).
+/// Cualquier otra cosa (un atajo, moverse, `Enter`) la cierra.
+fn actualizar_firma(tecleo: Tecleo, apto: bool, layout: &PanelLayout, estado: &mut EstadoApp) {
+    let disparadores = estado
+        .lsp
+        .capacidades(&layout.panel_activo().ruta_mostrada)
+        .filter(|c| c.ayuda_firma)
+        .map(|c| c.disparadores_firma.clone());
+    let funciones = &mut estado.funciones_lsp;
+    match (tecleo, disparadores) {
+        (Tecleo::Caracter(c), Some(disparadores)) if apto && disparadores.contains(&c) => {
+            funciones.firma_pedida = Some(PedidoFirma { disparador: Some(c), manual: false });
+        }
+        (Tecleo::Caracter(_) | Tecleo::Borrar, Some(_)) if apto && funciones.firma.is_some() => {
+            funciones.firma_pedida = Some(PedidoFirma { disparador: None, manual: false });
+        }
+        (Tecleo::Caracter(_) | Tecleo::Borrar, _) if apto => {}
+        _ => funciones.firma = None,
+    }
+}
+
 /// Venció la pausa al tipear (rama del `select!` de `ejecutar`): pide el
 /// completado. `reintento` si ya había una lista abierta (incompleta).
 pub fn pausa_vencida(estado: &mut EstadoApp) {
@@ -880,6 +975,11 @@ pub fn dibujar(
         return (None, None);
     }
     let Some(cursor) = layout.panel_activo().estado_ui.posicion_cursor() else { return (None, None) };
+    // La firma va arriba del cursor y el completado abajo: se pueden ver
+    // los dos a la vez.
+    if let Some(firma) = &funciones.firma {
+        tcode_ui::panel_lsp::dibujar_firma(frame, frame.area(), cursor, firma, paleta);
+    }
     if funciones.completado.activo() {
         // Anclado al inicio de la palabra (no al cursor), para que no se
         // corra a cada letra escrita.
@@ -928,6 +1028,7 @@ pub fn rueda_en_completado(abajo: bool, estado: &mut EstadoApp) {
 pub fn cerrar_popups(estado: &mut EstadoApp) {
     estado.funciones_lsp.cerrar_completado();
     estado.funciones_lsp.hover = None;
+    estado.funciones_lsp.firma = None;
 }
 
 #[cfg(test)]

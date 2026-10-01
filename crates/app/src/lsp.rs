@@ -302,6 +302,17 @@ async fn lanzar_sesion(lenguaje: Lenguaje, comando: ComandoLsp) -> std::result::
             // con los cambios ya calculados — sin `resolveSupport`, así
             // rust-analyzer los manda en la respuesta en vez de pedir un
             // `codeAction/resolve` aparte.
+            // Ayuda de firma (P2 #23): documentación en texto plano (se
+            // muestra la primera línea) y el parámetro como rango.
+            "signatureHelp": {
+                "dynamicRegistration": false,
+                "contextSupport": true,
+                "signatureInformation": {
+                    "documentationFormat": ["plaintext", "markdown"],
+                    "parameterInformation": { "labelOffsetSupport": true },
+                    "activeParameterSupport": true,
+                },
+            },
             "codeAction": {
                 "dynamicRegistration": false,
                 "isPreferredSupport": true,
@@ -371,6 +382,8 @@ pub enum TipoPedido {
     /// `workspace/executeCommand`: el comando de una acción rápida (ver
     /// `EstadoLsp::ejecutar_comando`).
     EjecutarComando,
+    /// `textDocument/signatureHelp` (BACKLOG.md P2 #23).
+    AyudaFirma,
 }
 
 impl TipoPedido {
@@ -383,6 +396,7 @@ impl TipoPedido {
             TipoPedido::Renombrar => "textDocument/rename",
             TipoPedido::AccionesRapidas => "textDocument/codeAction",
             TipoPedido::EjecutarComando => "workspace/executeCommand",
+            TipoPedido::AyudaFirma => "textDocument/signatureHelp",
         }
     }
 
@@ -396,6 +410,7 @@ impl TipoPedido {
             TipoPedido::AccionesRapidas => capacidades.acciones,
             // Solo se ejecutan comandos que el propio servidor ofreció.
             TipoPedido::EjecutarComando => true,
+            TipoPedido::AyudaFirma => capacidades.ayuda_firma,
         }
     }
 
@@ -409,6 +424,7 @@ impl TipoPedido {
             TipoPedido::Renombrar => "el LSP no soporta renombrar",
             TipoPedido::AccionesRapidas => "el LSP no ofrece acciones rápidas",
             TipoPedido::EjecutarComando => "el LSP no ejecuta comandos",
+            TipoPedido::AyudaFirma => "el LSP no ofrece ayuda de firma",
         }
     }
 }

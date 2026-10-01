@@ -1109,6 +1109,17 @@ proyecto Cargo con `let m: HashMap<i32, i32> = HashMap::new();` sin el
 - [ ] **Comando del servidor.** Con un servidor que ofrece acciones como `Command` (por ejemplo, un servidor LSP mínimo de prueba escrito para eso), elegir una: el servidor pide los cambios con `workspace/applyEdit`, `tcode` los aplica y le contesta `applied: true`.
 - [ ] **Mouse.** Un clic en una acción de la lista la aplica.
 
+## Ayuda de firma (BACKLOG.md P2 #23, segunda parte)
+
+Con `HOME` temporal y pyright, en un `.py` con
+`def sumar(a: int, b: str) -> str:` y un docstring.
+
+- [ ] **Al tipear.** Escribir `sumar(`: arriba del cursor aparece `(a: int, b: str) -> str` con `a: int` resaltado y la primera línea del docstring. Escribir `1, `: el resaltado pasa a `b: str`. Escribir `"x")`: desaparece.
+- [ ] **Con autocompletado.** Dentro de los paréntesis, empezar a escribir un nombre: el completado sale abajo y la firma sigue arriba.
+- [ ] **Cerrar.** Con la firma a la vista, `Esc` la cierra (en modo VIM además pasa a Normal); una flecha o un atajo también.
+- [ ] **A mano.** Con el cursor adentro de una llamada ya escrita, `Ctrl+K ,` la muestra; afuera de una llamada, "Sin firma para mostrar acá". En un `.txt`, "LSP: sin LSP para este archivo".
+- [ ] **Rust.** Con rust-analyzer: `String::with_capacity(` muestra la firma con el nombre de la función.
+
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de
 cerrarlo — ver el flujo de ramas en el [README](./README.md#flujo-de-ramas).

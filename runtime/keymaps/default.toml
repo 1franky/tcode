@@ -233,6 +233,11 @@
 # ("fix") anda en cualquier terminal.
 "Ctrl+."         = "lsp.acciones_rapidas"
 "Ctrl+K X"       = "lsp.acciones_rapidas"
+# Ayuda de firma (P2 #23): aparece sola al tipear "(" o ","; a mano con
+# Ctrl+Shift+Espacio como en VSCode (sin protocolo Kitty llega como
+# Ctrl+Espacio = autocompletar) o Ctrl+K "," en cualquier terminal.
+"Ctrl+Shift+Space" = "lsp.ayuda_firma"
+"Ctrl+K ,"         = "lsp.ayuda_firma"
 # Panel de problemas (BACKLOG.md P2 #22): Ctrl+Shift+M y F8/Shift+F8 como
 # en VSCode. Sin protocolo Kitty, Ctrl+Shift+M pierde el Shift y llega
 # como Ctrl+M (= Enter): el chord con Ctrl+K es la alternativa universal.

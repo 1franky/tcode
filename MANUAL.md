@@ -77,6 +77,7 @@ medio cancela esa confirmación pendiente.
 | `Ctrl+Espacio` (o `Ctrl+K Espacio`) | Autocompletar |
 | `F2` (o `Ctrl+K Shift+R`) | Renombrar símbolo (en la tabla de un CSV, `F2` edita la celda) |
 | `Ctrl+.` (o `Ctrl+K X`) | Acciones rápidas del LSP: arreglos, imports, refactors |
+| `Ctrl+Shift+Espacio` (o `Ctrl+K ,`) | Ayuda de firma (también aparece sola al tipear `(` o `,`) |
 | `Ctrl+K Ctrl+T` | Selector de temas (con preview en vivo) |
 | `Ctrl+K Ctrl+L` | Recargar `config.toml`/`keymap.toml` sin reiniciar |
 
@@ -954,6 +955,16 @@ pyright lo respetan). Solo con un cursor (no con multi-cursor) y, en modo
 VIM, en modo Insertar. Pedir la lista nunca frena el tipeo: se pide en
 segundo plano y, si llega cuando ya se siguió escribiendo otra cosa, se
 descarta.
+
+**Ayuda de firma**: al tipear `(` o `,` en una llamada (los caracteres
+que anuncie el servidor) aparece arriba del cursor la firma de la
+función, con el parámetro en el que estás en negrita y subrayado, la
+primera línea de su documentación y "(1/3)" si hay sobrecargas. Se
+actualiza mientras escribís los argumentos y se va sola al cerrar el
+paréntesis; `Esc` o moverse con un atajo la cierran. Convive con el
+autocompletado, que sale abajo. A mano: `Ctrl+Shift+Espacio` (con
+protocolo Kitty; sin él llega como `Ctrl+Espacio`, que autocompleta) o
+`Ctrl+K ,`.
 
 **Acciones rápidas**: los cambios se aplican igual que los de renombrar
 (ver abajo), un paso de deshacer por archivo. Algunas acciones son un
