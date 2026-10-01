@@ -41,8 +41,6 @@ Y, por regresiones:
   recuperación al relanzar.
 - **Pegar con un solo cursor** y **con varios cursores y otra cantidad de
   líneas**: igual que siempre (todo el texto en cada cursor).
-- **`Ctrl+H`** (reemplazar en el archivo) sigue literal: `$1` se escribe
-  tal cual.
 
 ## Cómo instalar la versión a probar
 
@@ -194,6 +192,7 @@ sin persistir nada de un frame al siguiente — mismo criterio que ya usa
 - [ ] `Enter` con el campo de reemplazo activo: reemplaza solo la coincidencia actual y avanza a la siguiente.
 - [ ] `Ctrl+Alt+Enter` o `Alt+Enter`: reemplaza TODAS las coincidencias de una vez.
 - [ ] `Esc`: cierra la barra sin perder los cambios ya hechos.
+- [ ] **Grupos y reemplazar todo.** En `a1 b2 c3`, `Ctrl+H`, buscar `([a-z])(\d)`, `Alt+R`, `Tab`, `$2$1`, `Alt+Enter`: queda `1a 2b 3c`, y un solo `Ctrl+Z` vuelve todo. `Enter` (de a una) también expande. Sin regex, `$1` se escribe tal cual.
 
 ## M3 — Vista Markdown (`Ctrl+K V` / `Ctrl+Shift+V`)
 
