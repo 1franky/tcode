@@ -225,7 +225,10 @@ con cualquier clic, igual que con cualquier tecla.
 
 - **Con varios cursores**: se copian las selecciones de todos, en orden y
   unidas por saltos de línea. Si ninguno tiene selección, se copia la
-  línea de cada cursor.
+  línea de cada cursor. Al pegar con varios cursores, si el texto tiene
+  una línea por cursor, a cada uno le toca la suya (copiar tres
+  selecciones y pegarlas en otros tres lugares); si no, cada cursor
+  recibe el texto entero.
 - **Líneas enteras, como en VSCode**: lo copiado sin selección, pegado
   con `Ctrl+V`, se inserta **arriba** de la línea del cursor, no en el
   medio.

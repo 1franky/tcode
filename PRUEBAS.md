@@ -249,6 +249,7 @@ guardar.
 - [ ] `Ctrl+Shift+L` (o `Ctrl+K L` si esa combinación no llega en la terminal usada): selecciona TODAS las ocurrencias de una sola vez.
 - [ ] Con varios cursores activos, escribir **más de un carácter seguido** (p. ej. reemplazar una palabra completa): el texto queda correcto en TODAS las posiciones, no se corrompe ni se desordena — este es el caso que específicamente se rompía antes de corregirse, vale la pena probarlo con atención.
 - [ ] Con varios cursores activos, `Backspace`: borra en todas las posiciones a la vez, de forma independiente.
+- [ ] **Pegar una línea por cursor.** Tres cursores (`Ctrl+Alt+↓` dos veces), `Shift+→` dos veces, `Ctrl+C`, `End`, `Ctrl+V`: cada línea recibe lo suyo (`ab-ab`, `cd-cd`, `ef-ef`), no las tres. Un `Ctrl+Z` lo deshace entero. Con dos cursores y tres líneas copiadas, cada cursor recibe las tres.
 - [ ] `Ctrl+Alt+↑` / `Ctrl+Alt+↓`: agrega un cursor una línea arriba/abajo de cada cursor existente, en la misma columna; no hace nada para los cursores que ya están en la primera/última línea.
 - [ ] La barra de estado muestra "N cursores" cuando hay más de uno, y desaparece con uno solo.
 - [ ] `Esc`: colapsa todo a un solo cursor (el principal), sin selección.

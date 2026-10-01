@@ -64,7 +64,8 @@ cerraron, ver "Hecho recientemente". Limitaciones conocidas:
 - **Portapapeles (#15)**: Terminal.app ignora OSC 52 (se usa `pbcopy`);
   tmux necesita `set -g set-clipboard on` para reenviar OSC 52; por SSH
   `Ctrl+V` no puede leer el portapapeles local (pega lo copiado dentro de
-  tcode); con varios cursores se pega el texto entero en cada uno.
+  tcode). Con varios cursores, una línea por cursor se reparte (desde
+  2026-10-01); otra cantidad de líneas se pega entera en cada uno.
 - **Búsqueda en el proyecto (#16)**: la lista no se refresca sola tras
   editar; reemplazo literal (sin `$1`); en archivos cerrados el reemplazo
   se escribe a disco y no se puede deshacer (la confirmación lo avisa);

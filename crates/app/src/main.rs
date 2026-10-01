@@ -2244,7 +2244,9 @@ fn usar_portapapeles(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp)
                 let hay_seleccion = editor.cursores().iter().any(|c| c.tiene_seleccion());
                 if copiado.lineal && !hay_seleccion {
                     editor.pegar_lineas(&copiado.texto);
-                } else {
+                } else if !editor.pegar_por_cursor(&copiado.texto) {
+                    // Con una línea por cursor, a cada uno la suya (ver
+                    // `Editor::pegar_por_cursor`); si no, todo en cada uno.
                     editor.insertar_texto(&copiado.texto);
                 }
                 None
