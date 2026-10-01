@@ -1126,10 +1126,10 @@ mod tests_ruteo {
 
     #[test]
     fn sin_comando_o_deshabilitado_no_hay_sesion() {
-        // Rust no tiene comando por defecto; Python está deshabilitado.
+        // Java no tiene comando por defecto; Python está deshabilitado.
         let mut config = Config::default();
         config.lenguajes.alternar_lsp("python");
-        let documentos = [("a.py", "file:///a.py"), ("b.rs", "file:///b.rs")];
+        let documentos = [("a.py", "file:///a.py"), ("B.java", "file:///B.java")];
         assert!(repartir_por_lenguaje(&documentos, &config).is_empty());
     }
 

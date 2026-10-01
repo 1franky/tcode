@@ -69,11 +69,11 @@ cerraron, ver "Hecho recientemente". Limitaciones conocidas:
   editar; reemplazo literal (sin `$1`); en archivos cerrados el reemplazo
   se escribe a disco y no se puede deshacer (la confirmación lo avisa);
   archivos de más de 4 MB o no UTF-8 no se buscan.
-- **LSP (#17)**: snippets sin saltos entre placeholders; completado solo
-  con un cursor (y en VIM solo en Insertar); renombrar sin
-  `prepareRename` ni operaciones sobre archivos; el hover no se desplaza.
-  Rust sigue sin comando LSP por defecto (hay que configurar
-  `rust-analyzer`).
+- **LSP (#17)**: completado solo con un cursor (y en VIM solo en
+  Insertar); renombrar sin `prepareRename` ni operaciones sobre archivos;
+  el hover no se desplaza. Java y C# siguen sin comando LSP por defecto
+  (necesitan datos del proyecto); Rust (`rust-analyzer`), Go (`gopls`) y
+  JavaScript (`typescript-language-server`) lo tienen desde 2026-10-01.
 
 ---
 

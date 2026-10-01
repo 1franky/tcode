@@ -964,7 +964,9 @@ correspondiente para que funcione):
 | Lenguaje | Servidor LSP por defecto |
 |---|---|
 | Python | `pyright-langserver --stdio` |
-| TypeScript | `typescript-language-server --stdio` |
+| Rust | `rust-analyzer` (con rustup: `rustup component add rust-analyzer`) |
+| Go | `gopls` |
+| TypeScript / JavaScript | `typescript-language-server --stdio` |
 | C / C++ | `clangd` |
 | Ruby | `solargraph stdio` |
 | PHP | `intelephense --stdio` |
@@ -973,11 +975,10 @@ correspondiente para que funcione):
 | CSS | `vscode-css-language-server --stdio` |
 | SQL | `sqls` |
 
-Rust, JavaScript, Go, Markdown, Java y C# tienen resaltado de sintaxis
-completo pero **sin comando por defecto** — Java (`jdtls`) y C#
-(`omnisharp`) necesitan un directorio de proyecto como argumento que no
-hay forma de adivinar de antemano, y los otros simplemente no tienen uno
-todavía. Para cualquiera de estos (o para apuntar a un comando distinto
+Markdown, Java y C# tienen resaltado de sintaxis completo pero **sin
+comando por defecto** — Java (`jdtls`) y C# (`omnisharp`) necesitan un
+directorio de proyecto como argumento que no hay forma de adivinar de
+antemano. Para cualquiera de estos (o para apuntar a un comando distinto
 del que trae por defecto, como una versión instalada en otra ruta):
 sección "Lenguajes / LSP" del panel de administración, `c` sobre la fila
 del lenguaje, escribí el comando completo con sus argumentos y `Enter`.
