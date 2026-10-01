@@ -1,4 +1,4 @@
-use crate::busqueda::{buscar_coincidencias, Coincidencia, OpcionesBusqueda};
+use crate::busqueda::{buscar_coincidencias, compilar_patron, Coincidencia, OpcionesBusqueda};
 
 /// Qué campo recibe el texto que se escribe: la consulta, o (solo en modo
 /// reemplazar) el texto de reemplazo. `Tab` alterna entre ambos.
@@ -62,6 +62,26 @@ impl EstadoBusqueda {
 
     pub fn campo_activo(&self) -> CampoBusqueda {
         self.campo_activo
+    }
+
+    /// El texto que reemplaza a cada una de `coincidencias` en `texto`
+    /// (el del buffer sobre el que se buscaron). Con regex, el reemplazo
+    /// puede usar lo que capturó cada una: `$1`, `${1}`, `${nombre}`,
+    /// `$0` (todo) y `$$` (un `$`), igual que la búsqueda en el proyecto;
+    /// sin regex es literal.
+    pub fn reemplazos(&self, texto: &str, coincidencias: &[Coincidencia]) -> Vec<String> {
+        let regex = self.opciones.regex.then(|| compilar_patron(&self.consulta, self.opciones).ok()).flatten();
+        coincidencias
+            .iter()
+            .map(|c| match regex.as_ref().and_then(|re| re.captures_at(texto, c.inicio)) {
+                Some(caps) if caps.get(0).is_some_and(|m| m.start() == c.inicio) => {
+                    let mut nuevo = String::new();
+                    caps.expand(&self.reemplazo, &mut nuevo);
+                    nuevo
+                }
+                _ => self.reemplazo.clone(),
+            })
+            .collect()
     }
 
     pub fn opciones(&self) -> OpcionesBusqueda {
@@ -313,6 +333,33 @@ mod tests {
         // coincidencia posible: debe dar la vuelta a la primera (índice 0).
         estado.recalcular_y_posicionar("gato", 100);
         assert_eq!(estado.indice_actual(), Some(0));
+    }
+
+    #[test]
+    fn reemplazos_con_grupos_solo_con_regex() {
+        let texto = "a1 b2";
+        let mut estado = EstadoBusqueda::nueva();
+        estado.abrir(true, texto);
+        for c in r"([a-z])(\d)".chars() {
+            estado.escribir(c, texto);
+        }
+        estado.alternar_regex(texto);
+        estado.alternar_campo();
+        for c in "$2$1".chars() {
+            estado.escribir(c, texto);
+        }
+        let coincidencias = estado.coincidencias().to_vec();
+        assert_eq!(estado.reemplazos(texto, &coincidencias), ["1a", "2b"]);
+        // Literal: `$1` tal cual.
+        let mut literal = EstadoBusqueda::nueva();
+        literal.abrir(true, texto);
+        literal.escribir('a', texto);
+        literal.alternar_campo();
+        for c in "$1".chars() {
+            literal.escribir(c, texto);
+        }
+        let coincidencias = literal.coincidencias().to_vec();
+        assert_eq!(literal.reemplazos(texto, &coincidencias), ["$1"]);
     }
 
     #[test]

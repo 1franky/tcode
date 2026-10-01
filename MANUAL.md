@@ -295,6 +295,12 @@ reemplazo. Con la barra abierta:
 | `Alt+W` | Alternar "palabra completa" |
 | `Enter` (en el campo de reemplazo) | Reemplazar la coincidencia actual |
 
+`Ctrl+Alt+Enter` (o `Alt+Enter`) reemplaza todas de una vez, como un
+solo cambio (un `Ctrl+Z` lo deshace entero). Con regex, el reemplazo
+puede usar lo que capturó cada coincidencia: `$1`, `${nombre}`, `$0`
+(todo) y `$$` (un `$`) — p. ej. `(\w+)=(\w+)` → `$2=$1`. Sin regex es
+literal.
+
 `F3`/`Shift+F3` también funcionan con la barra cerrada, repitiendo la
 última búsqueda — igual que en VSCode.
 

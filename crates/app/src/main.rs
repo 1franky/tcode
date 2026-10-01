@@ -3672,22 +3672,23 @@ fn reemplazar_coincidencia_actual(editor: &mut Editor, estado_busqueda: &mut Est
     let Some(coincidencia) = estado_busqueda.coincidencia_actual() else {
         return;
     };
-    let reemplazo = estado_busqueda.reemplazo().to_string();
+    // Con regex, `$1`/`${nombre}` usan lo que capturó la coincidencia.
+    let reemplazo = estado_busqueda.reemplazos(&editor.buffer().a_texto(), std::slice::from_ref(&coincidencia)).remove(0);
     editor.reemplazar_rango_bytes(coincidencia.inicio, coincidencia.fin, &reemplazo);
     let punto_edicion = coincidencia.inicio + reemplazo.len();
     estado_busqueda.recalcular_y_posicionar(&editor.buffer().a_texto(), punto_edicion);
 }
 
-/// `Ctrl+Alt+Enter`: reemplaza todas las coincidencias de una vez. Se
-/// recorren de atrás hacia adelante para que reemplazar una no invalide
-/// los offsets de bytes de las que todavía faltan (una más corta o más
-/// larga que el patrón desplaza todo lo que viene después, pero nunca lo
-/// que viene antes).
+/// `Ctrl+Alt+Enter`: reemplaza todas las coincidencias de una vez, como
+/// una sola edición (`aplicar_ediciones` toma los rangos del texto de
+/// antes y los aplica sin que uno corra a los otros).
 fn reemplazar_todas_las_coincidencias(editor: &mut Editor, estado_busqueda: &mut EstadoBusqueda) {
-    let reemplazo = estado_busqueda.reemplazo().to_string();
-    for coincidencia in estado_busqueda.coincidencias().iter().rev() {
-        editor.reemplazar_rango_bytes(coincidencia.inicio, coincidencia.fin, &reemplazo);
-    }
+    // Una sola edición (un `Ctrl+Z` la deshace entera); con regex, cada
+    // una con sus grupos.
+    let coincidencias = estado_busqueda.coincidencias().to_vec();
+    let reemplazos = estado_busqueda.reemplazos(&editor.buffer().a_texto(), &coincidencias);
+    let ediciones: Vec<_> = coincidencias.iter().zip(reemplazos).map(|(c, r)| (c.inicio..c.fin, r)).collect();
+    editor.aplicar_ediciones(&ediciones);
     estado_busqueda.recalcular(&editor.buffer().a_texto());
 }
 
