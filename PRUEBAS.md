@@ -1,7 +1,7 @@
 # Plan de pruebas manuales — tcode
 
 Checklist para probar `tcode` de punta a punta antes de liberar una nueva
-versión. Cubre todo lo implementado hasta v0.16.0: los milestones de
+versión. Cubre todo lo implementado hasta v0.17.0: los milestones de
 [PLAN.md](./PLAN.md) §11 y todo lo cerrado después en
 [BACKLOG.md](./BACKLOG.md) (ver "Hecho recientemente" ahí), con una
 sección por pieza al final del documento. Cada sección se agrega o
@@ -13,36 +13,23 @@ sección de la pieza que cambió más el bug conocido de Windows. Antes de
 mergear `develop` → `main` y taggear, conviene pasar al menos una vez por
 todo, en la plataforma donde se vaya a usar principalmente.
 
-## Qué probar en v0.16.0
+## Qué probar en v0.17.0
 
-Arreglos y mejoras chicas desde v0.15.0 (#153 a #158). Cada una agregó un
-paso en la sección que corresponde:
+Lo nuevo desde v0.16.0 (#162 y #163). Cada uno agregó un paso en la
+sección que corresponde:
 
-- **Deshacer hasta el texto del disco quita el `*`** (#153): el paso
-  nuevo en [M0](#m0--fundamentos).
-- **Marcas del modo VIM** (`ma`, `'a`, `` `a ``, `''`; #154): el paso
-  "Marcas" en [Modo VIM: búsqueda, registros, macros y `Ctrl+R`](#modo-vim-búsqueda-registros-macros-y-ctrlr-backlogmd-p3-28).
-- **LSP por defecto para Rust, Go y JavaScript** (#155): abrir un proyecto
-  Cargo (o Go, o JS) **sin configurar nada** y comprobar que el servidor
-  arranca (diagnósticos, `F12`, inlay hints en Rust). Si no está
-  instalado, el panel `Ctrl+,` → Lenguajes / LSP lo muestra.
-- **Pegar una línea por cursor** (#156): el paso "Pegar una línea por
-  cursor" en [Multi-cursor](#m3--multi-cursor-ctrld--ctrlshiftl--ctrlalt).
-- **`$1` en el reemplazo del proyecto con regex** (#157): el paso
-  "Grupos" en [Buscar (y reemplazar) en todo el proyecto](#buscar-y-reemplazar-en-todo-el-proyecto-ctrlshiftfctrlk-b).
-- **"Guardar como" hacia un archivo abierto** (#158): el paso "Hacia un
-  archivo ya abierto" en [Guardar como](#guardar-como-ctrlshifts--ctrlk-s).
+- **`Ctrl+H` con `$1` y reemplazar todo en un paso** (#162): el paso
+  "Grupos y reemplazar todo" en [M3 — Búsqueda y reemplazo](#m3--búsqueda-y-reemplazo-ctrlf--ctrlh).
+- **Varias terminales** (#163): el paso "Varias" en [Terminal integrada](#terminal-integrada-backlogmd-p3-26).
 
 Y, por regresiones:
 
-- **Guardado automático y respaldos** después de deshacer: con el
-  guardado automático prendido, deshacer hasta el texto original no
-  vuelve a escribir el archivo; sin cambios pendientes, no hay aviso de
-  recuperación al relanzar.
-- **Pegar con un solo cursor** y **con varios cursores y otra cantidad de
-  líneas**: igual que siempre (todo el texto en cada cursor).
-- **`Ctrl+H`** (reemplazar en el archivo) sigue literal: `$1` se escribe
-  tal cual.
+- **Reemplazar en el archivo sin regex**: `Enter` (de a una) y
+  `Alt+Enter` (todas) siguen reemplazando literal; después de reemplazar
+  todas, `F3` sigue encontrando lo que quede.
+- **Una sola terminal**: `Ctrl+K ``, `Ctrl+Espacio`, `exit` y la rueda
+  sobre el historial siguen igual que en v0.15.0; con el foco en la
+  terminal, `Ctrl+PageDown`/`Ctrl+PageUp` ya no le llegan a la shell.
 
 ## Cómo instalar la versión a probar
 
@@ -194,6 +181,7 @@ sin persistir nada de un frame al siguiente — mismo criterio que ya usa
 - [ ] `Enter` con el campo de reemplazo activo: reemplaza solo la coincidencia actual y avanza a la siguiente.
 - [ ] `Ctrl+Alt+Enter` o `Alt+Enter`: reemplaza TODAS las coincidencias de una vez.
 - [ ] `Esc`: cierra la barra sin perder los cambios ya hechos.
+- [ ] **Grupos y reemplazar todo.** En `a1 b2 c3`, `Ctrl+H`, buscar `([a-z])(\d)`, `Alt+R`, `Tab`, `$2$1`, `Alt+Enter`: queda `1a 2b 3c`, y un solo `Ctrl+Z` vuelve todo. `Enter` (de a una) también expande. Sin regex, `$1` se escribe tal cual.
 
 ## M3 — Vista Markdown (`Ctrl+K V` / `Ctrl+Shift+V`)
 
@@ -1230,6 +1218,7 @@ acciones rápidas), en un proyecto Cargo con
 - [ ] **Tamaño.** Achicar o agrandar la ventana: `stty size` (o `tput cols`) da el tamaño nuevo del panel.
 - [ ] **Mouse.** `seq 1 60` y la rueda arriba sobre la terminal: se ve el historial; cualquier tecla vuelve al final. Clic en el código: el foco pasa al editor y la terminal sigue a la vista; clic en la terminal: el foco vuelve a ella.
 - [ ] **Pegar.** Copiar dos líneas de comandos de otra app y pegarlas con el foco en la terminal: quedan en el prompt sin ejecutarse solas (bash/zsh con bracketed paste).
+- [ ] **Varias.** Con una terminal abierta, `Ctrl+Espacio` y `Ctrl+K ~`: aparece otra (`1: zsh  [2: zsh]` en el título) con su propia shell. `Ctrl+PageUp`/`Ctrl+PageDown` (con la terminal enfocada) pasan de una a otra, cada una con lo suyo. `exit` en una cierra solo esa; la otra queda activa.
 - [ ] **Cerrar.** `exit`: el panel desaparece y la barra dice "La terminal se cerró". Salir de tcode con la terminal abierta no deja la shell corriendo (`ps`).
 - [ ] **Windows.** En Windows Terminal y en PowerShell: abre `cmd.exe` (o lo que diga `COMSPEC`), ejecuta comandos y responde al tamaño.
 

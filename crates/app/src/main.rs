@@ -292,7 +292,7 @@ fn firma_estructural(layout: &PanelLayout, estado: &EstadoApp) -> (String, (usiz
         estado.explorador.visible(),
         layout.maximizado(),
         estado.modo_zen.is_some(),
-        estado.terminal.visible && estado.terminal.sesion.is_some(),
+        estado.terminal.visible && !estado.terminal.terminales.vacia(),
     )
 }
 
@@ -754,7 +754,7 @@ async fn ejecutar(
             let titulo_terminal = estado.terminal.titulo(estado.foco == Foco::Terminal);
             terminal.draw(|frame| {
                 let alto_terminal = estado.terminal.alto(frame.area().height);
-                let vista_terminal = estado.terminal.sesion.as_ref().filter(|_| alto_terminal > 0).map(|sesion| {
+                let vista_terminal = estado.terminal.terminales.activa().filter(|_| alto_terminal > 0).map(|sesion| {
                     tcode_ui::VistaTerminal {
                         pantalla: sesion.pantalla(),
                         titulo: &titulo_terminal,
@@ -822,8 +822,8 @@ async fn ejecutar(
             ultimo_dibujo = Instant::now();
             // La terminal toma el tamaño de su panel (la shell recibe
             // `SIGWINCH` y se redibuja: su salida trae el próximo frame).
-            if let (Some(area), Some(sesion)) = (estado.zonas.terminal, &mut estado.terminal.sesion) {
-                sesion.redimensionar(area.height, area.width);
+            if let Some(area) = estado.zonas.terminal {
+                estado.terminal.terminales.redimensionar(area.height, area.width);
             }
         }
 
@@ -882,8 +882,8 @@ async fn ejecutar(
                 // Salida de la terminal integrada (BACKLOG.md P3 #26): la
                 // lee un hilo y llega por un canal; se redibuja solo si el
                 // panel se ve. `false`: la shell terminó.
-                viva = siguiente_terminal(&mut estado.terminal), if estado.terminal.sesion.is_some() => {
-                    if !viva {
+                novedades = estado.terminal.terminales.esperar(), if !estado.terminal.terminales.vacia() => {
+                    if novedades.cerradas > 0 {
                         terminal::termino(layout, &mut estado);
                         necesita_redibujado = true;
                     } else {
@@ -982,7 +982,7 @@ async fn ejecutar(
 
         // Terminal integrada con el foco: todas las teclas a la shell (ver
         // `terminal::tecla`).
-        if estado.foco == Foco::Terminal && estado.terminal.sesion.is_some() {
+        if estado.foco == Foco::Terminal && !estado.terminal.terminales.vacia() {
             necesita_redibujado |= terminal::tecla(key, layout, &mut estado);
             necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
@@ -1704,15 +1704,6 @@ const INTERVALO_SONDEO_GIT: Duration = Duration::from_millis(30);
 /// cada archivo encontrado.
 const INTERVALO_SONDEO_BUSQUEDA: Duration = Duration::from_millis(40);
 
-/// La próxima salida de la terminal integrada (solo se espera con una
-/// sesión abierta: ver el `select!` de `ejecutar`).
-async fn siguiente_terminal(terminal: &mut terminal::EstadoTerminal) -> bool {
-    match &mut terminal.sesion {
-        Some(sesion) => sesion.siguiente().await,
-        None => std::future::pending().await,
-    }
-}
-
 /// Período del tick del bucle principal (ver `necesita_tick`): lo que
 /// tarda como mucho una línea nueva de stderr del LSP en aparecer en el
 /// visor abierto. La resolución del guardado "cada N segundos" también
@@ -1988,6 +1979,14 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         }
         "terminal.cerrar" => {
             terminal::cerrar(estado);
+            Accion::Continuar
+        }
+        "terminal.nueva" => {
+            terminal::nueva(layout, estado);
+            Accion::Continuar
+        }
+        "terminal.siguiente" | "terminal.anterior" => {
+            terminal::cambiar(id == "terminal.siguiente", estado);
             Accion::Continuar
         }
         "problemas.ver" => {
@@ -3672,22 +3671,23 @@ fn reemplazar_coincidencia_actual(editor: &mut Editor, estado_busqueda: &mut Est
     let Some(coincidencia) = estado_busqueda.coincidencia_actual() else {
         return;
     };
-    let reemplazo = estado_busqueda.reemplazo().to_string();
+    // Con regex, `$1`/`${nombre}` usan lo que capturó la coincidencia.
+    let reemplazo = estado_busqueda.reemplazos(&editor.buffer().a_texto(), std::slice::from_ref(&coincidencia)).remove(0);
     editor.reemplazar_rango_bytes(coincidencia.inicio, coincidencia.fin, &reemplazo);
     let punto_edicion = coincidencia.inicio + reemplazo.len();
     estado_busqueda.recalcular_y_posicionar(&editor.buffer().a_texto(), punto_edicion);
 }
 
-/// `Ctrl+Alt+Enter`: reemplaza todas las coincidencias de una vez. Se
-/// recorren de atrás hacia adelante para que reemplazar una no invalide
-/// los offsets de bytes de las que todavía faltan (una más corta o más
-/// larga que el patrón desplaza todo lo que viene después, pero nunca lo
-/// que viene antes).
+/// `Ctrl+Alt+Enter`: reemplaza todas las coincidencias de una vez, como
+/// una sola edición (`aplicar_ediciones` toma los rangos del texto de
+/// antes y los aplica sin que uno corra a los otros).
 fn reemplazar_todas_las_coincidencias(editor: &mut Editor, estado_busqueda: &mut EstadoBusqueda) {
-    let reemplazo = estado_busqueda.reemplazo().to_string();
-    for coincidencia in estado_busqueda.coincidencias().iter().rev() {
-        editor.reemplazar_rango_bytes(coincidencia.inicio, coincidencia.fin, &reemplazo);
-    }
+    // Una sola edición (un `Ctrl+Z` la deshace entera); con regex, cada
+    // una con sus grupos.
+    let coincidencias = estado_busqueda.coincidencias().to_vec();
+    let reemplazos = estado_busqueda.reemplazos(&editor.buffer().a_texto(), &coincidencias);
+    let ediciones: Vec<_> = coincidencias.iter().zip(reemplazos).map(|(c, r)| (c.inicio..c.fin, r)).collect();
+    editor.aplicar_ediciones(&ediciones);
     estado_busqueda.recalcular(&editor.buffer().a_texto());
 }
 

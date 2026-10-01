@@ -68,7 +68,7 @@ cerraron, ver "Hecho recientemente". Limitaciones conocidas:
   2026-10-01); otra cantidad de líneas se pega entera en cada uno.
 - **Búsqueda en el proyecto (#16)**: la lista no se refresca sola tras
   editar; el reemplazo expande `$1`/`${nombre}` solo con regex (desde
-  2026-10-01; el de `Ctrl+H` sigue literal); en archivos cerrados el reemplazo
+  2026-10-01, también el de `Ctrl+H`); en archivos cerrados el reemplazo
   se escribe a disco y no se puede deshacer (la confirmación lo avisa);
   archivos de más de 4 MB o no UTF-8 no se buscan.
 - **LSP (#17)**: completado solo con un cursor (y en VIM solo en
@@ -179,9 +179,9 @@ salida la lee un hilo y llega por un canal de tokio a una rama del
 (`terminal::bytes_de_tecla`, secuencias de xterm con application cursor)
 salvo `Ctrl+``/`Ctrl+Espacio`. Panel abajo (un tercio del alto),
 dibujado por `tcode_ui::panel_terminal` antes de los overlays;
-redimensiona la PTY después de cada frame. Limitaciones: una sola
-terminal, el mouse no se le pasa a la shell, no se restaura con la
-sesión.
+redimensiona la PTY después de cada frame. Limitaciones: el mouse no se
+le pasa a la shell, no se restaura con la sesión. Varias terminales
+(pestañas, `Ctrl+K ~`, `Ctrl+PageDown`/`PageUp`) desde 2026-10-01.
 
 **2026-10-01 — P2 #23 inlay hints (cierra #23 y todo P2):**
 `textDocument/inlayHint` del archivo entero, pedido tras 300 ms de texto

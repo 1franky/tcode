@@ -295,6 +295,12 @@ reemplazo. Con la barra abierta:
 | `Alt+W` | Alternar "palabra completa" |
 | `Enter` (en el campo de reemplazo) | Reemplazar la coincidencia actual |
 
+`Ctrl+Alt+Enter` (o `Alt+Enter`) reemplaza todas de una vez, como un
+solo cambio (un `Ctrl+Z` lo deshace entero). Con regex, el reemplazo
+puede usar lo que capturó cada coincidencia: `$1`, `${nombre}`, `$0`
+(todo) y `$$` (un `$`) — p. ej. `(\w+)=(\w+)` → `$2=$1`. Sin regex es
+literal.
+
 `F3`/`Shift+F3` también funcionan con la barra cerrada, repitiendo la
 última búsqueda — igual que en VSCode.
 
@@ -937,10 +943,12 @@ abajo del código, en la carpeta del proyecto.
 |---|---|
 | `Ctrl+`` (o `Ctrl+K ``) | Mostrar la terminal y pasarle el foco (la primera vez lanza la shell); si ya tiene el foco, ocultarla y volver al editor |
 | `Ctrl+Espacio` (con el foco en la terminal) | Lo mismo que `Ctrl+``: sin protocolo Kitty, `Ctrl+`` llega así |
+| `Ctrl+K ~` | Otra terminal: una shell nueva, en una pestaña más del panel |
+| `Ctrl+PageDown` / `Ctrl+PageUp` (con el foco en la terminal) | Pasar a la terminal siguiente / anterior |
 
 Con el foco en la terminal, **todas** las teclas van a la shell
 (`Ctrl+C`, `Ctrl+D`, `Ctrl+R`, `Ctrl+K`, flechas, `Tab`...), salvo
-`Ctrl+`` / `Ctrl+Espacio`. Lo que pegás va a la shell sin ejecutarse
+`Ctrl+`` / `Ctrl+Espacio` y `Ctrl+PageDown` / `Ctrl+PageUp`. Lo que pegás va a la shell sin ejecutarse
 línea por línea (si la shell lo soporta). Funcionan los programas de
 pantalla completa (`vim`, `less`, `htop`), los colores y el historial: la
 rueda del mouse sobre la terminal lo recorre. Un clic en el código le
@@ -949,8 +957,10 @@ terminal se lo da. Ocultarla no la cierra: la shell sigue ahí con lo que
 estaba haciendo. `exit` (o "Terminal: Cerrar la shell" en la paleta) la
 cierra.
 
-Hay una sola terminal; los clics no se le mandan a la shell (un `htop`
-no recibe el mouse) y no se restaura con la sesión.
+Con varias terminales, el título del panel las muestra como pestañas
+(`1: zsh  [2: zsh]`, la activa entre corchetes); `exit` cierra solo la
+suya. Los clics no se le mandan a la shell (un `htop` no recibe el mouse)
+y las terminales no se restauran con la sesión.
 
 ## LSP: autocompletado y diagnósticos
 
