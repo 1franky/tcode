@@ -40,6 +40,24 @@ pub struct EstadoVim {
     /// Mientras `.` está reproduciendo un cambio (no se vuelve a grabar).
     pub repitiendo: bool,
     pub linea_comando: EstadoLineaComando,
+    /// Última búsqueda `/`/`?`/`*`/`#` (la que repiten `n` y `N`).
+    pub busqueda: Option<BusquedaPatron>,
+    /// Registro con nombre elegido con `"{a-z}`/`"{A-Z}`/`"_` para el
+    /// próximo comando (BACKLOG.md P3 #28): lo maneja `app`.
+    pub registro_nombrado: Option<char>,
+    /// Contenido de los registros con nombre `a`-`z`: texto y si es por
+    /// líneas.
+    pub registros: std::collections::HashMap<char, (String, bool)>,
+}
+
+/// Una búsqueda `/`/`?`/`*`/`#`: lo que se escribió (para los avisos), el
+/// regex que se busca, si distingue mayúsculas y la dirección.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BusquedaPatron {
+    pub texto: String,
+    pub patron: String,
+    pub sensible_mayusculas: bool,
+    pub atras: bool,
 }
 
 /// Lo que `.` vuelve a hacer: el comando y, si entró a Insertar, el

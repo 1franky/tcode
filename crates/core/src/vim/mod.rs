@@ -15,5 +15,5 @@ pub mod gramatica;
 pub mod linea_comando;
 pub mod movimientos;
 
-pub use ejecutor::{cancelar, ejecutar_tecla, refrescar_visual, salir_de_insertar, OpcionesVim};
+pub use ejecutor::{buscar_desde_prompt, cancelar, ejecutar_tecla, refrescar_visual, rehacer, salir_de_insertar, OpcionesVim};
 pub use linea_comando::{ediciones_de_sustitucion, parsear as parsear_linea_comando, ComandoLinea, EstadoLineaComando, Sustitucion};

@@ -628,8 +628,14 @@ estado; `Esc` lo cancela.
 | `J` | Unir con la línea siguiente |
 | `~` | Alternar mayúscula/minúscula |
 | `p` / `P` | Pegar el registro después / antes (debajo / arriba si son líneas) |
-| `u` | Deshacer (comparte historial con `Ctrl+Z`) |
+| `u` / `Ctrl+R` | Deshacer / rehacer (comparten historial con `Ctrl+Z`/`Ctrl+Y`; con conteo, varias veces) |
 | `.` | Repetir el último cambio, incluido el texto tipeado |
+| `/texto` / `?texto` + `Enter` | Buscar hacia adelante / hacia atrás (ver abajo) |
+| `n` / `N` | La siguiente coincidencia de la última búsqueda / en la dirección contraria |
+| `*` / `#` | Buscar la palabra bajo el cursor (entera) hacia adelante / atrás |
+| `"{a-z}` delante de `y`/`d`/`c`/`p` | Usar ese registro (`"ayy`, `"ap`); `"{A-Z}` agrega al final; `"_` descarta |
+| `q{a-z}` ... `q` | Grabar una macro en ese registro (`qA` agrega al final) |
+| `@{a-z}` / `@@` | Reproducir la macro (con conteo: `3@a`) / la última reproducida |
 | `v` / `V` | Modo Visual por caracteres / por líneas |
 | `Esc` | En Insertar, volver a Normal; en Visual, salir sin hacer nada |
 
@@ -677,8 +683,25 @@ copiado de otra app. Tres maneras de usar el portapapeles del sistema:
 El texto que llega de otra app se pega por líneas si termina en salto
 de línea.
 
-No hay otros registros con nombre (`"a`, etc.; tcode avisa), ni marcas,
-macros o búsqueda con `/` (para buscar, `Ctrl+F` sigue funcionando); `.` no repite operaciones hechas en Visual.
+**Búsqueda.** `/` y `?` abren un prompt al pie (igual que `:`, con el
+mismo historial). El patrón es un regex de Rust (si no compila, se
+busca literal) y distingue mayúsculas solo si tiene alguna (como
+`smartcase`); `Enter` con el prompt vacío repite la última búsqueda. Al
+llegar al final (o al principio) sigue desde el otro extremo y lo avisa
+en la barra. `n`/`N`/`*`/`#` son movimientos: andan con conteo, en Visual
+(extienden la selección) y detrás de un operador (`dn`, `y*`).
+
+**Registros y macros.** `"a`-`"z` son registros de texto: `"ayy`
+guarda la línea en `a` (y en el sin nombre), `"ap` la pega, `"Ayy` la
+agrega a lo que ya tenía `a`, y `"_dd` borra sin tocar ningún registro.
+Las macros (`qa` ... `q`, `@a`) graban las teclas tal cual (también
+`Esc`, `Enter`, flechas y lo que se tipeó en Insertar); mientras se graba,
+la barra dice "grabando @a". Las macros y los registros de texto son
+espacios separados (`"ap` no pega una macro). Una macro que se llama a sí
+misma se corta sola.
+
+No hay marcas (`m`/`'`), ni `:s` con grupos (`\1`, `&`) o rangos `a,b`,
+ni `:w <ruta>`, ni `:reg`; `.` no repite operaciones hechas en Visual.
 Ver PRUEBAS.md para la lista completa de limitaciones.
 
 ## Paleta de comandos y buscador de archivos
