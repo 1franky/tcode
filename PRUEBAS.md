@@ -1,7 +1,7 @@
 # Plan de pruebas manuales — tcode
 
 Checklist para probar `tcode` de punta a punta antes de liberar una nueva
-versión. Cubre todo lo implementado hasta v0.15.0: los milestones de
+versión. Cubre todo lo implementado hasta v0.16.0: los milestones de
 [PLAN.md](./PLAN.md) §11 y todo lo cerrado después en
 [BACKLOG.md](./BACKLOG.md) (ver "Hecho recientemente" ahí), con una
 sección por pieza al final del documento. Cada sección se agrega o
@@ -13,32 +13,36 @@ sección de la pieza que cambió más el bug conocido de Windows. Antes de
 mergear `develop` → `main` y taggear, conviene pasar al menos una vez por
 todo, en la plataforma donde se vaya a usar principalmente.
 
-## Qué probar en v0.15.0
+## Qué probar en v0.16.0
 
-Lo nuevo desde v0.14.0 (#148 y #149), cada uno con su sección más abajo:
+Arreglos y mejoras chicas desde v0.15.0 (#153 a #158). Cada una agregó un
+paso en la sección que corresponde:
 
-- [Inlay hints del LSP](#inlay-hints-del-lsp-backlogmd-p2-23-tercera-parte):
-  tipos y nombres de parámetros dentro del código (rust-analyzer).
-- [Terminal integrada](#terminal-integrada-backlogmd-p3-26): `Ctrl+K ``
-  (o `Ctrl+``), `Ctrl+Espacio` para volver al editor.
+- **Deshacer hasta el texto del disco quita el `*`** (#153): el paso
+  nuevo en [M0](#m0--fundamentos).
+- **Marcas del modo VIM** (`ma`, `'a`, `` `a ``, `''`; #154): el paso
+  "Marcas" en [Modo VIM: búsqueda, registros, macros y `Ctrl+R`](#modo-vim-búsqueda-registros-macros-y-ctrlr-backlogmd-p3-28).
+- **LSP por defecto para Rust, Go y JavaScript** (#155): abrir un proyecto
+  Cargo (o Go, o JS) **sin configurar nada** y comprobar que el servidor
+  arranca (diagnósticos, `F12`, inlay hints en Rust). Si no está
+  instalado, el panel `Ctrl+,` → Lenguajes / LSP lo muestra.
+- **Pegar una línea por cursor** (#156): el paso "Pegar una línea por
+  cursor" en [Multi-cursor](#m3--multi-cursor-ctrld--ctrlshiftl--ctrlalt).
+- **`$1` en el reemplazo del proyecto con regex** (#157): el paso
+  "Grupos" en [Buscar (y reemplazar) en todo el proyecto](#buscar-y-reemplazar-en-todo-el-proyecto-ctrlshiftfctrlk-b).
+- **"Guardar como" hacia un archivo abierto** (#158): el paso "Hacia un
+  archivo ya abierto" en [Guardar como](#guardar-como-ctrlshifts--ctrlk-s).
 
-**Primero de todo**, en cada plataforma donde se instale el binario de la
-release (sobre todo **Linux**, que se compila estático con musl, y
-**Windows**, que usa ConPTY): que la terminal abra una shell y ejecute un
-comando. Es lo único de esta versión que no se pudo probar antes de
-liberar.
+Y, por regresiones:
 
-Y, porque estas piezas tocan la vista de código y el teclado, repasar:
-
-- **Vista de código** con inlay hints: el cursor, la selección, la
-  búsqueda (`Ctrl+F`), los cursores múltiples y la regla vertical se ven
-  bien en una línea con hints; con ajuste de línea no hay hints y todo
-  sigue como antes.
-- **Teclado**: con la terminal oculta o sin foco, `Ctrl+Espacio` sigue
-  siendo autocompletar y `Ctrl+C`/`Ctrl+K` hacen lo de siempre en el
-  editor.
-- **Overlays**: con la terminal a la vista, la paleta (`F1`), el buscador
-  (`Ctrl+P`) y los popups del LSP se dibujan encima de ella.
+- **Guardado automático y respaldos** después de deshacer: con el
+  guardado automático prendido, deshacer hasta el texto original no
+  vuelve a escribir el archivo; sin cambios pendientes, no hay aviso de
+  recuperación al relanzar.
+- **Pegar con un solo cursor** y **con varios cursores y otra cantidad de
+  líneas**: igual que siempre (todo el texto en cada cursor).
+- **`Ctrl+H`** (reemplazar en el archivo) sigue literal: `$1` se escribe
+  tal cual.
 
 ## Cómo instalar la versión a probar
 
