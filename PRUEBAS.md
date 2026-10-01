@@ -1,7 +1,7 @@
 # Plan de pruebas manuales — tcode
 
 Checklist para probar `tcode` de punta a punta antes de liberar una nueva
-versión. Cubre todo lo implementado hasta v0.16.0: los milestones de
+versión. Cubre todo lo implementado hasta v0.17.0: los milestones de
 [PLAN.md](./PLAN.md) §11 y todo lo cerrado después en
 [BACKLOG.md](./BACKLOG.md) (ver "Hecho recientemente" ahí), con una
 sección por pieza al final del documento. Cada sección se agrega o
@@ -13,34 +13,23 @@ sección de la pieza que cambió más el bug conocido de Windows. Antes de
 mergear `develop` → `main` y taggear, conviene pasar al menos una vez por
 todo, en la plataforma donde se vaya a usar principalmente.
 
-## Qué probar en v0.16.0
+## Qué probar en v0.17.0
 
-Arreglos y mejoras chicas desde v0.15.0 (#153 a #158). Cada una agregó un
-paso en la sección que corresponde:
+Lo nuevo desde v0.16.0 (#162 y #163). Cada uno agregó un paso en la
+sección que corresponde:
 
-- **Deshacer hasta el texto del disco quita el `*`** (#153): el paso
-  nuevo en [M0](#m0--fundamentos).
-- **Marcas del modo VIM** (`ma`, `'a`, `` `a ``, `''`; #154): el paso
-  "Marcas" en [Modo VIM: búsqueda, registros, macros y `Ctrl+R`](#modo-vim-búsqueda-registros-macros-y-ctrlr-backlogmd-p3-28).
-- **LSP por defecto para Rust, Go y JavaScript** (#155): abrir un proyecto
-  Cargo (o Go, o JS) **sin configurar nada** y comprobar que el servidor
-  arranca (diagnósticos, `F12`, inlay hints en Rust). Si no está
-  instalado, el panel `Ctrl+,` → Lenguajes / LSP lo muestra.
-- **Pegar una línea por cursor** (#156): el paso "Pegar una línea por
-  cursor" en [Multi-cursor](#m3--multi-cursor-ctrld--ctrlshiftl--ctrlalt).
-- **`$1` en el reemplazo del proyecto con regex** (#157): el paso
-  "Grupos" en [Buscar (y reemplazar) en todo el proyecto](#buscar-y-reemplazar-en-todo-el-proyecto-ctrlshiftfctrlk-b).
-- **"Guardar como" hacia un archivo abierto** (#158): el paso "Hacia un
-  archivo ya abierto" en [Guardar como](#guardar-como-ctrlshifts--ctrlk-s).
+- **`Ctrl+H` con `$1` y reemplazar todo en un paso** (#162): el paso
+  "Grupos y reemplazar todo" en [M3 — Búsqueda y reemplazo](#m3--búsqueda-y-reemplazo-ctrlf--ctrlh).
+- **Varias terminales** (#163): el paso "Varias" en [Terminal integrada](#terminal-integrada-backlogmd-p3-26).
 
 Y, por regresiones:
 
-- **Guardado automático y respaldos** después de deshacer: con el
-  guardado automático prendido, deshacer hasta el texto original no
-  vuelve a escribir el archivo; sin cambios pendientes, no hay aviso de
-  recuperación al relanzar.
-- **Pegar con un solo cursor** y **con varios cursores y otra cantidad de
-  líneas**: igual que siempre (todo el texto en cada cursor).
+- **Reemplazar en el archivo sin regex**: `Enter` (de a una) y
+  `Alt+Enter` (todas) siguen reemplazando literal; después de reemplazar
+  todas, `F3` sigue encontrando lo que quede.
+- **Una sola terminal**: `Ctrl+K ``, `Ctrl+Espacio`, `exit` y la rueda
+  sobre el historial siguen igual que en v0.15.0; con el foco en la
+  terminal, `Ctrl+PageDown`/`Ctrl+PageUp` ya no le llegan a la shell.
 
 ## Cómo instalar la versión a probar
 
