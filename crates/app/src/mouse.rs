@@ -171,7 +171,7 @@ pub fn manejar(
                 MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                     let filas = FILAS_POR_RUEDA as isize;
                     let delta = if evento.kind == MouseEventKind::ScrollUp { filas } else { -filas };
-                    if let Some(sesion) = &mut estado.terminal.sesion {
+                    if let Some(sesion) = estado.terminal.terminales.activa_mut() {
                         sesion.desplazar_historial(delta);
                     }
                     Resultado::Cambio

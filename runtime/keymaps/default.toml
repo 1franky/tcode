@@ -262,6 +262,9 @@
 # teclas van a la shell salvo Ctrl+` / Ctrl+Espacio, que vuelven al editor.
 "Ctrl+`"         = "terminal.alternar"
 "Ctrl+K `"       = "terminal.alternar"
+# Otra terminal (pestaña nueva del panel). Con la terminal enfocada,
+# Ctrl+PageDown/PageUp cambian entre ellas (no le llegan a la shell).
+"Ctrl+K ~"       = "terminal.nueva"
 "Ctrl+Shift+M"   = "problemas.ver"
 "Ctrl+K Q"       = "problemas.ver"
 "F8"             = "problemas.siguiente"

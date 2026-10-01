@@ -292,7 +292,7 @@ fn firma_estructural(layout: &PanelLayout, estado: &EstadoApp) -> (String, (usiz
         estado.explorador.visible(),
         layout.maximizado(),
         estado.modo_zen.is_some(),
-        estado.terminal.visible && estado.terminal.sesion.is_some(),
+        estado.terminal.visible && !estado.terminal.terminales.vacia(),
     )
 }
 
@@ -754,7 +754,7 @@ async fn ejecutar(
             let titulo_terminal = estado.terminal.titulo(estado.foco == Foco::Terminal);
             terminal.draw(|frame| {
                 let alto_terminal = estado.terminal.alto(frame.area().height);
-                let vista_terminal = estado.terminal.sesion.as_ref().filter(|_| alto_terminal > 0).map(|sesion| {
+                let vista_terminal = estado.terminal.terminales.activa().filter(|_| alto_terminal > 0).map(|sesion| {
                     tcode_ui::VistaTerminal {
                         pantalla: sesion.pantalla(),
                         titulo: &titulo_terminal,
@@ -822,8 +822,8 @@ async fn ejecutar(
             ultimo_dibujo = Instant::now();
             // La terminal toma el tamaño de su panel (la shell recibe
             // `SIGWINCH` y se redibuja: su salida trae el próximo frame).
-            if let (Some(area), Some(sesion)) = (estado.zonas.terminal, &mut estado.terminal.sesion) {
-                sesion.redimensionar(area.height, area.width);
+            if let Some(area) = estado.zonas.terminal {
+                estado.terminal.terminales.redimensionar(area.height, area.width);
             }
         }
 
@@ -882,8 +882,8 @@ async fn ejecutar(
                 // Salida de la terminal integrada (BACKLOG.md P3 #26): la
                 // lee un hilo y llega por un canal; se redibuja solo si el
                 // panel se ve. `false`: la shell terminó.
-                viva = siguiente_terminal(&mut estado.terminal), if estado.terminal.sesion.is_some() => {
-                    if !viva {
+                novedades = estado.terminal.terminales.esperar(), if !estado.terminal.terminales.vacia() => {
+                    if novedades.cerradas > 0 {
                         terminal::termino(layout, &mut estado);
                         necesita_redibujado = true;
                     } else {
@@ -982,7 +982,7 @@ async fn ejecutar(
 
         // Terminal integrada con el foco: todas las teclas a la shell (ver
         // `terminal::tecla`).
-        if estado.foco == Foco::Terminal && estado.terminal.sesion.is_some() {
+        if estado.foco == Foco::Terminal && !estado.terminal.terminales.vacia() {
             necesita_redibujado |= terminal::tecla(key, layout, &mut estado);
             necesita_redibujado |= firma_estructural(layout, &estado) != firma_antes;
             continue;
@@ -1704,15 +1704,6 @@ const INTERVALO_SONDEO_GIT: Duration = Duration::from_millis(30);
 /// cada archivo encontrado.
 const INTERVALO_SONDEO_BUSQUEDA: Duration = Duration::from_millis(40);
 
-/// La próxima salida de la terminal integrada (solo se espera con una
-/// sesión abierta: ver el `select!` de `ejecutar`).
-async fn siguiente_terminal(terminal: &mut terminal::EstadoTerminal) -> bool {
-    match &mut terminal.sesion {
-        Some(sesion) => sesion.siguiente().await,
-        None => std::future::pending().await,
-    }
-}
-
 /// Período del tick del bucle principal (ver `necesita_tick`): lo que
 /// tarda como mucho una línea nueva de stderr del LSP en aparecer en el
 /// visor abierto. La resolución del guardado "cada N segundos" también
@@ -1988,6 +1979,14 @@ fn procesar_comando(id: &str, layout: &mut PanelLayout, estado: &mut EstadoApp, 
         }
         "terminal.cerrar" => {
             terminal::cerrar(estado);
+            Accion::Continuar
+        }
+        "terminal.nueva" => {
+            terminal::nueva(layout, estado);
+            Accion::Continuar
+        }
+        "terminal.siguiente" | "terminal.anterior" => {
+            terminal::cambiar(id == "terminal.siguiente", estado);
             Accion::Continuar
         }
         "problemas.ver" => {
