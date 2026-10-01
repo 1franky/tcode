@@ -1,7 +1,7 @@
 # Plan de pruebas manuales — tcode
 
 Checklist para probar `tcode` de punta a punta antes de liberar una nueva
-versión. Cubre todo lo implementado hasta v0.14.0: los milestones de
+versión. Cubre todo lo implementado hasta v0.15.0: los milestones de
 [PLAN.md](./PLAN.md) §11 y todo lo cerrado después en
 [BACKLOG.md](./BACKLOG.md) (ver "Hecho recientemente" ahí), con una
 sección por pieza al final del documento. Cada sección se agrega o
@@ -13,27 +13,32 @@ sección de la pieza que cambió más el bug conocido de Windows. Antes de
 mergear `develop` → `main` y taggear, conviene pasar al menos una vez por
 todo, en la plataforma donde se vaya a usar principalmente.
 
-## Qué probar en v0.14.0
+## Qué probar en v0.15.0
 
-Lo nuevo desde v0.13.0 (#144), con su sección más abajo:
+Lo nuevo desde v0.14.0 (#148 y #149), cada uno con su sección más abajo:
 
-- [Modo VIM: búsqueda, registros, macros y `Ctrl+R`](#modo-vim-búsqueda-registros-macros-y-ctrlr-backlogmd-p3-28):
-  `/`, `?`, `n`, `N`, `*`, `#`; registros `"a`-`"z`, `"A`-`"Z` y `"_`;
-  macros `q`/`@`/`@@`; `Ctrl+R` para rehacer.
+- [Inlay hints del LSP](#inlay-hints-del-lsp-backlogmd-p2-23-tercera-parte):
+  tipos y nombres de parámetros dentro del código (rust-analyzer).
+- [Terminal integrada](#terminal-integrada-backlogmd-p3-26): `Ctrl+K ``
+  (o `Ctrl+``), `Ctrl+Espacio` para volver al editor.
 
-Y, porque esas piezas tocan teclas compartidas, repasar:
+**Primero de todo**, en cada plataforma donde se instale el binario de la
+release (sobre todo **Linux**, que se compila estático con musl, y
+**Windows**, que usa ConPTY): que la terminal abra una shell y ejecute un
+comando. Es lo único de esta versión que no se pudo probar antes de
+liberar.
 
-- **Modo VIM apagado**: `/`, `?`, `n`, `*`, `#`, `q`, `@` y `"` se escriben
-  como texto; `Ctrl+R` no hace nada nuevo.
-- **La línea `:`** sigue igual (`:w`, `:q`, `:%s`...) y comparte el
-  historial con `/` y `?`.
-- **Portapapeles en VIM** (`"+yy`, `"+p` y "VIM: registro = portapapeles"):
-  sin cambios; con un registro con nombre (`"ayy`) el portapapeles no se
-  toca.
-- **Pegar mientras se graba una macro**: lo pegado desde la terminal
-  (`Cmd+V`, clic del medio: llega como pegado, no como teclas) no queda
-  en la macro; `Ctrl+V` sí (es una tecla, y al reproducir vuelve a pegar
-  lo que haya en el portapapeles en ese momento).
+Y, porque estas piezas tocan la vista de código y el teclado, repasar:
+
+- **Vista de código** con inlay hints: el cursor, la selección, la
+  búsqueda (`Ctrl+F`), los cursores múltiples y la regla vertical se ven
+  bien en una línea con hints; con ajuste de línea no hay hints y todo
+  sigue como antes.
+- **Teclado**: con la terminal oculta o sin foco, `Ctrl+Espacio` sigue
+  siendo autocompletar y `Ctrl+C`/`Ctrl+K` hacen lo de siempre en el
+  editor.
+- **Overlays**: con la terminal a la vista, la paleta (`F1`), el buscador
+  (`Ctrl+P`) y los popups del LSP se dibujan encima de ella.
 
 ## Cómo instalar la versión a probar
 
@@ -1192,6 +1197,32 @@ Con el modo VIM prendido y un archivo con varias líneas que tengan `foo`
 - [ ] **Macros.** `qa` (la barra dice "grabando @a"), `A!` `Esc` `j`, `q` ("Macro @a grabada"). `2@a` agrega `!` a las dos líneas siguientes; `@@` a una más. Una macro que hace `@` de sí misma se corta con aviso, sin colgar.
 - [ ] **Rehacer.** Tres cambios, `uuu`, `Ctrl+R` rehace uno; `2` + `Ctrl+R` dos más. En Insertar, `Ctrl+R` no hace nada de esto.
 - [ ] **Sin modo VIM.** Con el modo apagado, `/`, `n`, `q`, `@`, `"` se escriben como texto.
+
+## Inlay hints del LSP (BACKLOG.md P2 #23, tercera parte)
+
+Con `HOME` temporal y rust-analyzer configurado (ver la sección de
+acciones rápidas), en un proyecto Cargo con
+`fn sumar(primero: i32, segundo: i32) -> i32` y `let total = sumar(1, 2);`.
+
+- [ ] **Aparecen.** Al abrir (después de que rust-analyzer termine de indexar, unos segundos): `let total: i32 = sumar(primero: 1, segundo: 2);`, con los hints atenuados en itálica.
+- [ ] **Cursor y clics.** Moverse con las flechas por esa línea: el cursor se ve siempre sobre el carácter real (nunca sobre un hint). Clic sobre el `2`: la barra dice la columna del `2` en el texto. Clic sobre `segundo:`: el cursor va al `2`.
+- [ ] **Escribir.** Cambiar el `1` por `10`: mientras se escribe, los hints de esa línea desaparecen; tras una pausa vuelven, bien ubicados. Agregar una línea arriba: se ocultan todos un momento y vuelven en su lugar.
+- [ ] **No son texto.** Guardar y mirar el archivo: no tiene los hints. Seleccionar la línea y `Ctrl+C`: se copia sin los hints.
+- [ ] **Apagar.** `Ctrl+K Ctrl+I`: desaparecen y `config.toml` queda con `inlay_hints = false`; otra vez los trae.
+- [ ] **Ajuste de línea.** Con el ajuste de línea prendido no se ven; al apagarlo vuelven.
+- [ ] **Sin soporte.** En un `.py` con pyright no aparece nada ni hay avisos.
+
+## Terminal integrada (BACKLOG.md P3 #26)
+
+- [ ] **Abrir.** `Ctrl+K `` (o `Ctrl+`` con protocolo Kitty): aparece un panel abajo con el título "Terminal: <shell>" y el prompt, en la carpeta del proyecto. `echo hola $((2+3)); ls` muestra `hola 5` y los archivos.
+- [ ] **Teclas a la shell.** `Ctrl+C` corta un `sleep 30`; `Ctrl+R` busca en el historial de la shell; flechas `↑`/`↓` recorren comandos; `Tab` completa; `Ctrl+K` borra hasta el final de la línea (no abre un chord de tcode).
+- [ ] **Volver al editor.** `Ctrl+Espacio` (o `Ctrl+``): el panel se oculta y lo que se escribe va al archivo. `Ctrl+K `` la vuelve a mostrar con todo lo anterior (misma shell).
+- [ ] **Pantalla completa.** `seq 1 100 | less`: se ve paginado; `q` vuelve al prompt intacto. `vim` (si está) se ve y se maneja bien, flechas incluidas.
+- [ ] **Tamaño.** Achicar o agrandar la ventana: `stty size` (o `tput cols`) da el tamaño nuevo del panel.
+- [ ] **Mouse.** `seq 1 60` y la rueda arriba sobre la terminal: se ve el historial; cualquier tecla vuelve al final. Clic en el código: el foco pasa al editor y la terminal sigue a la vista; clic en la terminal: el foco vuelve a ella.
+- [ ] **Pegar.** Copiar dos líneas de comandos de otra app y pegarlas con el foco en la terminal: quedan en el prompt sin ejecutarse solas (bash/zsh con bracketed paste).
+- [ ] **Cerrar.** `exit`: el panel desaparece y la barra dice "La terminal se cerró". Salir de tcode con la terminal abierta no deja la shell corriendo (`ps`).
+- [ ] **Windows.** En Windows Terminal y en PowerShell: abre `cmd.exe` (o lo que diga `COMSPEC`), ejecuta comandos y responde al tamaño.
 
 Si algo de esta lista falla, abrir un PR contra `develop` con el fix (nunca
 directo a `main`) y volver a correr la sección correspondiente antes de

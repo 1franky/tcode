@@ -16,6 +16,7 @@ mod estado_logs;
 mod firma;
 mod formateo;
 mod navegacion;
+mod pistas;
 mod protocolo;
 mod sincronizacion;
 
@@ -30,5 +31,6 @@ pub use navegacion::{
     byte_de_posicion, byte_en_linea, parsear_ubicaciones, parsear_workspace_edit, posicion_en_linea, ruta_desde_uri,
     texto_hover, CapacidadesLsp, EdicionArchivo, Ubicacion,
 };
+pub use pistas::{parsear_pistas, PistaInlay};
 pub use protocolo::{escribir_mensaje, leer_mensaje};
 pub use sincronizacion::{cambio_entre, ModoSincronizacion};

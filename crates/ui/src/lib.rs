@@ -8,6 +8,7 @@ mod breadcrumbs;
 mod editor_tema;
 mod overlay;
 mod paleta;
+pub mod pistas;
 mod paneles;
 mod panel_admin;
 mod panel_archivos;
@@ -16,6 +17,7 @@ mod panel_busqueda;
 pub mod panel_busqueda_proyecto;
 mod panel_confirmar_borrado;
 pub mod panel_recuperacion;
+pub mod panel_terminal;
 mod panel_guardar_como;
 pub mod panel_ir_a_linea;
 pub mod panel_linea_vim;
@@ -169,6 +171,16 @@ impl<'a> Cromo<'a> {
 /// (BACKLOG.md P0 #18, ver [`ZonasMouse`]). Las dos vistas a pantalla
 /// completa (editor de tema y panel de administración) no anotan nada:
 /// ahí el mouse no hace nada.
+/// Lo que `dibujar` necesita de la terminal integrada (BACKLOG.md P3
+/// #26) cuando su panel está a la vista.
+pub struct VistaTerminal<'a> {
+    pub pantalla: &'a vt100::Screen,
+    pub titulo: &'a str,
+    pub enfocada: bool,
+    /// Filas del panel, contando el título.
+    pub alto: u16,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn dibujar(
     frame: &mut Frame,
@@ -193,6 +205,7 @@ pub fn dibujar(
     confirmar_borrado: &EstadoConfirmarBorrado,
     selector_simbolos: &EstadoSelectorSimbolos,
     modo_zen: bool,
+    terminal: Option<VistaTerminal>,
     zonas: &mut ZonasMouse,
 ) {
     let area_total = frame.area();
@@ -200,6 +213,7 @@ pub fn dibujar(
     zonas.paneles.clear();
     zonas.overlay = None;
     zonas.popup = None;
+    zonas.terminal = None;
 
     if editor_tema.activo() {
         editor_tema::dibujar(frame, area_total, editor_tema, paleta);
@@ -224,6 +238,20 @@ pub fn dibujar(
     } else {
         area_total
     };
+    // Terminal integrada (BACKLOG.md P3 #26): una franja abajo del área
+    // de edición; la dibuja `app` (tiene la sesión) en `zonas.terminal`.
+    let mut area_terminal = None;
+    let area_principal = match &terminal {
+        Some(t) if area_principal.height > t.alto + 3 => {
+            let partes = LayoutRatatui::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(3), Constraint::Length(t.alto)])
+                .split(area_principal);
+            area_terminal = Some(partes[1]);
+            partes[0]
+        }
+        _ => area_principal,
+    };
 
     layout.dibujar(
         frame,
@@ -238,6 +266,12 @@ pub fn dibujar(
         &cromo.interfaz,
         zonas,
     );
+    // Antes de los overlays (que la pueden tapar) y después del código:
+    // con el foco en la terminal, su cursor es el que queda.
+    if let (Some(t), Some(area)) = (terminal, area_terminal) {
+        let (interior, _) = panel_terminal::dibujar(frame, area, t.pantalla, t.titulo, t.enfocada, paleta);
+        zonas.terminal = Some(interior);
+    }
     zonas.overlay = panel_busqueda::dibujar(frame, area_principal, estado_busqueda, paleta)
         .map(|area| ZonaOverlay { area, lista: None });
 

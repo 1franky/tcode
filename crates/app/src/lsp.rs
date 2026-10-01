@@ -312,6 +312,7 @@ async fn lanzar_sesion(lenguaje: Lenguaje, comando: ComandoLsp) -> std::result::
                     "activeParameterSupport": true,
                 },
             },
+            "inlayHint": { "dynamicRegistration": false },
             "codeAction": {
                 "dynamicRegistration": false,
                 "isPreferredSupport": true,
@@ -327,6 +328,9 @@ async fn lanzar_sesion(lenguaje: Lenguaje, comando: ComandoLsp) -> std::result::
         "workspace": {
             "workspaceEdit": { "documentChanges": true },
             "applyEdit": true,
+            // Al terminar de indexar, rust-analyzer avisa que los hints
+            // que dio antes (vacíos) ya no valen.
+            "inlayHint": { "refreshSupport": true },
             "executeCommand": { "dynamicRegistration": false },
         },
     }))
@@ -383,6 +387,8 @@ pub enum TipoPedido {
     EjecutarComando,
     /// `textDocument/signatureHelp` (BACKLOG.md P2 #23).
     AyudaFirma,
+    /// `textDocument/inlayHint` (BACKLOG.md P2 #23): usa un rango.
+    PistasInlay,
 }
 
 impl TipoPedido {
@@ -396,6 +402,7 @@ impl TipoPedido {
             TipoPedido::AccionesRapidas => "textDocument/codeAction",
             TipoPedido::EjecutarComando => "workspace/executeCommand",
             TipoPedido::AyudaFirma => "textDocument/signatureHelp",
+            TipoPedido::PistasInlay => "textDocument/inlayHint",
         }
     }
 
@@ -410,6 +417,7 @@ impl TipoPedido {
             // Solo se ejecutan comandos que el propio servidor ofreció.
             TipoPedido::EjecutarComando => true,
             TipoPedido::AyudaFirma => capacidades.ayuda_firma,
+            TipoPedido::PistasInlay => capacidades.pistas_inlay,
         }
     }
 
@@ -424,6 +432,7 @@ impl TipoPedido {
             TipoPedido::AccionesRapidas => "el LSP no ofrece acciones rápidas",
             TipoPedido::EjecutarComando => "el LSP no ejecuta comandos",
             TipoPedido::AyudaFirma => "el LSP no ofrece ayuda de firma",
+            TipoPedido::PistasInlay => "el LSP no ofrece inlay hints",
         }
     }
 }
@@ -476,6 +485,9 @@ pub struct EstadoLsp {
     /// quien aplica no es async).
     ediciones_pedidas: Vec<EdicionPedida>,
     contestaciones: Vec<(Lenguaje, Value, Value)>,
+    /// Un servidor pidió `workspace/inlayHint/refresh` (típicamente al
+    /// terminar de indexar): los hints que hay pueden estar incompletos.
+    refrescar_pistas: bool,
     /// Ruta mostrada → URI, calculado una sola vez por ruta (`uri_de_
     /// archivo` pregunta el directorio actual y codifica la ruta entera:
     /// no es algo para hacer por pestaña en cada frame). `None` si la
@@ -668,6 +680,9 @@ impl EstadoLsp {
             MensajeEntrante::Peticion { id, metodo, params } => {
                 if metodo == "workspace/applyEdit" {
                     self.ediciones_pedidas.push(EdicionPedida { lenguaje, id, edicion: params["edit"].clone() });
+                } else if metodo == "workspace/inlayHint/refresh" {
+                    self.refrescar_pistas = true;
+                    self.contestaciones.push((lenguaje, id, Value::Null));
                 }
             }
             MensajeEntrante::Notificacion { metodo, params } => {
@@ -852,7 +867,7 @@ impl EstadoLsp {
         if let (Some(params), Value::Object(extra)) = (params.as_object_mut(), extra) {
             params.extend(extra);
             // `codeAction` lleva `range` (en `extra`) en vez de posición.
-            if tipo == TipoPedido::AccionesRapidas {
+            if matches!(tipo, TipoPedido::AccionesRapidas | TipoPedido::PistasInlay) {
                 params.remove("position");
             }
         }
@@ -897,6 +912,15 @@ impl EstadoLsp {
             Err(motivo) => json!({ "applied": false, "failureReason": motivo }),
         };
         self.contestaciones.push((pedida.lenguaje, pedida.id.clone(), resultado));
+    }
+
+    /// Si hay que volver a pedir los inlay hints (y lo olvida).
+    pub fn tomar_refresco_pistas(&mut self) -> bool {
+        std::mem::take(&mut self.refrescar_pistas)
+    }
+
+    pub fn refresco_pistas_pendiente(&self) -> bool {
+        self.refrescar_pistas
     }
 
     pub fn hay_contestaciones(&self) -> bool {

@@ -60,6 +60,7 @@ pub enum CampoEditor {
     NumerosDeLinea,
     IndicadoresGit,
     BlameEnLinea,
+    InlayHints,
     ModoVim,
     ColumnaRegla,
     GuardadoAutomatico,
@@ -89,13 +90,14 @@ const SEGUNDOS_GUARDADO_MIN: i64 = 5;
 const SEGUNDOS_GUARDADO_MAX: i64 = 600;
 
 impl CampoEditor {
-    pub const TODOS: [CampoEditor; 13] = [
+    pub const TODOS: [CampoEditor; 14] = [
         CampoEditor::TamanoTabulacion,
         CampoEditor::UsarEspacios,
         CampoEditor::AjusteLinea,
         CampoEditor::NumerosDeLinea,
         CampoEditor::IndicadoresGit,
         CampoEditor::BlameEnLinea,
+        CampoEditor::InlayHints,
         CampoEditor::ModoVim,
         CampoEditor::ColumnaRegla,
         CampoEditor::GuardadoAutomatico,
@@ -113,6 +115,7 @@ impl CampoEditor {
             CampoEditor::NumerosDeLinea => "Números de línea",
             CampoEditor::IndicadoresGit => "Indicadores de git en el gutter",
             CampoEditor::BlameEnLinea => "Git: blame en la línea del cursor",
+            CampoEditor::InlayHints => "LSP: inlay hints (tipos, parámetros)",
             CampoEditor::ModoVim => "Modo VIM (hjkl, Normal/Insertar)",
             CampoEditor::ColumnaRegla => "Regla vertical (columna)",
             CampoEditor::GuardadoAutomatico => "Guardado automático",
@@ -131,6 +134,7 @@ impl CampoEditor {
             CampoEditor::ColumnaRegla => Some("← en 'Apagada' no hace nada; → o Enter la prende en 80"),
             CampoEditor::GuardadoAutomatico => Some("Solo archivos con nombre; foco = otro panel/archivo/ventana"),
             CampoEditor::SegundosGuardadoAutomatico => Some("Solo se usa en el modo 'cada N segundos'; ←/→ de a 5"),
+            CampoEditor::InlayHints => Some("Solo sin ajuste de línea y con un LSP que los ofrezca (rust-analyzer)"),
             CampoEditor::RestaurarSesion => Some("Pestañas, splits y cursores por carpeta; tcode <archivo> no restaura"),
             CampoEditor::Portapapeles => Some("OSC 52 anda por SSH; en tmux: set -g set-clipboard on"),
             CampoEditor::VimSincronizarPortapapeles => Some("Como clipboard=unnamedplus; \"+y/\"+p andan siempre"),
@@ -149,6 +153,7 @@ impl CampoEditor {
             CampoEditor::NumerosDeLinea => "numeros_de_linea",
             CampoEditor::IndicadoresGit => "indicadores_git",
             CampoEditor::BlameEnLinea => "blame_en_linea",
+            CampoEditor::InlayHints => "inlay_hints",
             CampoEditor::ModoVim => "modo_vim",
             CampoEditor::ColumnaRegla => "columna_regla",
             CampoEditor::GuardadoAutomatico => "guardado_automatico",
@@ -169,6 +174,7 @@ impl CampoEditor {
             CampoEditor::NumerosDeLinea => etiqueta_bool(config.editor.numeros_de_linea),
             CampoEditor::IndicadoresGit => etiqueta_bool(config.editor.indicadores_git),
             CampoEditor::BlameEnLinea => etiqueta_bool(config.editor.blame_en_linea),
+            CampoEditor::InlayHints => etiqueta_bool(config.editor.inlay_hints),
             CampoEditor::ModoVim => etiqueta_bool(config.editor.modo_vim),
             CampoEditor::ColumnaRegla => {
                 config.editor.columna_regla.map(|c| c.to_string()).unwrap_or_else(|| "Apagada".to_string())
@@ -196,6 +202,7 @@ impl CampoEditor {
             CampoEditor::NumerosDeLinea => config.editor.numeros_de_linea = !config.editor.numeros_de_linea,
             CampoEditor::IndicadoresGit => config.editor.indicadores_git = !config.editor.indicadores_git,
             CampoEditor::BlameEnLinea => config.editor.blame_en_linea = !config.editor.blame_en_linea,
+            CampoEditor::InlayHints => config.editor.inlay_hints = !config.editor.inlay_hints,
             CampoEditor::ModoVim => config.editor.modo_vim = !config.editor.modo_vim,
             CampoEditor::RestaurarSesion => config.editor.restaurar_sesion = !config.editor.restaurar_sesion,
             // Un solo campo (`Option<usize>`, no un booleano + un número

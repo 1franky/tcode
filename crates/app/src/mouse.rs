@@ -157,6 +157,30 @@ pub fn manejar(
         }
     }
 
+    // Terminal integrada (BACKLOG.md P3 #26), con su fila de título: un
+    // clic le da el foco, la rueda recorre el historial. Los clics no se
+    // le mandan a la shell.
+    if let Some(area) = estado.zonas.terminal {
+        let con_titulo = ratatui::layout::Rect { y: area.y.saturating_sub(1), height: area.height + 1, ..area };
+        if contiene(con_titulo, x, y) {
+            return match evento.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    estado.foco = Foco::Terminal;
+                    Resultado::Cambio
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    let filas = FILAS_POR_RUEDA as isize;
+                    let delta = if evento.kind == MouseEventKind::ScrollUp { filas } else { -filas };
+                    if let Some(sesion) = &mut estado.terminal.sesion {
+                        sesion.desplazar_historial(delta);
+                    }
+                    Resultado::Cambio
+                }
+                _ => Resultado::Nada,
+            };
+        }
+    }
+
     match evento.kind {
         MouseEventKind::Down(MouseButton::Left) => clic_izquierdo(x, y, evento.modifiers, cuenta, layout, estado),
         MouseEventKind::Down(MouseButton::Middle) => clic_medio(x, y, layout, estado, resolvedor),

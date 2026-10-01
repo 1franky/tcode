@@ -356,6 +356,10 @@ pub fn procesar_respuestas(layout: &mut PanelLayout, estado: &mut EstadoApp) -> 
         let valor = match resultado {
             Ok(valor) => valor,
             Err(motivo) => {
+                if tipo == TipoPedido::PistasInlay {
+                    crate::pistas::respuesta(layout, estado, None);
+                    continue;
+                }
                 if tipo == TipoPedido::AyudaFirma && !estado.funciones_lsp.firma_manual {
                     estado.funciones_lsp.firma = None;
                     continue;
@@ -400,6 +404,7 @@ pub fn procesar_respuestas(layout: &mut PanelLayout, estado: &mut EstadoApp) -> 
             // Lo que haya cambiado llegó antes como `workspace/applyEdit`.
             TipoPedido::EjecutarComando => {}
             TipoPedido::AyudaFirma => mostrar_firma(layout, estado, &valor),
+            TipoPedido::PistasInlay => crate::pistas::respuesta(layout, estado, Some(&valor)),
         }
     }
     cambio
