@@ -45,6 +45,10 @@ pub enum Movimiento {
     BuscarPatron { inversa: bool },
     /// `*` (`atras: false`) y `#`: la palabra bajo el cursor, entera.
     BuscarPalabra { atras: bool },
+    /// `'{marca}` (la línea, en su primer no blanco) y `` `{marca} `` (la
+    /// posición exacta). La marca `'` (también `` ` ``) es la posición de
+    /// antes del último salto.
+    IrMarca { marca: char, exacta: bool },
 }
 
 /// `f{c}`/`t{c}`/`F{c}`/`T{c}`: `hasta` es `t`/`T` (se detiene un
@@ -185,6 +189,8 @@ pub enum Accion {
     Buscar { atras: bool },
     /// `Ctrl+R` (no sale de una tecla suelta: lo manda `app`).
     Rehacer,
+    /// `m{a-z}`: pone una marca en el cursor.
+    Marcar(char),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,6 +240,7 @@ impl Comando {
                     | Accion::IntercambiarExtremos
                     | Accion::Buscar { .. }
                     | Accion::Rehacer
+                    | Accion::Marcar(_)
             ),
             _ => false,
         }
@@ -317,6 +324,13 @@ fn leer_movimiento(teclas: &[char]) -> LecturaMovimiento {
         'g' => match teclas.get(1) {
             None => Falta,
             Some('g') if teclas.len() == 2 => Si(Movimiento::InicioArchivo),
+            _ => No,
+        },
+        '\'' | '`' => match teclas.get(1) {
+            None => Falta,
+            Some(&m) if teclas.len() == 2 && (m.is_ascii_lowercase() || m == '\'' || m == '`') => {
+                Si(Movimiento::IrMarca { marca: if m == '`' { '\'' } else { m }, exacta: c == '`' })
+            }
             _ => No,
         },
         'f' | 't' | 'F' | 'T' => match teclas.get(1) {
@@ -414,6 +428,14 @@ pub fn analizar(teclas: &[char], visual: bool) -> Analisis {
             LecturaMovimiento::Si(m) => operar(Objetivo::Movimiento(m)),
             LecturaMovimiento::Falta => Analisis::Incompleto,
             LecturaMovimiento::No => Analisis::Invalido,
+        };
+    }
+
+    if c == 'm' {
+        return match resto.get(1) {
+            None => Analisis::Incompleto,
+            Some(&m) if resto.len() == 2 && m.is_ascii_lowercase() => completo(TipoComando::Accion(Accion::Marcar(m))),
+            _ => Analisis::Invalido,
         };
     }
 

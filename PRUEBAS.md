@@ -1196,6 +1196,7 @@ Con el modo VIM prendido y un archivo con varias líneas que tengan `foo`
 - [ ] **Registros.** `"ayy` en una línea, `"byy` en otra, ir al final: `"ap` y `"bp` pegan cada una. `"Ayy` en una tercera y `"ap` pega las dos líneas. `"_dd` borra la línea y después `p` pega lo de antes (no la borrada). `"1yy` avisa que el registro no se soporta.
 - [ ] **Macros.** `qa` (la barra dice "grabando @a"), `A!` `Esc` `j`, `q` ("Macro @a grabada"). `2@a` agrega `!` a las dos líneas siguientes; `@@` a una más. Una macro que hace `@` de sí misma se corta con aviso, sin colgar.
 - [ ] **Rehacer.** Tres cambios, `uuu`, `Ctrl+R` rehace uno; `2` + `Ctrl+R` dos más. En Insertar, `Ctrl+R` no hace nada de esto.
+- [ ] **Marcas.** En la línea 5, `ma`; `G`; `'a` vuelve a la línea 5 (primer no blanco) y `` `a `` a la columna exacta. `''` vuelve al final y otra vez `''` a la 5. `d'a` desde abajo borra las líneas hasta la marca. Borrar una línea arriba de la marca y `'a`: sigue en el mismo texto. `'q` sin marca: "La marca q no está puesta".
 - [ ] **Sin modo VIM.** Con el modo apagado, `/`, `n`, `q`, `@`, `"` se escriben como texto.
 
 ## Inlay hints del LSP (BACKLOG.md P2 #23, tercera parte)
